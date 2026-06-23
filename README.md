@@ -1,0 +1,176 @@
+# FluidSender
+
+A modern, web-based GCode sender built specifically for [FluidNC](https://github.com/bdring/FluidNC) ESP32 CNC firmware.
+
+FluidSender is a first-class FluidNC client — not a generic GRBL sender. It implements the full FluidNC feature set including firmware configuration, real-time machine control, probing macros, and more. It ships with a built-in Rust-based FluidNC simulator for safe, offline development and testing.
+
+---
+
+## Features
+
+- **USB & TCP connectivity** — connect to FluidNC via USB serial (recommended) or TCP/WiFi
+- **Full FluidNC support** — all GCode commands, firmware config read/write, soft-reset, unlock, homing cycles, probing
+- **GCode file management** — upload, queue, and execute GCode jobs with real-time progress tracking
+- **Live machine status** — position, feed rate, spindle, alarms, and hold states updated in real time
+- **Built-in terminal** — raw console access to the FluidNC serial stream
+- **FluidNC simulator** — Rust-based firmware emulator with configurable machine, stock, and failure modes
+- **Light/dark theme** — toggleable system-aware theming
+- **Optional authentication** — protect the UI with a username/password when needed
+- **Fully containerized** — single `docker-compose.yaml` for production deployment
+
+---
+
+## Architecture
+
+```
+Browser
+  └─► Nuxt 3 App  (HTTP + WebSocket)
+        └─► Nuxt Server Routes  (Bun)
+              ├─► USB Serial ──► FluidNC ESP32   (recommended)
+              └─► TCP/WiFi  ──► FluidNC ESP32   (optional)
+
+fluid-sim/sim  (Rust TCP server)
+  └─► fluid-sim/sim-ui  (Nuxt 3 + Bun)
+```
+
+The serial/TCP bridge runs entirely within the Nuxt server process — no separate backend service is needed. The FluidNC simulator exposes the same TCP protocol as real hardware, making it a drop-in target for development.
+
+---
+
+## Project Structure
+
+```
+/
+├── ui/                        # Main web application
+│   ├── config/                # Persistent config (mounted volume)
+│   ├── data/                  # GCode files, job history, logs (mounted volume)
+│   └── docker-compose.yaml    # Production deployment
+├── fluid-sim/
+│   ├── sim/                   # Rust FluidNC simulator
+│   └── sim-ui/                # Simulator control UI
+└── .github/workflows/         # CI/CD pipelines
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/)
+- [Bun](https://bun.sh/) (for local development)
+- [Rust toolchain](https://rustup.rs/) (for simulator development)
+
+### Production (Docker)
+
+```bash
+cd ui
+cp .env.example .env          # configure ports, auth, etc.
+docker compose up -d
+```
+
+The UI is available at `http://localhost:3000` by default.
+
+Config and data are persisted in the `./config` and `./data` directories.
+
+### Local Development
+
+**UI:**
+```bash
+cd ui
+bun install
+bun run dev
+```
+
+**Simulator:**
+```bash
+cd fluid-sim/sim
+cargo run -- --config sim.toml
+```
+
+**Simulator UI:**
+```bash
+cd fluid-sim/sim-ui
+bun install
+bun run dev
+```
+
+---
+
+## Configuration
+
+On first run, `config/app.yaml` is created with defaults. Key options:
+
+```yaml
+# Connection
+connection:
+  preferred: usb          # usb | tcp
+
+# Authentication (disabled by default)
+auth:
+  enabled: false
+  # username: admin
+  # password_hash: <bcrypt hash>
+
+# Server
+server:
+  port: 3000
+```
+
+See `config/app.yaml.example` for all available options.
+
+---
+
+## Simulator
+
+The FluidNC simulator (`fluid-sim/sim`) is a Rust implementation of the FluidNC firmware protocol. Use it to develop and test without physical hardware.
+
+Features:
+- Full GCode interpreter matching FluidNC behaviour
+- 3-axis (X/Y/Z) + optional rotary axes (A/B/C)
+- Configurable machine dimensions and feed rates
+- Stock definition: rectangular or round, with size and rotation
+- Touch probe simulation with configurable tip diameter (half-diameter offset applied automatically for edge detection)
+- Manual trigger of door sensor, hard stops, alarms, and failure modes
+- Near-realtime jog simulation
+- Reset to defined home position
+
+Connect the main UI to the simulator by setting the connection type to TCP and pointing it at `localhost:<sim-port>`.
+
+---
+
+## Development Phases
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Initial scaffolding | Planned |
+| 2 | UI design mockups | Planned |
+| 3 | Rust simulator implementation | Planned |
+| 4 | Release cycle & versioning | Planned |
+| 5 | Functional UI development | Planned |
+
+See [CLAUDE.md](CLAUDE.md) for detailed phase specifications.
+
+---
+
+## Contributing
+
+1. Check [CLAUDE.md](CLAUDE.md) for architecture decisions and coding conventions.
+2. New features are developed on `test/feature-xyz` branches cut from `test`.
+3. PRs require at least one approving review and green CI.
+4. Commit messages use the imperative mood: "Add jog panel", not "Added jog panel".
+5. Keep PRs small and focused — one logical change per PR.
+
+For bug reports and feature requests, open a GitHub Issue.
+
+---
+
+## Security
+
+CNC machines are physical hardware — please read the [Security Policy](SECURITY.md) before exposing FluidSender to a network. To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
