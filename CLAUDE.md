@@ -200,4 +200,5 @@ Pipelines live in `.github/workflows/`. Minimum required workflows:
 - **Vue:** Composition API (`<script setup>`) only. Options API is not permitted for new code.
 - **Comments:** Only when the *why* is non-obvious. No docblocks or what-comments.
 - **PRs:** Small and focused. One logical change per PR. Imperative commit messages ("Add jog panel", not "Added jog panel").
+- **Commits:** Never add a `Co-Authored-By` trailer or any Claude/AI attribution to commit messages.
 - **Tests:** ≥ 80 % coverage on business logic. Simulator Rust code: `cargo test` must pass before any PR merge.
