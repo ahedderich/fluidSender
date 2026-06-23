@@ -1,6 +1,6 @@
 services:
   fluidsender:
-    image: ghcr.io/fluidsender/fluidsender-ui:latest
+    image: ghcr.io/ahedderich/fluidsender:latest
     restart: unless-stopped
     ports:
       - "3000:3000"

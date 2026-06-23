@@ -27,7 +27,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/fluidsender/fluidsender-ui
+          images: ghcr.io/ahedderich/fluidsender
           tags: |
             type=raw,value=test,enable=${{ github.ref_name == 'test' }}
             type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
