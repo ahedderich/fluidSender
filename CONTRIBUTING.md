@@ -60,41 +60,25 @@ main/hotfix-xyz    ← urgent post-release fixes, cut from main
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| [Bun](https://bun.sh/) | Latest stable | UI and sim-ui runtime, package manager |
-| [Rust](https://rustup.rs/) | Latest stable (via `rustup`) | FluidNC simulator |
-| [Docker](https://docs.docker.com/get-docker/) + Compose | Latest stable | Container builds and local deployment |
+| [Docker](https://docs.docker.com/get-docker/) + Compose | Latest stable | All development and deployment |
 
-### UI (`ui/`)
+### Starting the stack
 
-```bash
-cd ui
-cp .env.example .env
-bun install
-bun run dev
-```
-
-### Simulator (`fluid-sim/sim/`)
+From the repository root:
 
 ```bash
-cd fluid-sim/sim
-cargo build
-cargo run -- --config sim.example.toml
-```
-
-### Simulator UI (`fluid-sim/sim-ui/`)
-
-```bash
-cd fluid-sim/sim-ui
-bun install
-bun run dev
-```
-
-### Full stack via Docker
-
-```bash
-cd ui
-cp .env.example .env
 docker compose up
+```
+
+This starts the full development stack: the main UI (port 3000), the Rust simulator (port 8765), and the simulator control UI (port 3001). Source directories are mounted as host volumes — edits take effect without rebuilding.
+
+All `bun` and `cargo` commands run inside the containers via `docker compose exec`:
+
+```bash
+docker compose exec ui bun run lint
+docker compose exec ui bun run test
+docker compose exec sim cargo clippy -- -D warnings
+docker compose exec sim-ui bun run lint
 ```
 
 ---
@@ -107,7 +91,7 @@ docker compose up
 - **TypeScript strict mode** — `strict: true` in `tsconfig.json`. No `any` unless genuinely unavoidable and commented.
 - **Tailwind CSS** for all styling. Avoid inline styles and scoped `<style>` blocks unless there is no practical alternative.
 - **Pinia** for shared state. No direct component-to-component state passing beyond simple props.
-- Format with Prettier and lint with ESLint before committing:
+- Format with Prettier and lint with ESLint before committing (run inside the container):
   ```bash
   bun run format
   bun run lint
@@ -116,7 +100,7 @@ docker compose up
 
 ### Rust (`fluid-sim/sim/`)
 
-- Format with `rustfmt` and lint with Clippy before committing:
+- Format with `rustfmt` and lint with Clippy before committing (run inside the container):
   ```bash
   cargo fmt
   cargo clippy -- -D warnings
@@ -137,6 +121,8 @@ docker compose up
 
 ### UI & sim-ui (Vitest)
 
+Run inside the container:
+
 ```bash
 bun run test          # run tests once
 bun run test:watch    # watch mode
@@ -149,6 +135,8 @@ bun run test:coverage # with coverage report
 
 ### Simulator (Cargo)
 
+Run inside the container:
+
 ```bash
 cargo test
 ```
@@ -157,17 +145,14 @@ cargo test
 - Integration tests live in `fluid-sim/sim/tests/`.
 - All GCode handling and state machine transitions must have test coverage.
 
-### Running the full CI suite locally
+### Running the full CI suite
+
+Run these before opening a PR (requires `docker compose up` to be running):
 
 ```bash
-# UI
-cd ui && bun run lint && bun run typecheck && bun run test && bun run build
-
-# Sim
-cd fluid-sim/sim && cargo fmt --check && cargo clippy -- -D warnings && cargo test
-
-# Sim UI
-cd fluid-sim/sim-ui && bun run lint && bun run typecheck && bun run test && bun run build
+docker compose exec ui bun run lint && docker compose exec ui bun run typecheck && docker compose exec ui bun run test && docker compose exec ui bun run build
+docker compose exec sim cargo fmt --check && docker compose exec sim cargo clippy -- -D warnings && docker compose exec sim cargo test
+docker compose exec sim-ui bun run lint && docker compose exec sim-ui bun run typecheck && docker compose exec sim-ui bun run test && docker compose exec sim-ui bun run build
 ```
 
 ---

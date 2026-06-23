@@ -1,0 +1,36 @@
+name: CI — Simulator
+
+on:
+  pull_request:
+    branches: [test, main]
+    paths:
+      - 'fluid-sim/sim/**'
+
+jobs:
+  check:
+    name: Format & Clippy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fluid-sim/sim
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fluid-sim/sim/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('fluid-sim/sim/Cargo.lock') }}
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings

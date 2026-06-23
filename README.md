@@ -2,7 +2,7 @@
 
 A modern, web-based GCode sender built specifically for [FluidNC](https://github.com/bdring/FluidNC) ESP32 CNC firmware.
 
-FluidSender is a first-class FluidNC client — not a generic GRBL sender. It implements the full FluidNC feature set including firmware configuration, real-time machine control, probing macros, and more. It ships with a built-in Rust-based FluidNC simulator for safe, offline development and testing.
+FluidSender is a native FluidNC client — not a generic GRBL sender. It implements the full FluidNC feature set including firmware configuration, real-time machine control, probing macros, and more. It ships with a built-in Rust-based FluidNC simulator for safe, offline development and testing.
 
 ---
 
@@ -41,13 +41,18 @@ The serial/TCP bridge runs entirely within the Nuxt server process — no separa
 
 ```
 /
+├── docker-compose.yaml        # Development — full stack (ui + sim + sim-ui)
 ├── ui/                        # Main web application
+│   ├── Dockerfile             # Dev image
+│   ├── Dockerfile.prd         # Production image (multi-stage)
+│   ├── docker-compose.yaml    # Production deployment example
 │   ├── config/                # Persistent config (mounted volume)
-│   ├── data/                  # GCode files, job history, logs (mounted volume)
-│   └── docker-compose.yaml    # Production deployment
+│   └── data/                  # GCode files, job history, logs (mounted volume)
 ├── fluid-sim/
 │   ├── sim/                   # Rust FluidNC simulator
+│   │   └── Dockerfile
 │   └── sim-ui/                # Simulator control UI
+│       └── Dockerfile
 └── .github/workflows/         # CI/CD pipelines
 ```
 
@@ -58,42 +63,35 @@ The serial/TCP bridge runs entirely within the Nuxt server process — no separa
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/)
-- [Bun](https://bun.sh/) (for local development)
-- [Rust toolchain](https://rustup.rs/) (for simulator development)
 
-### Production (Docker)
+### Development
+
+Start the full stack from the repository root:
 
 ```bash
-cd ui
-cp .env.example .env          # configure ports, auth, etc.
+docker compose up
+```
+
+| Service | URL |
+|---------|-----|
+| UI | http://localhost:3000 |
+| Simulator TCP | localhost:8765 |
+| Simulator UI | http://localhost:3001 |
+
+Source directories are mounted into the containers as host volumes — edits are reflected immediately without rebuilding. All `bun` and `cargo` commands run inside the containers; no local Bun or Rust installation is needed.
+
+### Production
+
+Copy `ui/docker-compose.yaml` to your deployment directory and adjust as needed:
+
+```bash
+mkdir -p ~/fluidsender/config ~/fluidsender/data
+cp ui/docker-compose.yaml ~/fluidsender/
+cd ~/fluidsender
 docker compose up -d
 ```
 
-The UI is available at `http://localhost:3000` by default.
-
-Config and data are persisted in the `./config` and `./data` directories.
-
-### Local Development
-
-**UI:**
-```bash
-cd ui
-bun install
-bun run dev
-```
-
-**Simulator:**
-```bash
-cd fluid-sim/sim
-cargo run -- --config sim.toml
-```
-
-**Simulator UI:**
-```bash
-cd fluid-sim/sim-ui
-bun install
-bun run dev
-```
+The UI is available at `http://localhost:3000`. Config and data are persisted in `./config` and `./data`.
 
 ---
 

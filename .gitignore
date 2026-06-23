@@ -13,8 +13,6 @@ docker-compose.claude.yaml
 .env.*.local
 .env.production
 .env.staging
-# Keep .env.example — it is a committed template
-!.env.example
 
 # -----------------------------------------------------------------------------
 # Nuxt 3 (ui/ and fluid-sim/sim-ui/)
