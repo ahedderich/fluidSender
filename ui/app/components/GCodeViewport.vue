@@ -98,8 +98,11 @@ async function initThree() {
   const container = containerRef.value
   if (!canvas || !container) return
 
-  const THREE = await import('three')
-  const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore — resolved via importmap at runtime; Vite skips bundling with /* @vite-ignore */
+  const THREE = await import(/* @vite-ignore */ 'three')
+  // @ts-ignore
+  const { OrbitControls } = await import(/* @vite-ignore */ 'three/examples/jsm/controls/OrbitControls.js')
 
   const { width, height } = container.getBoundingClientRect()
 
