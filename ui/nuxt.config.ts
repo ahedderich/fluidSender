@@ -1,5 +1,13 @@
+import tailwindcss from '@tailwindcss/vite'
+
 export default defineNuxtConfig({
-  modules: ['@nuxtjs/tailwindcss', '@pinia/nuxt', '@nuxt/eslint'],
+  modules: ['@pinia/nuxt', '@nuxt/eslint'],
+
+  css: ['~/assets/css/tailwind.css'],
+
+  vite: {
+    plugins: [tailwindcss()],
+  },
 
   typescript: {
     strict: true,
@@ -10,5 +18,5 @@ export default defineNuxtConfig({
     dataPath: process.env.NUXT_DATA_PATH ?? '/app/data',
   },
 
-  compatibilityDate: '2025-01-01',
+  compatibilityDate: '2026-06-23',
 })

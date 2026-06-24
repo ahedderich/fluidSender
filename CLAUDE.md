@@ -150,7 +150,7 @@ Pipelines live in `.github/workflows/`. Minimum required workflows:
 
 ## Development Phases
 
-### Phase 1 — Initial Scaffolding `[ ]`
+### Phase 1 — Initial Scaffolding `[x]`
 - Repository structure, `.gitignore`, `CLAUDE.md`
 - Nuxt 3 + Bun scaffold in `ui/` with Tailwind, Pinia, TypeScript, ESLint, Prettier, Vitest
 - Nuxt scaffold in `fluid-sim/sim-ui/` with same stack
