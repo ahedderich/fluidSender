@@ -123,6 +123,8 @@ async function initThree() {
   }
   controls.enableDamping = true
   controls.dampingFactor = 0.08
+  controls.rotateSpeed = -0.5   // negative = natural/push orbit (drag right → see right face)
+  controls.panSpeed = 1.5
   controls.target.set(100, 75, 0)
 
   // Grid (XY plane, Z=0)
