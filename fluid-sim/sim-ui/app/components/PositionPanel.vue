@@ -145,25 +145,30 @@ function travelPercent(axis: AxisKey): number {
   return Math.min(100, Math.max(0, (used / max) * 100))
 }
 
-function setWpos(axis: AxisKey, value: number) {
-  s.wco[axis] = s.pos[axis] - value
+async function setWpos(axis: AxisKey, value: number) {
+  const newWco = s.pos[axis] - value
+  s.wco[axis] = newWco
+  await s.setWco({ [axis]: newWco })
 }
 
-function zeroAxis(axis: AxisKey) {
+async function zeroAxis(axis: AxisKey) {
   s.wco[axis] = s.pos[axis]
+  await s.setWco({ [axis]: s.pos[axis] })
 }
 
-function zeroAll() {
+async function zeroAll() {
+  const updates: Partial<Record<AxisKey, number>> = {}
   for (const a of AXES.slice(0, s.axisCount) as AxisKey[]) {
+    updates[a] = s.pos[a]
     s.wco[a] = s.pos[a]
   }
+  await s.setWco(updates)
 }
 
-function goHome() {
+async function goHome() {
   s.machineState = 'Homing'
-  setTimeout(() => {
-    for (const a of AXES) s.pos[a] = 0
-    s.machineState = 'Idle'
-  }, 800)
+  const zeros = Object.fromEntries(AXES.map((a) => [a, 0])) as Record<AxisKey, number>
+  await s.setPosition(zeros)
+  s.machineState = 'Idle'
 }
 </script>

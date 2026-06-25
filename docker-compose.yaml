@@ -20,11 +20,9 @@ services:
       context: ./fluid-sim/sim
       dockerfile: Dockerfile
     image: ghcr.io/fluidsender/fluidsender-sim:dev
-    volumes:
-      - ./fluid-sim/sim:/app
-      - sim_target:/app/target
     ports:
       - "8765:8765"
+      - "8766:8766"
 
   sim-ui:
     build:
@@ -41,14 +39,12 @@ services:
     environment:
       NUXT_HOST: "0.0.0.0"
       NUXT_PORT: "3001"
-      SIM_HOST: sim
-      SIM_PORT: "8765"
+      SIM_CONTROL_URL: "http://sim:8766"
     depends_on:
       - sim
 
 volumes:
   ui_modules:
   ui_nuxt:
-  sim_target:
   sim_ui_modules:
   sim_ui_nuxt:

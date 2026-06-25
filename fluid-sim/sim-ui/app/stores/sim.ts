@@ -58,26 +58,26 @@ export const useSimStore = defineStore('sim', () => {
     rotation: 0,
     hole: {
       enabled: false,
-      x: 50,       // center X relative to stock origin (ox)
-      y: 40,       // center Y relative to stock origin (oy)
+      x: 50,
+      y: 40,
       diameter: 20,
       depth: 20,
     },
     point: {
       enabled: false,
-      x: 0,        // relative to stock origin (ox)
-      y: 0,        // relative to stock origin (oy)
+      x: 0,
+      y: 0,
       label: 'Datum',
     },
   })
 
-  // Simulation speed multiplier (1–10×) sent to the Rust sim backend.
+  // Simulation speed multiplier (1–10×)
   const simSpeed = ref(1)
 
   // Touch probe
   const probe = reactive({ tipDiameter: 2.0, triggered: false })
 
-  // Limit switches + door sensor — all momentary
+  // Limit switches + door sensor
   const limits = reactive<Record<LimitKey, boolean>>({
     xMin: false, xMax: false,
     yMin: false, yMax: false,
@@ -109,23 +109,99 @@ export const useSimStore = defineStore('sim', () => {
     Object.fromEntries(AXES.map((a) => [a, pos[a] - wco[a]])) as Record<AxisKey, number>,
   )
 
-  function triggerProbe() {
-    probe.triggered = true
-    setTimeout(() => { probe.triggered = false }, 500)
+  // --- API-backed actions ---
+
+  async function triggerProbe() {
+    await $fetch('/api/sim/control/trigger-probe', { method: 'POST', body: {} }).catch(() => {
+      // fallback: local mock if sim not connected
+      probe.triggered = true
+      setTimeout(() => { probe.triggered = false }, 500)
+    })
   }
 
-  function triggerLimit(key: LimitKey) {
-    limits[key] = true
-    setTimeout(() => { limits[key] = false }, 500)
+  async function triggerLimit(key: LimitKey) {
+    await $fetch('/api/sim/control/trigger-limit', {
+      method: 'POST',
+      body: { axis: key },
+    }).catch(() => {
+      limits[key] = true
+      setTimeout(() => { limits[key] = false }, 500)
+    })
   }
 
-  function softReset() {
-    machineState.value = 'Idle'
-    for (const k of Object.keys(limits) as LimitKey[]) limits[k] = false
-    probe.triggered = false
+  async function softReset() {
+    await $fetch('/api/sim/control/soft-reset', { method: 'POST' }).catch(() => {
+      machineState.value = 'Idle'
+      for (const k of Object.keys(limits) as LimitKey[]) limits[k] = false
+      probe.triggered = false
+    })
   }
 
-  function applyScenario(scenario: Scenario) {
+  async function triggerAlarm() {
+    await $fetch('/api/sim/control/trigger-alarm', { method: 'POST' }).catch(() => {
+      machineState.value = 'Alarm'
+    })
+  }
+
+  async function setSimSpeed(speed: number) {
+    simSpeed.value = speed
+    await $fetch('/api/sim/machine/speed', {
+      method: 'POST',
+      body: { speed },
+    }).catch(() => {})
+  }
+
+  async function setPosition(axes: Partial<Record<AxisKey, number>>) {
+    await $fetch('/api/sim/machine/position', {
+      method: 'POST',
+      body: axes,
+    }).catch(() => {
+      for (const [k, v] of Object.entries(axes)) {
+        pos[k as AxisKey] = v as number
+      }
+    })
+  }
+
+  async function setWco(axes: Partial<Record<AxisKey, number>>) {
+    await $fetch('/api/sim/machine/wco', {
+      method: 'POST',
+      body: axes,
+    }).catch(() => {
+      for (const [k, v] of Object.entries(axes)) {
+        wco[k as AxisKey] = v as number
+      }
+    })
+  }
+
+  async function pushStockToSim() {
+    const shape = stock.shape === 'rect'
+      ? { type: 'rect', width: stock.width, height: stock.height, rotation: stock.rotation }
+      : { type: 'round', diameter: stock.diameter }
+
+    await $fetch('/api/sim/stock', {
+      method: 'POST',
+      body: {
+        shape,
+        depth: stock.depth,
+        ox: stock.ox,
+        oy: stock.oy,
+        oz: stock.oz,
+        hole: stock.hole.enabled ? {
+          x: stock.hole.x,
+          y: stock.hole.y,
+          diameter: stock.hole.diameter,
+          depth: stock.hole.depth,
+        } : null,
+        point: stock.point.enabled ? {
+          x: stock.point.x,
+          y: stock.point.y,
+          label: stock.point.label,
+        } : null,
+      },
+    }).catch(() => {})
+  }
+
+  async function applyScenario(scenario: Scenario) {
     machineState.value = scenario.machineState
     for (const a of AXES) {
       pos[a] = scenario.pos[a] ?? 0
@@ -135,12 +211,26 @@ export const useSimStore = defineStore('sim', () => {
     Object.assign(stock, stockBase)
     if (hole) Object.assign(stock.hole, hole)
     if (point) Object.assign(stock.point, point)
+
+    // Push position and stock to simulator
+    await Promise.all([
+      $fetch('/api/sim/machine/position', {
+        method: 'POST',
+        body: scenario.pos,
+      }).catch(() => {}),
+      $fetch('/api/sim/machine/wco', {
+        method: 'POST',
+        body: scenario.wco,
+      }).catch(() => {}),
+      pushStockToSim(),
+    ])
   }
 
   return {
     connected, machineState, axisCount, simSpeed,
     pos, wco, wpos, travel,
     stock, probe, limits, fluidConfig,
-    triggerProbe, triggerLimit, softReset, applyScenario,
+    triggerProbe, triggerLimit, softReset, triggerAlarm,
+    setSimSpeed, setPosition, setWco, pushStockToSim, applyScenario,
   }
 })
