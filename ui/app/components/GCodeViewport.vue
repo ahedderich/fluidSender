@@ -182,8 +182,35 @@ async function initThree() {
   const THREE = await import(/* @vite-ignore */ 'three')
   // @ts-ignore
   const { OrbitControls } = await import(/* @vite-ignore */ 'three/examples/jsm/controls/OrbitControls.js')
+  // @ts-ignore
+  const { LineSegments2 } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineSegments2.js')
+  // @ts-ignore
+  const { LineSegmentsGeometry } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineSegmentsGeometry.js')
+  // @ts-ignore
+  const { LineMaterial } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineMaterial.js')
 
   const { width, height } = container.getBoundingClientRect()
+
+  // Track all LineMaterial instances so their resolution uniform stays in sync on resize.
+  // LineMaterial renders lines as triangles (not native GL lines), giving proper AA and width > 1px.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lineMats: any[] = []
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function lineMat2(color: number, linewidth = 1.5): any {
+    const m = new LineMaterial({ color, linewidth, resolution: new THREE.Vector2(width, height) })
+    lineMats.push(m)
+    return m
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function lineSegs2(pts: { x: number; y: number; z: number }[], mat: any): any {
+    const pos: number[] = []
+    for (const p of pts) pos.push(p.x, p.y, p.z)
+    const geo = new LineSegmentsGeometry()
+    geo.setPositions(pos)
+    return new LineSegments2(geo, mat)
+  }
 
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(0x020617) // slate-950
@@ -269,11 +296,25 @@ async function initThree() {
 
   const V3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z)
 
-  // Grid (XY plane, Z=0)
-  const gridHelper = new THREE.GridHelper(600, 30, 0x1e293b, 0x1e293b)
-  gridHelper.rotation.x = Math.PI / 2
-  gridHelper.position.set(0, 0, 0)
-  scene.add(gridHelper)
+  // Grid (XY plane, Z=0) — Line2-based so it anti-aliases at all view angles.
+  // depthTest/depthWrite disabled so it never Z-fights with axis lines or stock edges
+  // that share the same Z=0 plane; renderOrder=-1 keeps it visually behind everything.
+  {
+    const gPts: number[] = []
+    const gExt = 300, gStep = 20
+    for (let v = -gExt; v <= gExt; v += gStep) {
+      gPts.push(-gExt, v, 0, gExt, v, 0)  // horizontal
+      gPts.push(v, -gExt, 0, v, gExt, 0)  // vertical
+    }
+    const gMat = new LineMaterial({ color: 0x1e293b, linewidth: 1.0,
+      resolution: new THREE.Vector2(width, height), depthTest: false, depthWrite: false })
+    lineMats.push(gMat)
+    const gGeo = new LineSegmentsGeometry()
+    gGeo.setPositions(gPts)
+    const gLine = new LineSegments2(gGeo, gMat)
+    gLine.renderOrder = -1
+    scene.add(gLine)
+  }
 
   // Origin axes: X (red) + Y (green) with tick marks and labels
   const originGroup = new THREE.Group()
@@ -300,10 +341,7 @@ async function initThree() {
   }
 
   // X axis line (red), −500 → +500
-  originGroup.add(new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([V3(-axisExt, 0, 0), V3(axisExt, 0, 0)]),
-    new THREE.LineBasicMaterial({ color: 0xef4444 }),
-  ))
+  originGroup.add(lineSegs2([V3(-axisExt, 0, 0), V3(axisExt, 0, 0)], lineMat2(0xef4444, 2.0)))
 
   // X ticks + number labels (both sides, skip 0)
   const xTickPts: THREE.Vector3[] = []
@@ -315,10 +353,7 @@ async function initThree() {
     lbl.position.set(x, -20, 0)
     originGroup.add(lbl)
   }
-  originGroup.add(new THREE.LineSegments(
-    new THREE.BufferGeometry().setFromPoints(xTickPts),
-    new THREE.LineBasicMaterial({ color: 0xef4444 }),
-  ))
+  originGroup.add(lineSegs2(xTickPts, lineMat2(0xef4444, 1.0)))
 
   // X axis label near origin
   const xLabel = makeLabel('X', '#ef4444', 32)
@@ -327,10 +362,7 @@ async function initThree() {
   originGroup.add(xLabel)
 
   // Y axis line (green), −500 → +500
-  originGroup.add(new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([V3(0, -axisExt, 0), V3(0, axisExt, 0)]),
-    new THREE.LineBasicMaterial({ color: 0x22c55e }),
-  ))
+  originGroup.add(lineSegs2([V3(0, -axisExt, 0), V3(0, axisExt, 0)], lineMat2(0x22c55e, 2.0)))
 
   // Y ticks + number labels (both sides, skip 0)
   const yTickPts: THREE.Vector3[] = []
@@ -342,10 +374,7 @@ async function initThree() {
     lbl.position.set(-20, y, 0)
     originGroup.add(lbl)
   }
-  originGroup.add(new THREE.LineSegments(
-    new THREE.BufferGeometry().setFromPoints(yTickPts),
-    new THREE.LineBasicMaterial({ color: 0x22c55e }),
-  ))
+  originGroup.add(lineSegs2(yTickPts, lineMat2(0x22c55e, 1.0)))
 
   // Y axis label near origin
   const yLabel = makeLabel('Y', '#22c55e', 32)
@@ -356,13 +385,18 @@ async function initThree() {
   scene.add(originGroup)
   objectMap['origin'] = originGroup
 
-  // Stock outline: 200 × 150 × 25 mm box, centred at origin (Z top = 0)
-  const stockGeo = new THREE.BoxGeometry(200, 150, 25)
-  const stockEdges = new THREE.EdgesGeometry(stockGeo)
-  const stockMesh = new THREE.LineSegments(stockEdges, new THREE.LineBasicMaterial({ color: 0xa855f7 }))
-  stockMesh.position.set(0, 0, -12.5)
-  scene.add(stockMesh)
-  objectMap['stock'] = stockMesh
+  // Stock outline: 200 × 150 × 25 mm box, Z top = 0, Z bottom = -25 (world coords)
+  const S = { x: 100, y: 75, t: 0, b: -25 }
+  const stockLine = lineSegs2([
+    V3(-S.x,-S.y,S.t), V3(S.x,-S.y,S.t),  V3(S.x,-S.y,S.t),  V3(S.x,S.y,S.t),
+    V3(S.x,S.y,S.t),   V3(-S.x,S.y,S.t),  V3(-S.x,S.y,S.t),  V3(-S.x,-S.y,S.t),
+    V3(-S.x,-S.y,S.b), V3(S.x,-S.y,S.b),  V3(S.x,-S.y,S.b),  V3(S.x,S.y,S.b),
+    V3(S.x,S.y,S.b),   V3(-S.x,S.y,S.b),  V3(-S.x,S.y,S.b),  V3(-S.x,-S.y,S.b),
+    V3(-S.x,-S.y,S.t), V3(-S.x,-S.y,S.b), V3(S.x,-S.y,S.t),  V3(S.x,-S.y,S.b),
+    V3(S.x,S.y,S.t),   V3(S.x,S.y,S.b),   V3(-S.x,S.y,S.t),  V3(-S.x,S.y,S.b),
+  ], lineMat2(0xa855f7, 1.5))
+  scene.add(stockLine)
+  objectMap['stock'] = stockLine
 
   // Travel moves (green) — rapid moves above stock (stock centred at origin)
   const travelPts = [
@@ -373,10 +407,7 @@ async function initThree() {
     V3(-100, -75, 30), V3(-70, -45, 30),
     V3(-20, -15, 30),  V3(100, 75, 30),
   ]
-  const travelLine = new THREE.LineSegments(
-    new THREE.BufferGeometry().setFromPoints(travelPts),
-    new THREE.LineBasicMaterial({ color: 0x22c55e }),
-  )
+  const travelLine = lineSegs2(travelPts, lineMat2(0x22c55e, 1.5))
   scene.add(travelLine)
   objectMap['travel'] = travelLine
 
@@ -389,10 +420,7 @@ async function initThree() {
     V3(20, 15, 30),    V3(20, 15, -5),
     V3(70, 45, 30),    V3(70, 45, -5),
   ]
-  const zLine = new THREE.LineSegments(
-    new THREE.BufferGeometry().setFromPoints(zPts),
-    new THREE.LineBasicMaterial({ color: 0xeab308 }),
-  )
+  const zLine = lineSegs2(zPts, lineMat2(0xeab308, 1.5))
   scene.add(zLine)
   objectMap['zmove'] = zLine
 
@@ -437,10 +465,7 @@ async function initThree() {
     }
   }
 
-  const cutLine = new THREE.LineSegments(
-    new THREE.BufferGeometry().setFromPoints(cutPts),
-    new THREE.LineBasicMaterial({ color: 0x3b82f6 }),
-  )
+  const cutLine = lineSegs2(cutPts, lineMat2(0x3b82f6, 2.0))
   scene.add(cutLine)
   objectMap['cutting'] = cutLine
 
@@ -482,6 +507,7 @@ async function initThree() {
     camera.aspect = w / h
     camera.updateProjectionMatrix()
     renderer.setSize(w, h)
+    for (const m of lineMats) m.resolution.set(w, h)
     requestRender()
   })
   ro.observe(container)

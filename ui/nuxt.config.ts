@@ -26,6 +26,9 @@ export default defineNuxtConfig({
             imports: {
               three: `${THREE_CDN}/build/three.module.js`,
               'three/examples/jsm/controls/OrbitControls.js': `${THREE_CDN}/examples/jsm/controls/OrbitControls.js`,
+              'three/examples/jsm/lines/LineSegments2.js': `${THREE_CDN}/examples/jsm/lines/LineSegments2.js`,
+              'three/examples/jsm/lines/LineSegmentsGeometry.js': `${THREE_CDN}/examples/jsm/lines/LineSegmentsGeometry.js`,
+              'three/examples/jsm/lines/LineMaterial.js': `${THREE_CDN}/examples/jsm/lines/LineMaterial.js`,
             },
           }),
         },
