@@ -6,15 +6,17 @@
       Position
     </h2>
 
-    <!-- Table: axis | Work | Machine | zero -->
-    <div class="grid gap-x-1.5 gap-y-1 mb-2.5" style="grid-template-columns: 1rem 1fr 1fr auto">
-      <!-- Column headers -->
+    <!-- Headers: axis | Work | Machine | Max Travel | zero -->
+    <div class="grid gap-x-2 gap-y-1 mb-3" style="grid-template-columns: 1.1rem 1fr 1fr 5.5rem auto">
       <div />
-      <div class="text-center text-[10px] font-semibold uppercase tracking-wider text-blue-500 dark:text-blue-400 mb-0.5">
+      <div class="text-center text-[10px] font-semibold uppercase tracking-wider text-blue-500 dark:text-blue-400">
         Work
       </div>
-      <div class="text-center text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 mb-0.5">
+      <div class="text-center text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">
         Machine
+      </div>
+      <div class="text-center text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">
+        Max Travel
       </div>
       <div />
 
@@ -23,22 +25,48 @@
         <span class="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase self-center">
           {{ axis }}
         </span>
+
         <!-- Work position -->
         <div
           class="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/50 rounded px-2 py-1 font-mono text-sm text-right text-blue-800 dark:text-blue-200"
         >
           {{ s.wpos[axis].toFixed(3) }}
         </div>
-        <!-- Machine position -->
+
+        <!-- Machine position + travel bar -->
         <div
-          class="bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded px-2 py-1 font-mono text-sm text-right text-gray-700 dark:text-slate-300"
+          class="bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded px-2 pt-1 pb-0.5 flex flex-col gap-0.5"
         >
-          {{ s.pos[axis].toFixed(3) }}
+          <span class="font-mono text-sm text-right text-gray-700 dark:text-slate-300 block">
+            {{ s.pos[axis].toFixed(3) }}
+          </span>
+          <div class="h-1 bg-gray-200 dark:bg-slate-700 rounded-full overflow-hidden">
+            <div
+              class="h-full rounded-full transition-all duration-150"
+              :class="travelPercent(axis) > 90
+                ? 'bg-red-400 dark:bg-red-500'
+                : 'bg-emerald-400 dark:bg-emerald-500'"
+              :style="`width: ${travelPercent(axis)}%`"
+            />
+          </div>
         </div>
-        <!-- Zero work axis button -->
+
+        <!-- Max travel (editable) -->
+        <div class="flex items-center gap-1">
+          <input
+            v-model.number="s.travel[axis]"
+            type="number"
+            min="1"
+            step="1"
+            class="w-10 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 font-mono text-xs text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <span class="text-[10px] text-gray-400 dark:text-slate-500 shrink-0">mm</span>
+        </div>
+
+        <!-- Zero work axis -->
         <button
           @click="zeroAxis(axis)"
-          class="text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 rounded transition-colors font-medium whitespace-nowrap"
+          class="text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 rounded transition-colors font-medium"
           title="Set work zero for this axis"
         >
           Z
@@ -69,12 +97,19 @@ import { useSimStore } from '~/stores/sim'
 
 const s = useSimStore()
 
-// Zero a single work axis: set WCO so that WPos = 0 on that axis
+// Percentage of travel used for this axis (0–100), clamped
+function travelPercent(axis: 'x' | 'y' | 'z'): number {
+  const max = s.travel[axis]
+  if (!max) return 0
+  // Z goes negative from home; X/Y go positive
+  const used = axis === 'z' ? -s.pos.z : s.pos[axis]
+  return Math.min(100, Math.max(0, (used / max) * 100))
+}
+
 function zeroAxis(axis: 'x' | 'y' | 'z') {
   s.wco[axis] = s.pos[axis]
 }
 
-// Zero all work axes
 function zeroAll() {
   s.wco.x = s.pos.x
   s.wco.y = s.pos.y
