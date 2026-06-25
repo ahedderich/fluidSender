@@ -135,8 +135,8 @@ main/hotfix-xyz    ← urgent post-release fixes, cut from `main`
 - PRs into `test` require at least one approving review and green CI.
 - PRs into `main` require green CI + passing integration tests.
 - Delete feature/bugfix branches after merging.
-- SemVer tagging and container image publishing begin at the **Release Cycle** phase (Phase 4).
-- In Phases 1–3, the version scheme does not need to be followed strictly.
+- SemVer tagging and container image publishing begin at the **Release Cycle** phase (Phase 5).
+- In Phases 1–4, the version scheme does not need to be followed strictly.
 
 ---
 
@@ -182,7 +182,7 @@ Pipelines live in `.github/workflows/`. Minimum required workflows:
 - [x] Light/dark theme in `sim-ui/`
 - No real serial/TCP logic yet; all data is mocked
 
-### Phase 3 — Rust Simulator Implementation `[ ]`
+### Phase 3 — Rust Simulator Implementation `[x]`
 - Full GCode interpreter matching FluidNC command set
 - TCP server exposing FluidNC WebSocket/serial protocol
 - Simulated machine state machine: idle, run, hold, alarm, homing
@@ -193,14 +193,7 @@ Pipelines live in `.github/workflows/`. Minimum required workflows:
 - Unit tests for all GCode handling and state transitions
 - sim-ui wired to live simulator TCP connection (replaces mockups from Phase 2)
 
-### Phase 4 — Release Cycle & Versioning `[ ]`
-- SemVer versioning applied; initial release `v0.1.0`
-- `release.yaml` GitHub Actions workflow: build → Trivy scan → push to ghcr.io → GitHub Release
-- `ui/docker-compose.yaml` finalized with versioned image tags
-- Branch protection rules on `main` and `test`
-- CHANGELOG introduced
-
-### Phase 5 — Functional UI Development `[ ]`
+### Phase 4 — Functional UI Development `[ ]`
 - Nuxt server routes: USB serial bridge (WebSerial via Bun serialport) + TCP/WiFi bridge
 - Real-time WebSocket stream from server routes to browser
 - FluidNC-specific features: firmware config read/write, soft-reset, unlock, homing, probing macros
@@ -208,6 +201,13 @@ Pipelines live in `.github/workflows/`. Minimum required workflows:
 - Replace all Phase 2 UI mockups with live-wired components
 - Full Vitest unit test suite for components and composables
 - Integration tests for serial/TCP bridge (using the Rust simulator as the target)
+
+### Phase 5 — Release Cycle & Versioning `[ ]`
+- SemVer versioning applied; initial release `v0.1.0`
+- `release.yaml` GitHub Actions workflow: build → Trivy scan → push to ghcr.io → GitHub Release
+- `ui/docker-compose.yaml` finalized with versioned image tags
+- Branch protection rules on `main` and `test`
+- CHANGELOG introduced
 
 ---
 

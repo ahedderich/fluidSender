@@ -75,6 +75,20 @@
       </div>
     </div>
 
+    <!-- Apply button -->
+    <button
+      @click="applyStock"
+      :disabled="applying"
+      :class="applyStatus === 'ok'
+        ? 'bg-green-600 hover:bg-green-500'
+        : applyStatus === 'err'
+          ? 'bg-red-600 hover:bg-red-500'
+          : 'bg-blue-600 hover:bg-blue-500'"
+      class="w-full py-1.5 text-xs font-medium text-white rounded transition-colors disabled:opacity-50"
+    >
+      {{ applyStatus === 'ok' ? 'Stock set' : applyStatus === 'err' ? 'Error' : applying ? 'Setting…' : 'Set Stock' }}
+    </button>
+
     <!-- Reference point section -->
     <div class="border-t border-gray-100 dark:border-slate-700 pt-2.5">
       <button
@@ -110,7 +124,46 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useSimStore } from '~/stores/sim'
 
 const s = useSimStore()
+
+const applying = ref(false)
+const applyStatus = ref<'idle' | 'ok' | 'err'>('idle')
+let resetTimer: ReturnType<typeof setTimeout> | null = null
+
+async function applyStock() {
+  applying.value = true
+  applyStatus.value = 'idle'
+
+  const shape = s.stock.shape === 'rect'
+    ? { type: 'rect' as const, width: s.stock.width, height: s.stock.height, rotation: s.stock.rotation }
+    : { type: 'round' as const, diameter: s.stock.diameter }
+
+  const body = {
+    shape,
+    depth: s.stock.depth,
+    ox: s.stock.ox,
+    oy: s.stock.oy,
+    oz: s.stock.oz,
+    hole: s.stock.hole?.enabled
+      ? { x: s.stock.hole.x, y: s.stock.hole.y, diameter: s.stock.hole.diameter, depth: s.stock.hole.depth }
+      : null,
+    point: s.stock.point?.enabled
+      ? { x: s.stock.point.x, y: s.stock.point.y, label: s.stock.point.label }
+      : null,
+  }
+
+  try {
+    await $fetch('/api/sim/stock', { method: 'POST', body })
+    applyStatus.value = 'ok'
+  } catch {
+    applyStatus.value = 'err'
+  } finally {
+    applying.value = false
+    if (resetTimer) clearTimeout(resetTimer)
+    resetTimer = setTimeout(() => { applyStatus.value = 'idle' }, 2000)
+  }
+}
 </script>

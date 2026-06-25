@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
 use tracing::info;
 
 use crate::machine::state::{
@@ -85,6 +86,7 @@ pub fn router(app: AppState) -> Router {
         .route("/api/machine/config", post(set_machine_config))
         .route("/api/stock", post(set_stock))
         .route("/ws/state", get(ws_state_handler))
+        .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(app)
 }
@@ -262,6 +264,7 @@ async fn set_stock(
     State(app): State<AppState>,
     Json(stock): Json<StockDefinition>,
 ) -> StatusCode {
+    info!("Stock updated: {:?}", stock.shape);
     let mut s = app.stock.write().await;
     *s = Some(stock);
     StatusCode::NO_CONTENT
