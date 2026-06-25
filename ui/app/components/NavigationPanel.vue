@@ -1,23 +1,23 @@
 <template>
   <div
-    class="bg-slate-800 dark:bg-slate-800 bg-white rounded-lg border border-slate-700 dark:border-slate-700 border-gray-200 p-3 flex flex-col gap-2.5 min-h-0"
+    class="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-3 flex flex-col gap-2"
   >
-    <!-- Header -->
+    <!-- Header + mode toggle -->
     <div class="flex items-center justify-between shrink-0">
-      <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-400 text-gray-500">
+      <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
         Navigation
       </h2>
-      <div class="flex items-center gap-0.5 bg-slate-900 dark:bg-slate-900 bg-gray-100 rounded-md p-0.5">
+      <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded-md p-0.5">
         <button
           @click="ui.navMode = 'buttons'"
-          :class="ui.navMode === 'buttons' ? 'bg-slate-700 dark:bg-slate-700 bg-white text-slate-200 dark:text-slate-200 text-gray-800 shadow-sm' : 'text-slate-500 dark:text-slate-500 text-gray-400'"
+          :class="ui.navMode === 'buttons' ? 'bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 shadow-sm' : 'text-gray-400 dark:text-slate-500'"
           class="px-2.5 py-1 rounded text-xs font-medium transition-all"
         >
           Buttons
         </button>
         <button
           @click="ui.navMode = 'joystick'"
-          :class="ui.navMode === 'joystick' ? 'bg-slate-700 dark:bg-slate-700 bg-white text-slate-200 dark:text-slate-200 text-gray-800 shadow-sm' : 'text-slate-500 dark:text-slate-500 text-gray-400'"
+          :class="ui.navMode === 'joystick' ? 'bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 shadow-sm' : 'text-gray-400 dark:text-slate-500'"
           class="px-2.5 py-1 rounded text-xs font-medium transition-all"
         >
           Joystick
@@ -25,108 +25,230 @@
       </div>
     </div>
 
-    <!-- Quick goto buttons -->
-    <div class="flex gap-1.5 shrink-0">
-      <button
-        @click="machine.sendCommand('$H')"
-        class="flex-1 py-2 bg-slate-700 dark:bg-slate-700 bg-gray-100 hover:bg-slate-600 dark:hover:bg-slate-600 hover:bg-gray-200 text-slate-300 dark:text-slate-300 text-gray-700 rounded-md text-xs font-medium transition-colors"
-      >
-        Parking
-      </button>
-      <button
-        @click="machine.sendCommand('G0 G54 X0 Y0')"
-        class="flex-1 py-2 bg-slate-700 dark:bg-slate-700 bg-gray-100 hover:bg-slate-600 dark:hover:bg-slate-600 hover:bg-gray-200 text-slate-300 dark:text-slate-300 text-gray-700 rounded-md text-xs font-medium transition-colors"
-      >
-        XY Zero
-      </button>
-      <button
-        @click="machine.sendCommand('G0 G54 Z0')"
-        class="flex-1 py-2 bg-slate-700 dark:bg-slate-700 bg-gray-100 hover:bg-slate-600 dark:hover:bg-slate-600 hover:bg-gray-200 text-slate-300 dark:text-slate-300 text-gray-700 rounded-md text-xs font-medium transition-colors"
-      >
-        Z Zero
-      </button>
-    </div>
+    <!-- 5-column body -->
+    <div class="flex gap-2 items-stretch shrink-0">
 
-    <!-- Main jog area -->
-    <div class="flex items-center gap-3 flex-1 min-h-0 justify-center">
-      <!-- XY: Button mode -->
-      <div v-if="ui.navMode === 'buttons'" class="grid grid-cols-3 gap-1.5">
+      <!-- Col 1: Speed value inputs -->
+      <div class="flex flex-col gap-1.5 shrink-0 w-28">
+        <div>
+          <label class="text-xs text-gray-400 dark:text-slate-500 block mb-0.5">Speed</label>
+          <div class="flex items-center gap-1">
+            <input
+              v-model.number="jogSpeed"
+              type="number"
+              min="1"
+              max="10000"
+              class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <span class="text-xs text-gray-400 shrink-0">mm/m</span>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 dark:text-slate-500 block mb-0.5">XY Step</label>
+          <div class="flex items-center gap-1">
+            <input
+              v-model.number="xyStepSize"
+              type="number"
+              min="0.001"
+              max="100"
+              step="0.1"
+              class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <span class="text-xs text-gray-400 shrink-0">mm</span>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 dark:text-slate-500 block mb-0.5">Z Step</label>
+          <div class="flex items-center gap-1">
+            <input
+              v-model.number="zStepSize"
+              type="number"
+              min="0.001"
+              max="100"
+              step="0.1"
+              class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <span class="text-xs text-gray-400 shrink-0">mm</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Col 2: Speed preset buttons -->
+      <div class="flex flex-col gap-1 shrink-0 w-14">
         <button
-          v-for="dir in xyDirs"
-          :key="dir.label"
-          @pointerdown="dir.label !== '○' ? startJog(dir.dx, dir.dy, 0) : null"
-          @pointerup="stopJog"
-          @pointerleave="stopJog"
-          @pointercancel="stopJog"
-          :class="dir.label === '○' ? 'bg-slate-900 dark:bg-slate-900 bg-gray-200 cursor-default text-slate-600 dark:text-slate-600 text-gray-400' : 'bg-slate-700 dark:bg-slate-700 bg-gray-100 hover:bg-blue-700 active:bg-blue-600 text-slate-200 dark:text-slate-200 text-gray-800 cursor-pointer'"
-          class="w-14 h-14 rounded-lg text-lg font-bold flex items-center justify-center transition-colors select-none touch-none"
+          v-for="(speed, i) in speeds"
+          :key="speed.label"
+          @click="selectSpeed(i)"
+          :class="activeSpeedIndex === i ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300'"
+          class="w-full flex-1 rounded-md text-xs font-medium transition-colors"
         >
-          {{ dir.label }}
+          {{ speed.label }}
         </button>
       </div>
 
-      <!-- XY: Joystick mode -->
-      <div v-else class="flex items-center justify-center">
-        <JoystickControl @move="onJoystickMove" />
+      <!-- Col 3: XY direction buttons or joystick — fixed footprint keeps panel height stable -->
+      <div class="flex-none flex items-center justify-center w-[9.75rem] min-h-[9.75rem] mx-4">
+        <div v-if="ui.navMode === 'buttons'" class="grid grid-cols-3 gap-1.5">
+          <button
+            v-for="dir in xyDirs"
+            :key="dir.label"
+            @pointerdown="dir.label !== '○' ? startJog(dir.dx, dir.dy, 0) : null"
+            @pointerup="stopJog"
+            @pointerleave="stopJog"
+            @pointercancel="stopJog"
+            :class="dir.label === '○' ? 'bg-gray-200 dark:bg-slate-900 cursor-default text-gray-400 dark:text-slate-600' : 'bg-gray-100 dark:bg-slate-700 hover:bg-blue-700 active:bg-blue-600 text-gray-800 dark:text-slate-200 cursor-pointer'"
+            class="w-12 h-12 rounded-lg text-lg font-bold flex items-center justify-center transition-colors select-none touch-none"
+          >
+            {{ dir.label }}
+          </button>
+        </div>
+        <div v-else>
+          <JoystickControl @move="onJoystickMove" />
+        </div>
       </div>
 
-      <!-- Z axis -->
-      <div class="flex flex-col items-center gap-1.5">
+      <!-- Col 4: Z axis (and future rotary axes) -->
+      <div class="flex flex-col items-center gap-3 shrink-0 w-12">
         <button
           @pointerdown="startJog(0, 0, 1)"
           @pointerup="stopJog"
           @pointerleave="stopJog"
           @pointercancel="stopJog"
-          class="w-12 h-14 bg-slate-700 dark:bg-slate-700 bg-gray-100 hover:bg-blue-700 active:bg-blue-600 text-slate-200 dark:text-slate-200 text-gray-800 rounded-lg text-lg font-bold flex items-center justify-center transition-colors select-none touch-none"
+          class="w-full flex-1 min-h-0 bg-gray-100 dark:bg-slate-700 hover:bg-blue-700 active:bg-blue-600 text-gray-800 dark:text-slate-200 rounded-lg text-lg font-bold flex items-center justify-center transition-colors select-none touch-none"
         >
           ▲
         </button>
-        <span class="text-xs font-bold text-slate-500 dark:text-slate-500 text-gray-400">Z</span>
+        <span class="text-xs font-bold text-gray-400 dark:text-slate-500 shrink-0 py-0.5">Z</span>
         <button
           @pointerdown="startJog(0, 0, -1)"
           @pointerup="stopJog"
           @pointerleave="stopJog"
           @pointercancel="stopJog"
-          class="w-12 h-14 bg-slate-700 dark:bg-slate-700 bg-gray-100 hover:bg-blue-700 active:bg-blue-600 text-slate-200 dark:text-slate-200 text-gray-800 rounded-lg text-lg font-bold flex items-center justify-center transition-colors select-none touch-none"
+          class="w-full flex-1 min-h-0 bg-gray-100 dark:bg-slate-700 hover:bg-blue-700 active:bg-blue-600 text-gray-800 dark:text-slate-200 rounded-lg text-lg font-bold flex items-center justify-center transition-colors select-none touch-none"
         >
           ▼
         </button>
       </div>
-    </div>
 
-    <!-- Speed + step size -->
-    <div class="flex items-center gap-2 shrink-0">
-      <span class="text-xs text-slate-500 dark:text-slate-500 text-gray-400 shrink-0">Speed</span>
-      <div class="flex gap-1 flex-1">
+      <!-- Col 5: Goto / parking buttons -->
+      <div class="flex flex-col gap-1 shrink-0 w-16 ml-4">
         <button
-          v-for="speed in speeds"
-          :key="speed.label"
-          @click="activeSpeed = speed"
-          :class="activeSpeed.label === speed.label ? 'bg-blue-600 text-white' : 'bg-slate-700 dark:bg-slate-700 bg-gray-100 hover:bg-slate-600 dark:hover:bg-slate-600 hover:bg-gray-200 text-slate-300 dark:text-slate-300 text-gray-700'"
-          class="flex-1 py-1.5 rounded-md text-xs font-medium transition-colors"
+          @click="machine.sendCommand('$H')"
+          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors truncate"
         >
-          {{ speed.label }}
+          Parking
+        </button>
+        <button
+          @click="machine.sendCommand('G0 G54 X0 Y0')"
+          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors"
+        >
+          → XY
+        </button>
+        <button
+          @click="machine.sendCommand('G0 G54 Z0')"
+          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors"
+        >
+          → Z
+        </button>
+        <button
+          @click="showGotoPos = !showGotoPos"
+          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors"
+        >
+          Goto Pos
         </button>
       </div>
-      <input
-        v-model.number="stepSize"
-        type="number"
-        min="0.01"
-        max="100"
-        step="0.1"
-        class="w-16 bg-slate-900 dark:bg-slate-900 bg-gray-50 border border-slate-600 dark:border-slate-600 border-gray-300 text-slate-200 dark:text-slate-200 text-gray-900 text-xs font-mono text-right px-2 py-1.5 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
-      />
-      <span class="text-xs text-slate-500 dark:text-slate-500 text-gray-400 shrink-0">mm</span>
+
     </div>
+
+    <!-- Goto Pos dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showGotoPos"
+        class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        @click.self="showGotoPos = false"
+      >
+        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-sm">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-slate-700">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-slate-100">Go to Position</h3>
+            <button
+              @click="showGotoPos = false"
+              class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 rounded transition-colors"
+            >
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="p-4 space-y-3">
+            <div class="flex gap-2">
+              <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded p-0.5 flex-1">
+                <button
+                  @click="gotoCoord = 'work'"
+                  :class="gotoCoord === 'work' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
+                  class="flex-1 py-1 rounded text-xs font-medium transition-all"
+                >Work</button>
+                <button
+                  @click="gotoCoord = 'machine'"
+                  :class="gotoCoord === 'machine' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
+                  class="flex-1 py-1 rounded text-xs font-medium transition-all"
+                >Machine</button>
+              </div>
+              <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded p-0.5 flex-1">
+                <button
+                  @click="setGotoMode('abs')"
+                  :class="gotoMode === 'abs' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
+                  class="flex-1 py-1 rounded text-xs font-medium transition-all"
+                >Abs</button>
+                <button
+                  @click="setGotoMode('rel')"
+                  :class="gotoMode === 'rel' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
+                  class="flex-1 py-1 rounded text-xs font-medium transition-all"
+                >Rel</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-2">
+              <div v-for="axis in ['X', 'Y', 'Z']" :key="axis">
+                <label class="text-xs text-gray-500 dark:text-slate-400 block mb-1">{{ axis }}</label>
+                <input
+                  v-model.number="gotoValues[axis]"
+                  type="number"
+                  step="0.001"
+                  class="w-full bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-sm font-mono text-right px-2 py-1.5 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+            <p class="text-xs text-gray-400 dark:text-slate-500">
+              {{ gotoMode === 'abs' ? (gotoCoord === 'work' ? 'Absolute work coordinates (G54)' : 'Absolute machine coordinates') : 'Relative move from current position' }}
+            </p>
+            <div class="flex gap-2 pt-1">
+              <button
+                @click="showGotoPos = false"
+                class="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                @click="executeGoto"
+                class="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                Go
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
 import { useUiStore } from '~/stores/ui'
+import { useSettingsStore } from '~/stores/settings'
 
 const machine = useMachineStore()
 const ui = useUiStore()
+const settings = useSettingsStore()
 
 const xyDirs = [
   { label: '↖', dx: -1, dy: 1 },
@@ -140,14 +262,26 @@ const xyDirs = [
   { label: '↘', dx: 1, dy: -1 },
 ]
 
-const speeds = [
-  { label: 'Slow', feedRate: 100 },
-  { label: 'Med', feedRate: 500 },
-  { label: 'Fast', feedRate: 2000 },
-]
+const speedPresets = computed(() => [
+  { label: 'Slow', feedRate: settings.app.jog.slowSpeed, xyStep: 0.1, zStep: 0.05 },
+  { label: 'Med', feedRate: settings.app.jog.mediumSpeed, xyStep: 1.0, zStep: 0.5 },
+  { label: 'Fast', feedRate: settings.app.jog.fastSpeed, xyStep: 5.0, zStep: 2.0 },
+])
+const speeds = speedPresets
 
-const activeSpeed = ref(speeds[1])
-const stepSize = ref(1.0)
+const activeSpeedIndex = ref(1)
+const jogSpeed = ref(speedPresets.value[1].feedRate)
+const xyStepSize = ref(speedPresets.value[1].xyStep)
+const zStepSize = ref(speedPresets.value[1].zStep)
+
+function selectSpeed(i: number) {
+  activeSpeedIndex.value = i
+  const preset = speedPresets.value[i]
+  jogSpeed.value = preset.feedRate
+  xyStepSize.value = preset.xyStep
+  zStepSize.value = preset.zStep
+}
+
 let jogInterval: ReturnType<typeof setInterval> | null = null
 let jogTimeout: ReturnType<typeof setTimeout> | null = null
 
@@ -159,17 +293,18 @@ function startJog(dx: number, dy: number, dz: number) {
 }
 
 function doJog(dx: number, dy: number, dz: number) {
-  const step = stepSize.value
-  const feed = activeSpeed.value.feedRate
+  const xyStep = xyStepSize.value
+  const zStep = zStepSize.value
+  const feed = jogSpeed.value
   const parts: string[] = []
-  if (dx !== 0) parts.push(`X${(dx * step).toFixed(3)}`)
-  if (dy !== 0) parts.push(`Y${(dy * step).toFixed(3)}`)
-  if (dz !== 0) parts.push(`Z${(dz * step).toFixed(3)}`)
+  if (dx !== 0) parts.push(`X${(dx * xyStep).toFixed(3)}`)
+  if (dy !== 0) parts.push(`Y${(dy * xyStep).toFixed(3)}`)
+  if (dz !== 0) parts.push(`Z${(dz * zStep).toFixed(3)}`)
   if (parts.length) {
     machine.sendCommand(`$J=G91 ${parts.join(' ')} F${feed}`)
-    if (dx !== 0) machine.workPos.x += dx * step
-    if (dy !== 0) machine.workPos.y += dy * step
-    if (dz !== 0) machine.workPos.z += dz * step
+    if (dx !== 0) machine.workPos.x += dx * xyStep
+    if (dy !== 0) machine.workPos.y += dy * xyStep
+    if (dz !== 0) machine.workPos.z += dz * zStep
   }
 }
 
@@ -186,8 +321,65 @@ function stopJog() {
 function onJoystickMove({ x, y, magnitude }: { x: number; y: number; magnitude: number }) {
   stopJog()
   if (magnitude < 0.1) return
-  const speed = magnitude * activeSpeed.value.feedRate
-  machine.sendCommand(`$J=G91 X${(x * stepSize.value).toFixed(3)} Y${(y * stepSize.value).toFixed(3)} F${Math.round(speed)}`)
+  const speed = magnitude * jogSpeed.value
+  machine.sendCommand(`$J=G91 X${(x * xyStepSize.value).toFixed(3)} Y${(y * xyStepSize.value).toFixed(3)} F${Math.round(speed)}`)
+}
+
+const showGotoPos = ref(false)
+const gotoCoord = ref<'work' | 'machine'>('work')
+const gotoMode = ref<'abs' | 'rel'>('abs')
+const gotoValues = reactive({ X: 0, Y: 0, Z: 0 })
+
+watch(showGotoPos, (open) => {
+  if (open) {
+    const pos = gotoCoord.value === 'work' ? machine.workPos : machine.machinePos
+    if (gotoMode.value === 'abs') {
+      gotoValues.X = parseFloat((pos.x ?? 0).toFixed(3))
+      gotoValues.Y = parseFloat((pos.y ?? 0).toFixed(3))
+      gotoValues.Z = parseFloat((pos.z ?? 0).toFixed(3))
+    } else {
+      gotoValues.X = 0
+      gotoValues.Y = 0
+      gotoValues.Z = 0
+    }
+  }
+})
+
+watch(gotoCoord, () => {
+  if (!showGotoPos.value) return
+  const pos = gotoCoord.value === 'work' ? machine.workPos : machine.machinePos
+  if (gotoMode.value === 'abs') {
+    gotoValues.X = parseFloat((pos.x ?? 0).toFixed(3))
+    gotoValues.Y = parseFloat((pos.y ?? 0).toFixed(3))
+    gotoValues.Z = parseFloat((pos.z ?? 0).toFixed(3))
+  }
+})
+
+function setGotoMode(mode: 'abs' | 'rel') {
+  gotoMode.value = mode
+  if (mode === 'rel') {
+    gotoValues.X = 0
+    gotoValues.Y = 0
+    gotoValues.Z = 0
+  } else {
+    const pos = gotoCoord.value === 'work' ? machine.workPos : machine.machinePos
+    gotoValues.X = parseFloat((pos.x ?? 0).toFixed(3))
+    gotoValues.Y = parseFloat((pos.y ?? 0).toFixed(3))
+    gotoValues.Z = parseFloat((pos.z ?? 0).toFixed(3))
+  }
+}
+
+function executeGoto() {
+  const x = gotoValues.X
+  const y = gotoValues.Y
+  const z = gotoValues.Z
+  if (gotoMode.value === 'abs') {
+    const coordSys = gotoCoord.value === 'work' ? 'G54' : 'G53'
+    machine.sendCommand(`G0 ${coordSys} X${x.toFixed(3)} Y${y.toFixed(3)} Z${z.toFixed(3)}`)
+  } else {
+    machine.sendCommand(`G0 G91 X${x.toFixed(3)} Y${y.toFixed(3)} Z${z.toFixed(3)} G90`)
+  }
+  showGotoPos.value = false
 }
 
 onUnmounted(() => stopJog())

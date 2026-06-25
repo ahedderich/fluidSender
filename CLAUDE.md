@@ -70,6 +70,22 @@ Browser
 - TCP/WiFi is an optional alternative; the UI must display a clear warning when the TCP mode is active.
 - The serial/TCP bridge is implemented entirely within Nuxt server routes using Bun's native serial and net APIs; no separate service is needed.
 
+### State Authority Model
+
+**This is a hard architectural rule — never violate it:**
+
+| Layer | Authoritative For | How |
+|---|---|---|
+| **FluidNC firmware** | All machine state: position, status, alarms, limit switches, firmware config | Polled via `?` (status) and `$S` / read via `$Config` on connect; firmware push events override poll results |
+| **Bun server (Nuxt)** | All UI/app state: job queue, preferences, connection config, active profile, auth | Stored in `config/app.yaml`; broadcast to every connected browser client via server-side WebSocket |
+
+**Consequences that must be upheld during implementation:**
+- Machine state is **never stored authoritatively in the browser or on the server** — only the firmware value is truth.
+- UI state lives on the server and is **pushed to all clients simultaneously**; multiple browser tabs or remote viewers always see identical state.
+- The browser holds only a **read replica** of server state and a **display cache** of firmware state — never the source of truth for either.
+- On reconnect, the server re-sends full current state to the new client; the client must not persist any state between page loads.
+- When writing machine config back to firmware (settings page "Write to FluidNC"), the updated values must be re-read from firmware after the write to confirm and update the local cache.
+
 ### Volumes (Docker)
 
 | Mount path in container | Purpose |

@@ -1,7 +1,7 @@
 <template>
   <div
     ref="joystickEl"
-    class="relative w-36 h-36 rounded-full bg-slate-900 dark:bg-slate-900 bg-gray-100 border-2 border-slate-600 dark:border-slate-600 border-gray-300 cursor-crosshair select-none touch-none"
+    class="relative w-36 h-36 rounded-full bg-gray-100 dark:bg-slate-900 border-2 border-gray-300 dark:border-slate-600 cursor-crosshair select-none touch-none"
     @pointerdown="onStart"
     @pointermove="onMove"
     @pointerup="onEnd"
@@ -20,10 +20,10 @@
     <div class="absolute rounded-full border border-slate-700 dark:border-slate-700 border-gray-300 inset-3" />
 
     <!-- Direction hints -->
-    <span class="absolute top-1.5 left-1/2 -translate-x-1/2 text-xs text-slate-600 dark:text-slate-600 text-gray-400 select-none pointer-events-none">Y+</span>
-    <span class="absolute bottom-1.5 left-1/2 -translate-x-1/2 text-xs text-slate-600 dark:text-slate-600 text-gray-400 select-none pointer-events-none">Y-</span>
-    <span class="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs text-slate-600 dark:text-slate-600 text-gray-400 select-none pointer-events-none">X+</span>
-    <span class="absolute left-1.5 top-1/2 -translate-y-1/2 text-xs text-slate-600 dark:text-slate-600 text-gray-400 select-none pointer-events-none">X-</span>
+    <span class="absolute top-1.5 left-1/2 -translate-x-1/2 text-xs text-gray-400 dark:text-slate-600 select-none pointer-events-none">Y+</span>
+    <span class="absolute bottom-1.5 left-1/2 -translate-x-1/2 text-xs text-gray-400 dark:text-slate-600 select-none pointer-events-none">Y-</span>
+    <span class="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 dark:text-slate-600 select-none pointer-events-none">X+</span>
+    <span class="absolute left-1.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 dark:text-slate-600 select-none pointer-events-none">X-</span>
 
     <!-- Draggable dot -->
     <div

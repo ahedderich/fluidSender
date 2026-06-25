@@ -1,14 +1,15 @@
 <template>
   <header
-    class="h-14 flex items-center px-3 gap-3 bg-slate-900 dark:bg-slate-900 bg-white border-b border-slate-700 dark:border-slate-700 border-gray-200 z-50 shadow-lg shrink-0"
+    class="h-14 flex items-center px-3 gap-3 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-700 z-50 shadow-lg shrink-0"
   >
-    <!-- Left: profile + connect -->
+    <!-- Left: machine selector + connect -->
     <div class="flex items-center gap-2 min-w-0 shrink-0">
       <select
-        v-model="machine.selectedProfile"
-        class="bg-slate-800 dark:bg-slate-800 bg-gray-100 text-slate-200 dark:text-slate-200 text-gray-900 border border-slate-600 dark:border-slate-600 border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-44 cursor-pointer"
+        :value="s.activeMachineId"
+        @change="(e) => s.selectMachine((e.target as HTMLSelectElement).value)"
+        class="bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-slate-200 border border-gray-300 dark:border-slate-600 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-44 cursor-pointer"
       >
-        <option v-for="p in machine.profiles" :key="p" :value="p">{{ p }}</option>
+        <option v-for="m in s.machines" :key="m.id" :value="m.id">{{ m.name }}</option>
       </select>
 
       <button
@@ -25,7 +26,7 @@
 
       <span
         v-if="machine.connected"
-        class="text-xs text-slate-400 dark:text-slate-400 text-gray-500 bg-slate-800 dark:bg-slate-800 bg-gray-100 px-2 py-1 rounded font-mono whitespace-nowrap border border-slate-700 dark:border-slate-700 border-gray-200"
+        class="text-xs text-gray-500 dark:text-slate-400 bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded font-mono whitespace-nowrap border border-gray-200 dark:border-slate-700"
       >
         FluidNC {{ machine.firmwareVersion }}
       </span>
@@ -50,8 +51,8 @@
 
       <button
         v-if="machine.connected"
-        @click="confirmRestart = true"
-        class="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700 dark:hover:bg-slate-700 hover:bg-gray-100 rounded-md transition-colors"
+        @click="restartFirmware"
+        class="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-md transition-colors"
         title="Restart firmware"
       >
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -63,36 +64,12 @@
         </svg>
       </button>
 
-      <!-- Restart confirm -->
-      <div
-        v-if="confirmRestart"
-        class="absolute top-16 left-1/2 -translate-x-1/2 bg-slate-800 dark:bg-slate-800 bg-white border border-slate-600 dark:border-slate-600 border-gray-300 rounded-lg shadow-xl p-4 z-50 flex flex-col gap-3"
-      >
-        <p class="text-sm text-slate-200 dark:text-slate-200 text-gray-800 font-medium">
-          Restart FluidNC firmware?
-        </p>
-        <div class="flex gap-2">
-          <button
-            @click="doRestart"
-            class="flex-1 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-md text-sm font-medium transition-colors"
-          >
-            Restart
-          </button>
-          <button
-            @click="confirmRestart = false"
-            class="flex-1 py-1.5 bg-slate-700 dark:bg-slate-700 bg-gray-200 hover:bg-slate-600 dark:hover:bg-slate-600 hover:bg-gray-300 text-slate-200 dark:text-slate-200 text-gray-700 rounded-md text-sm font-medium transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-
       <!-- Sensor status -->
       <div v-if="machine.connected" class="relative">
         <button
           @click="sensorOpen = !sensorOpen"
-          :class="anyTriggered ? 'text-red-400 bg-red-900/30' : 'text-slate-400 dark:text-slate-400 text-gray-500'"
-          class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md hover:bg-slate-700 dark:hover:bg-slate-700 hover:bg-gray-100 transition-colors text-sm"
+          :class="anyTriggered ? 'text-red-400 bg-red-900/30' : 'text-gray-500 dark:text-slate-400'"
+          class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors text-sm"
         >
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path
@@ -107,22 +84,22 @@
 
         <div
           v-if="sensorOpen"
-          class="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-60 bg-slate-800 dark:bg-slate-800 bg-white border border-slate-600 dark:border-slate-600 border-gray-200 rounded-lg shadow-2xl p-3 z-50"
+          class="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-60 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg shadow-2xl p-3 z-50"
         >
-          <div class="text-xs text-slate-400 dark:text-slate-400 text-gray-500 font-semibold mb-2 uppercase tracking-wide">
+          <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-2 uppercase tracking-wide">
             Limit Switches
           </div>
           <div
             v-for="sw in machine.limitSwitches"
             :key="sw.name"
-            class="flex items-center justify-between py-1.5 border-b border-slate-700 dark:border-slate-700 border-gray-100 last:border-0"
+            class="flex items-center justify-between py-1.5 border-b border-gray-100 dark:border-slate-700 last:border-0"
           >
-            <span class="text-sm text-slate-200 dark:text-slate-200 text-gray-800 font-mono">{{ sw.name }}</span>
+            <span class="text-sm text-gray-800 dark:text-slate-200 font-mono">{{ sw.name }}</span>
             <span
               :class="
                 sw.triggered
                   ? 'bg-red-500 text-white'
-                  : 'bg-emerald-900 dark:bg-emerald-900 bg-emerald-100 text-emerald-400 dark:text-emerald-400 text-emerald-700'
+                  : 'bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-400'
               "
               class="text-xs px-2 py-0.5 rounded-full font-medium"
             >
@@ -137,7 +114,7 @@
     <div class="flex items-center gap-1 shrink-0">
       <button
         v-if="ui.authEnabled"
-        class="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700 dark:hover:bg-slate-700 hover:bg-gray-100 rounded-md transition-colors"
+        class="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-md transition-colors"
         title="Account"
       >
         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -151,7 +128,7 @@
 
       <button
         @click="ui.toggleDarkMode()"
-        class="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700 dark:hover:bg-slate-700 hover:bg-gray-100 rounded-md transition-colors"
+        class="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-md transition-colors"
         :title="ui.darkMode ? 'Light mode' : 'Dark mode'"
       >
         <svg v-if="ui.darkMode" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -170,11 +147,16 @@
         </svg>
       </button>
 
-      <button
-        class="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700 dark:hover:bg-slate-700 hover:bg-gray-100 rounded-md transition-colors"
-        title="Settings"
+      <NuxtLink
+        :to="isSettings ? '/' : '/settings'"
+        :class="isSettings ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700'"
+        class="p-1.5 rounded-md transition-colors"
+        :title="isSettings ? 'Back to main' : 'Settings'"
       >
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <svg v-if="isSettings" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+        </svg>
+        <svg v-else class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path
             stroke-linecap="round"
             stroke-linejoin="round"
@@ -182,42 +164,52 @@
           />
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
-      </button>
+      </NuxtLink>
     </div>
   </header>
 </template>
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
+import { useSettingsStore } from '~/stores/settings'
 import { useUiStore } from '~/stores/ui'
+import { useConfirm } from '~/composables/useConfirm'
 
 const machine = useMachineStore()
+const s = useSettingsStore()
 const ui = useUiStore()
+const { confirm } = useConfirm()
+const route = useRoute()
+const isSettings = computed(() => route.path === '/settings')
 
 const sensorOpen = ref(false)
-const confirmRestart = ref(false)
 
 const anyTriggered = computed(() => machine.limitSwitches.some((s) => s.triggered))
 
 const statusClass = computed(() => {
   const base = 'min-w-24 text-center '
   const map: Record<string, string> = {
-    IDLE: base + 'bg-slate-700 dark:bg-slate-700 bg-gray-200 text-slate-200 dark:text-slate-200 text-gray-700',
+    IDLE: base + 'bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200',
     RUN: base + 'bg-blue-600 text-white',
     HOLD: base + 'bg-amber-600 text-white',
     ALARM: base + 'bg-red-600 text-white animate-pulse',
     HOME: base + 'bg-purple-600 text-white',
     DOOR: base + 'bg-orange-600 text-white',
-    SLEEP: base + 'bg-slate-600 dark:bg-slate-600 bg-gray-300 text-slate-300 dark:text-slate-300 text-gray-600',
+    SLEEP: base + 'bg-gray-300 dark:bg-slate-600 text-gray-600 dark:text-slate-300',
     CHECK: base + 'bg-teal-600 text-white',
-    DISCONNECTED: base + 'bg-slate-800 dark:bg-slate-800 bg-gray-100 text-slate-500 dark:text-slate-500 text-gray-400',
+    DISCONNECTED: base + 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500',
   }
   return map[machine.status] ?? map['DISCONNECTED']
 })
 
-function doRestart() {
-  confirmRestart.value = false
-  machine.sendCommand('$RS')
+async function restartFirmware() {
+  const ok = await confirm({
+    title: 'Restart FluidNC firmware?',
+    message: 'The controller will reboot. Any running job will be interrupted.',
+    confirmLabel: 'Restart',
+    danger: true,
+  })
+  if (ok) machine.sendCommand('$RS')
 }
 
 onMounted(() => {
@@ -225,9 +217,6 @@ onMounted(() => {
     const target = e.target as HTMLElement
     if (sensorOpen.value && !target.closest('[data-sensor-btn]')) {
       sensorOpen.value = false
-    }
-    if (confirmRestart.value && !target.closest('[data-restart-confirm]')) {
-      confirmRestart.value = false
     }
   })
 })
