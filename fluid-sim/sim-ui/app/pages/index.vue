@@ -8,7 +8,7 @@
     </div>
 
     <!-- Row 2: position | switches+probe | stock -->
-    <div class="grid gap-2 shrink-0" style="grid-template-columns: 1.8fr 1fr 1.2fr">
+    <div class="grid gap-2 shrink-0" style="grid-template-columns: 2fr 0.8fr 2fr">
       <PositionPanel />
       <LimitSwitchPanel />
       <StockPanel />

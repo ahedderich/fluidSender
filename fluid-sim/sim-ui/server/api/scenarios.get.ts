@@ -12,7 +12,7 @@ const DEFAULTS = [
     machineState: 'Idle',
     pos: { x: 150.0, y: 100.0, z: 5.0 },
     wco: { x: 0.0, y: 0.0, z: 0.0 },
-    stock: { shape: 'rect', width: 100, height: 80, depth: 20, ox: 100, oy: 60, diameter: 80, rotation: 0 },
+    stock: { shape: 'rect', width: 100, height: 80, depth: 20, ox: 100, oy: 60, oz: 5, diameter: 80, rotation: 0 },
   },
   {
     id: 'round-center',
@@ -22,7 +22,7 @@ const DEFAULTS = [
     machineState: 'Idle',
     pos: { x: 150.0, y: 100.0, z: 5.0 },
     wco: { x: 0.0, y: 0.0, z: 0.0 },
-    stock: { shape: 'round', width: 80, height: 80, depth: 20, ox: 110, oy: 60, diameter: 80, rotation: 0 },
+    stock: { shape: 'round', width: 80, height: 80, depth: 20, ox: 110, oy: 60, oz: 5, diameter: 80, rotation: 0 },
   },
   {
     id: 'rect-corner-xyz',
@@ -32,7 +32,7 @@ const DEFAULTS = [
     machineState: 'Idle',
     pos: { x: 95.0, y: 55.0, z: 5.0 },
     wco: { x: 0.0, y: 0.0, z: 0.0 },
-    stock: { shape: 'rect', width: 100, height: 80, depth: 20, ox: 100, oy: 60, diameter: 80, rotation: 0 },
+    stock: { shape: 'rect', width: 100, height: 80, depth: 20, ox: 100, oy: 60, oz: 5, diameter: 80, rotation: 0 },
   },
   {
     id: 'rotation-probe',
@@ -52,7 +52,7 @@ const DEFAULTS = [
     machineState: 'Idle',
     pos: { x: 150.0, y: 100.0, z: -5.0 },
     wco: { x: 150.0, y: 100.0, z: -5.0 },
-    stock: { shape: 'rect', width: 100, height: 80, depth: 20, ox: 100, oy: 60, diameter: 80, rotation: 0 },
+    stock: { shape: 'rect', width: 100, height: 80, depth: 20, ox: 100, oy: 60, oz: 5, diameter: 80, rotation: 0 },
   },
 ]
 

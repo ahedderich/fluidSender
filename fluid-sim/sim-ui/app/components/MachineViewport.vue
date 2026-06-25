@@ -98,9 +98,21 @@
               :r="Math.max(1, s.probe.tipDiameter / 2)"
               fill="#ef4444" fill-opacity="0.45" stroke="#ef4444" stroke-width="0.5" />
 
-            <!-- Axis labels -->
-            <text :x="s.travel.x + 2" y="4" font-size="5" fill="#9ca3af">X+</text>
-            <text x="2" :y="s.travel.y + 7" font-size="5" fill="#9ca3af">Y+</text>
+            <!-- X dimension (bottom) -->
+            <line x1="0" :y1="s.travel.y + 6" :x2="s.travel.x" :y2="s.travel.y + 6" stroke="#9ca3af" stroke-width="0.5" />
+            <line x1="0" :y1="s.travel.y + 4" x2="0" :y2="s.travel.y + 8" stroke="#9ca3af" stroke-width="0.5" />
+            <line :x1="s.travel.x" :y1="s.travel.y + 4" :x2="s.travel.x" :y2="s.travel.y + 8" stroke="#9ca3af" stroke-width="0.5" />
+            <text :x="s.travel.x / 2" :y="s.travel.y + 11" font-size="4.5" fill="#9ca3af" text-anchor="middle">{{ s.travel.x }} mm</text>
+
+            <!-- Y dimension (right side) -->
+            <line :x1="s.travel.x + 6" y1="0" :x2="s.travel.x + 6" :y2="s.travel.y" stroke="#9ca3af" stroke-width="0.5" />
+            <line :x1="s.travel.x + 4" y1="0" :x2="s.travel.x + 8" y2="0" stroke="#9ca3af" stroke-width="0.5" />
+            <line :x1="s.travel.x + 4" :y1="s.travel.y" :x2="s.travel.x + 8" :y2="s.travel.y" stroke="#9ca3af" stroke-width="0.5" />
+            <text
+              :x="s.travel.x + 6" :y="s.travel.y / 2"
+              font-size="4.5" fill="#9ca3af" text-anchor="middle"
+              :transform="`rotate(-90, ${s.travel.x + 6}, ${s.travel.y / 2})`"
+            >{{ s.travel.y }} mm</text>
           </svg>
         </div>
       </div>
@@ -121,12 +133,12 @@
               fill="#f3f4f6" stroke="#d1d5db" stroke-width="0.8" />
 
             <!-- Stock Z depth -->
-            <rect x="0" y="0" width="8" :height="s.stock.depth"
+            <rect x="0" :y="s.stock.oz" width="8" :height="s.stock.depth"
               fill="#bfdbfe" fill-opacity="0.7" stroke="#3b82f6" stroke-width="0.8" />
 
             <!-- Hole depth indicator (centered notch) -->
             <rect v-if="s.stock.hole.enabled"
-              x="2" y="0" width="4"
+              x="2" :y="s.stock.oz" width="4"
               :height="Math.min(s.stock.depth, s.stock.hole.depth)"
               fill="#f9fafb" fill-opacity="0.95"
               stroke="#6b7280" stroke-width="0.5" stroke-dasharray="1 0.5" />
@@ -135,9 +147,19 @@
             <line x1="-5" :y1="zToolY" x2="13" :y2="zToolY" stroke="#ef4444" stroke-width="0.8" />
             <circle cx="4" :cy="zToolY" r="1.5" fill="#ef4444" />
 
-            <!-- Labels -->
+            <!-- Z0 / -max labels -->
             <text x="-13" y="3.5" font-size="4" fill="#9ca3af">Z0</text>
             <text x="-13" :y="s.travel.z + 1" font-size="4" fill="#9ca3af">-{{ s.travel.z }}</text>
+
+            <!-- Z dimension (right side of bar) -->
+            <line x1="10" y1="0" x2="10" :y2="s.travel.z" stroke="#9ca3af" stroke-width="0.5" />
+            <line x1="9" y1="0" x2="11" y2="0" stroke="#9ca3af" stroke-width="0.5" />
+            <line x1="9" :y1="s.travel.z" x2="11" :y2="s.travel.z" stroke="#9ca3af" stroke-width="0.5" />
+            <text
+              x="13" :y="s.travel.z / 2"
+              font-size="4" fill="#9ca3af" text-anchor="middle"
+              :transform="`rotate(90, 13, ${s.travel.z / 2})`"
+            >{{ s.travel.z }} mm</text>
           </svg>
         </div>
       </div>

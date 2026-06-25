@@ -22,6 +22,7 @@ export interface Scenario {
     depth: number
     ox: number
     oy: number
+    oz: number
     diameter: number
     rotation: number
     hole?: { enabled: boolean; x: number; y: number; diameter: number; depth: number }
@@ -52,6 +53,7 @@ export const useSimStore = defineStore('sim', () => {
     depth: 20,
     ox: 100,
     oy: 60,
+    oz: 5,
     diameter: 80,
     rotation: 0,
     hole: {
@@ -68,6 +70,9 @@ export const useSimStore = defineStore('sim', () => {
       label: 'Datum',
     },
   })
+
+  // Simulation speed multiplier (1–10×) sent to the Rust sim backend.
+  const simSpeed = ref(1)
 
   // Touch probe
   const probe = reactive({ tipDiameter: 2.0, triggered: false })
@@ -133,7 +138,7 @@ export const useSimStore = defineStore('sim', () => {
   }
 
   return {
-    connected, machineState, axisCount,
+    connected, machineState, axisCount, simSpeed,
     pos, wco, wpos, travel,
     stock, probe, limits, fluidConfig,
     triggerProbe, triggerLimit, softReset, applyScenario,

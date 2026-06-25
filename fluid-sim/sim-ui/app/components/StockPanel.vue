@@ -28,20 +28,25 @@
       </button>
     </div>
 
-    <!-- Main dimensions -->
-    <div class="grid grid-cols-2 gap-x-3 gap-y-2">
+    <!-- Main dimensions — 4-column grid -->
+    <div class="grid grid-cols-4 gap-x-3 gap-y-2">
       <template v-if="s.stock.shape === 'rect'">
         <DimInput label="Width (X)" v-model="s.stock.width" unit="mm" :step="1" :min="1" />
         <DimInput label="Height (Y)" v-model="s.stock.height" unit="mm" :step="1" :min="1" />
         <DimInput label="Depth (Z)" v-model="s.stock.depth" unit="mm" :step="1" :min="1" />
         <DimInput label="Rotation" v-model="s.stock.rotation" unit="°" :step="1" />
+        <DimInput label="Origin X" v-model="s.stock.ox" unit="mm" :step="1" />
+        <DimInput label="Origin Y" v-model="s.stock.oy" unit="mm" :step="1" />
+        <DimInput label="Origin Z" v-model="s.stock.oz" unit="mm" :step="1" :min="0" />
       </template>
       <template v-else>
         <DimInput label="Diameter" v-model="s.stock.diameter" unit="mm" :step="1" :min="1" class="col-span-2" />
-        <DimInput label="Depth (Z)" v-model="s.stock.depth" unit="mm" :step="1" :min="1" class="col-span-2" />
+        <DimInput label="Depth (Z)" v-model="s.stock.depth" unit="mm" :step="1" :min="1" />
+        <div />
+        <DimInput label="Origin X" v-model="s.stock.ox" unit="mm" :step="1" />
+        <DimInput label="Origin Y" v-model="s.stock.oy" unit="mm" :step="1" />
+        <DimInput label="Origin Z" v-model="s.stock.oz" unit="mm" :step="1" :min="0" />
       </template>
-      <DimInput label="Origin X" v-model="s.stock.ox" unit="mm" :step="1" />
-      <DimInput label="Origin Y" v-model="s.stock.oy" unit="mm" :step="1" />
     </div>
 
     <!-- Hole section -->

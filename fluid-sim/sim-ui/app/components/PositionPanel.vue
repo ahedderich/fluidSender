@@ -53,12 +53,14 @@
           {{ axis }}
         </span>
 
-        <!-- Work position (read-only) -->
-        <div
-          class="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/50 rounded px-2 py-1 font-mono text-sm text-right text-blue-800 dark:text-blue-200"
-        >
-          {{ s.wpos[axis].toFixed(3) }}
-        </div>
+        <!-- Work position (editable — adjusts WCO) -->
+        <input
+          :value="s.wpos[axis].toFixed(3)"
+          @change="setWpos(axis, +($event.target as HTMLInputElement).value)"
+          type="number"
+          step="0.001"
+          class="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/50 rounded px-2 py-1 font-mono text-sm text-right text-blue-800 dark:text-blue-200 w-full focus:outline-none focus:ring-1 focus:ring-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
 
         <!-- Machine position (editable) + travel bar -->
         <div
@@ -141,6 +143,10 @@ function travelPercent(axis: AxisKey): number {
   // Z descends from home (negative); rotary axes and X/Y go positive
   const used = axis === 'z' ? -s.pos.z : Math.abs(s.pos[axis])
   return Math.min(100, Math.max(0, (used / max) * 100))
+}
+
+function setWpos(axis: AxisKey, value: number) {
+  s.wco[axis] = s.pos[axis] - value
 }
 
 function zeroAxis(axis: AxisKey) {

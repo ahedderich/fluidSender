@@ -25,7 +25,7 @@
       <button
         v-if="s.machineState === 'Alarm'"
         @click="s.softReset"
-        class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-sm font-medium transition-colors"
+        class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-xs font-medium transition-colors"
       >
         Clear Alarm
       </button>
@@ -44,6 +44,22 @@
         Soft Reset
       </button>
     </div>
+
+    <!-- Sim speed -->
+    <div class="flex items-center gap-2 shrink-0">
+      <span class="text-xs text-gray-400 dark:text-slate-500 whitespace-nowrap">Sim speed</span>
+      <input
+        v-model.number="s.simSpeed"
+        type="range"
+        min="1"
+        max="10"
+        step="1"
+        class="w-24 h-1.5 rounded-full appearance-none cursor-pointer accent-blue-600 bg-gray-200 dark:bg-slate-700"
+      />
+      <span class="text-xs font-bold font-mono text-blue-600 dark:text-blue-400 w-6 text-right">{{ s.simSpeed }}×</span>
+    </div>
+
+    <span class="h-4 w-px bg-gray-200 dark:bg-slate-700 shrink-0" />
 
     <!-- Right: theme toggle -->
     <button
