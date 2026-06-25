@@ -8,10 +8,14 @@ FluidSender is a native FluidNC client — not a generic GRBL sender. It impleme
 
 ## Features
 
-- **USB & TCP connectivity** — connect to FluidNC via USB serial (recommended) or TCP/WiFi
-- **Full FluidNC support** — all GCode commands, firmware config read/write, soft-reset, unlock, homing cycles, probing
-- **GCode file management** — upload, queue, and execute GCode jobs with real-time progress tracking
-- **Live machine status** — position, feed rate, spindle, alarms, and hold states updated in real time
+- **Multi-machine management** — configure, switch, and monitor multiple FluidNC machines from a single interface
+- **USB & TCP/WiFi connectivity** — USB serial (recommended) and TCP/WiFi with clear warnings when running over WiFi
+- **3D toolpath preview** — interactive toolpath visualization with webcam overlay support
+- **GCode file management** — upload, browse, and queue GCode jobs with real-time progress tracking
+- **Probing wizards** — guided workflows for edge finding, corner/center probing, and surface heightmap generation
+- **Tool & magazine management** — tool library with active tool tracking and load/unload workflow
+- **Spindle & coolant control** — full spindle (router/laser) and coolant (mist/flood) control with live overrides
+- **Configurable macros** — one-click macro buttons sourced from machine config or defined by the user
 - **Built-in terminal** — raw console access to the FluidNC serial stream
 - **FluidNC simulator** — Rust-based firmware emulator with configurable machine, stock, and failure modes
 - **Light/dark theme** — toggleable system-aware theming
@@ -141,8 +145,8 @@ Connect the main UI to the simulator by setting the connection type to TCP and p
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | Initial scaffolding | Planned |
-| 2 | UI design mockups | Planned |
+| 1 | Initial scaffolding | Complete |
+| 2 | UI design mockups | Complete |
 | 3 | Rust simulator implementation | Planned |
 | 4 | Release cycle & versioning | Planned |
 | 5 | Functional UI development | Planned |

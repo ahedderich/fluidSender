@@ -54,6 +54,7 @@ coverage/
 vitest.results.json
 htmlcov/
 .nyc_output/
+.playwright-cli/
 
 # -----------------------------------------------------------------------------
 # Rust (fluid-sim/sim/)
