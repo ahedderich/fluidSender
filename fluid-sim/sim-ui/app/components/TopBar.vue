@@ -31,7 +31,7 @@
       </button>
 
       <button
-        @click="() => { s.machineState = 'Alarm' }"
+        @click="s.triggerAlarm"
         class="px-3 py-1.5 bg-gray-100 dark:bg-slate-800 hover:bg-red-600 hover:text-white text-gray-600 dark:text-slate-300 rounded-md text-xs font-medium transition-colors"
       >
         Trigger Alarm
@@ -49,7 +49,8 @@
     <div class="flex items-center gap-2 shrink-0">
       <span class="text-xs text-gray-400 dark:text-slate-500 whitespace-nowrap">Sim speed</span>
       <input
-        v-model.number="s.simSpeed"
+        :value="s.simSpeed"
+        @change="(e) => s.setSimSpeed(Number((e.target as HTMLInputElement).value))"
         type="range"
         min="1"
         max="10"

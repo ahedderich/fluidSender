@@ -1,0 +1,8 @@
+server:
+  port: 3001
+  host: "0.0.0.0"
+
+simulator:
+  host: localhost
+  port: 8765         # FluidNC TCP protocol port (for the main FluidSender UI)
+  controlPort: 8766  # Simulator control API port (for this sim-ui)
