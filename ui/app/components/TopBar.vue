@@ -5,19 +5,27 @@
     <!-- Left: machine selector + connect -->
     <div class="flex items-center gap-2 min-w-0 shrink-0">
       <select
+        v-if="s.hasMachines"
         :value="s.activeMachineId"
         @change="(e) => s.selectMachine((e.target as HTMLSelectElement).value)"
         class="bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-slate-200 border border-gray-300 dark:border-slate-600 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-44 cursor-pointer"
       >
         <option v-for="m in s.machines" :key="m.id" :value="m.id">{{ m.name }}</option>
       </select>
+      <span
+        v-else
+        class="text-sm text-gray-400 dark:text-slate-500 bg-gray-100 dark:bg-slate-800 px-3 py-1.5 rounded-md border border-gray-200 dark:border-slate-700"
+      >No machine configured</span>
 
       <button
         @click="machine.connected ? machine.disconnect() : machine.connect()"
+        :disabled="!s.hasMachines"
         :class="
           machine.connected
             ? 'bg-emerald-700 hover:bg-emerald-600 text-white'
-            : 'bg-blue-600 hover:bg-blue-500 text-white'
+            : s.hasMachines
+              ? 'bg-blue-600 hover:bg-blue-500 text-white'
+              : 'bg-gray-300 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed'
         "
         class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
       >
@@ -147,16 +155,24 @@
         </svg>
       </button>
 
+      <!-- Back arrow only shown when machines exist; otherwise settings icon is always shown -->
       <NuxtLink
-        :to="isSettings ? '/' : '/settings'"
-        :class="isSettings ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700'"
-        class="p-1.5 rounded-md transition-colors"
-        :title="isSettings ? 'Back to main' : 'Settings'"
+        v-if="isSettings && s.hasMachines"
+        to="/"
+        class="p-1.5 rounded-md transition-colors text-blue-500 bg-blue-50 dark:bg-blue-900/30"
+        title="Back to main"
       >
-        <svg v-if="isSettings" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
         </svg>
-        <svg v-else class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      </NuxtLink>
+      <NuxtLink
+        v-else-if="!isSettings"
+        to="/settings"
+        class="p-1.5 rounded-md transition-colors text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700"
+        title="Settings"
+      >
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path
             stroke-linecap="round"
             stroke-linejoin="round"

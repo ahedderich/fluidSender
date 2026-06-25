@@ -182,101 +182,29 @@ export interface KeyboardShortcuts {
   speedFast: string
 }
 
+interface PersistedConfig {
+  auth?: { enabled?: boolean }
+  machines?: MachineProfile[]
+  app?: {
+    units?: UnitSystem
+    macros?: MacroButton[]
+    viewport?: { defaultView?: ViewKey; showGrid?: boolean; showAxes?: boolean }
+    jog?: Partial<JogSettings>
+    shortcuts?: Partial<KeyboardShortcuts>
+  }
+}
+
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 export const useSettingsStore = defineStore('settings', () => {
-  const machines = ref<MachineProfile[]>([
-    {
-      id: 'machine-1',
-      name: 'My CNC Router',
-      type: 'router',
-      connection: { type: 'usb', serialPort: '/dev/ttyUSB0', baudRate: 115200, tcpHost: '192.168.1.100', tcpPort: 23 },
-      probe: { plateThickness: 15.0, toolSetterHeight: 50.0, tipDiameter: 3.0, xyFeed: 200, zFeed: 100 },
-      macros: [
-        { id: 'mm1', label: 'Park Z', command: 'G0 Z0' },
-        { id: 'mm2', label: 'Goto XY0', command: 'G0 G54 X0 Y0' },
-      ],
-      magazine: { enabled: true, size: 8 },
-      fluidncConfig: {
-        name: 'My CNC Router',
-        board: 'ESP32 Dev',
-        reportInches: false,
-        arcToleranceMm: 0.002,
-        junctionDeviationMm: 0.01,
-        plannerBlocks: 16,
-        stepping: {
-          engine: 'RMT',
-          idleMs: 255,
-          pulseUs: 4,
-          dirDelayUs: 0,
-          disableDelayUs: 0,
-        },
-        axes: {
-          x: {
-            stepsPerMm: 80,
-            maxRateMmPerMin: 5000,
-            accelerationMmPerSec2: 200,
-            maxTravelMm: 400,
-            softLimits: false,
-            idleDisable: false,
-            homing: { cycle: 2, allowSingleAxis: true, positiveDirection: false, mpos: 0, feedRate: 200, seekRate: 1000, settleMs: 250, seekScaler: 1.1, feedScaler: 1.1 },
-            motor0: { limitNegPin: 'gpio.34', limitPosPin: 'NO_PIN', hardLimits: false, pulloffMm: 1.0 },
-          },
-          y: {
-            stepsPerMm: 80,
-            maxRateMmPerMin: 5000,
-            accelerationMmPerSec2: 200,
-            maxTravelMm: 300,
-            softLimits: false,
-            idleDisable: false,
-            homing: { cycle: 2, allowSingleAxis: true, positiveDirection: false, mpos: 0, feedRate: 200, seekRate: 1000, settleMs: 250, seekScaler: 1.1, feedScaler: 1.1 },
-            motor0: { limitNegPin: 'gpio.35', limitPosPin: 'NO_PIN', hardLimits: false, pulloffMm: 1.0 },
-          },
-          z: {
-            stepsPerMm: 80,
-            maxRateMmPerMin: 3000,
-            accelerationMmPerSec2: 100,
-            maxTravelMm: 100,
-            softLimits: false,
-            idleDisable: false,
-            homing: { cycle: 1, allowSingleAxis: true, positiveDirection: true, mpos: 0, feedRate: 100, seekRate: 500, settleMs: 250, seekScaler: 1.1, feedScaler: 1.1 },
-            motor0: { limitNegPin: 'NO_PIN', limitPosPin: 'gpio.36', hardLimits: false, pulloffMm: 1.0 },
-          },
-        },
-        spindle: {
-          type: 'PWMSpindle',
-          outputPin: 'gpio.22',
-          enablePin: 'gpio.21:low',
-          directionPin: 'NO_PIN',
-          pwmFreq: 5000,
-          spinupMs: 0,
-          spindownMs: 0,
-          minRpm: 0,
-          maxRpm: 24000,
-          disableWithZeroSpeed: true,
-        },
-        probe: { pin: 'gpio.35:low', toolsetterPin: 'NO_PIN', checkModeStart: true, hardStop: false },
-        coolant: { floodPin: 'gpio.26', mistPin: 'NO_PIN', delayMs: 0 },
-        control: { safetyDoorPin: 'NO_PIN', resetPin: 'NO_PIN', feedHoldPin: 'NO_PIN', cycleStartPin: 'NO_PIN' },
-        start: { mustHome: false, checkLimits: true },
-        macros: { startupLine0: '', startupLine1: '', afterHoming: '', afterReset: '', afterUnlock: '' },
-      },
-    },
-    {
-      id: 'machine-2',
-      name: 'Laser Engraver',
-      type: 'laser',
-      connection: { type: 'tcp', serialPort: '', baudRate: 115200, tcpHost: '192.168.1.101', tcpPort: 23 },
-      probe: { plateThickness: 0, toolSetterHeight: 0, tipDiameter: 0, xyFeed: 100, zFeed: 50 },
-      macros: [],
-      magazine: { enabled: false, size: 0 },
-      fluidncConfig: null,
-    },
-  ])
+  const initialized = ref(false)
+  const saving = ref(false)
 
-  const activeMachineId = ref('machine-1')
+  const machines = ref<MachineProfile[]>([])
+  const activeMachineId = ref('')
 
   const activeMachine = computed(() => machines.value.find((m) => m.id === activeMachineId.value) ?? null)
+  const hasMachines = computed(() => machines.value.length > 0)
 
   function selectMachine(id: string) {
     activeMachineId.value = id
@@ -288,7 +216,7 @@ export const useSettingsStore = defineStore('settings', () => {
       id,
       name: 'New Machine',
       type: 'router',
-      connection: { type: 'usb', serialPort: '', baudRate: 115200, tcpHost: '', tcpPort: 23 },
+      connection: { type: 'tcp', serialPort: '', baudRate: 115200, tcpHost: '', tcpPort: 23 },
       probe: { plateThickness: 0, toolSetterHeight: 0, tipDiameter: 3.0, xyFeed: 200, zFeed: 100 },
       macros: [],
       magazine: { enabled: false, size: 0 },
@@ -298,22 +226,18 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function removeMachine(id: string) {
-    if (machines.value.length <= 1) return
     const idx = machines.value.findIndex((m) => m.id === id)
     if (idx === -1) return
     machines.value.splice(idx, 1)
-    if (activeMachineId.value === id) activeMachineId.value = machines.value[0].id
+    if (activeMachineId.value === id) {
+      activeMachineId.value = machines.value[0]?.id ?? ''
+    }
   }
 
   // FluidSender app-level settings — authoritative on Bun server, pushed to all clients
   const app = reactive({
     units: 'mm' as UnitSystem,
-    macros: [
-      { id: 'app-m1', label: 'Spindle On', command: 'M3 S8000' },
-      { id: 'app-m2', label: 'Spindle Off', command: 'M5' },
-      { id: 'app-m3', label: 'Coolant On', command: 'M8' },
-      { id: 'app-m4', label: 'Coolant Off', command: 'M9' },
-    ] as MacroButton[],
+    macros: [] as MacroButton[],
     viewport: {
       defaultView: 'iso' as ViewKey,
       showGrid: true,
@@ -343,9 +267,52 @@ export const useSettingsStore = defineStore('settings', () => {
     } as KeyboardShortcuts,
     auth: {
       enabled: false,
-      users: [{ id: 'user-1', username: 'admin', role: 'admin' as UserRole }] as UserAccount[],
+      users: [] as UserAccount[],
     },
   })
+
+  async function hydrate() {
+    if (initialized.value) return
+    try {
+      const data = await $fetch<PersistedConfig>('/api/config')
+      machines.value = data.machines ?? []
+      activeMachineId.value = machines.value[0]?.id ?? ''
+      if (data.auth) {
+        app.auth.enabled = data.auth.enabled ?? false
+      }
+      if (data.app) {
+        if (data.app.units) app.units = data.app.units
+        if (data.app.macros) app.macros = data.app.macros
+        if (data.app.viewport) Object.assign(app.viewport, data.app.viewport)
+        if (data.app.jog) Object.assign(app.jog, data.app.jog)
+        if (data.app.shortcuts) Object.assign(app.shortcuts, data.app.shortcuts)
+      }
+    } finally {
+      initialized.value = true
+    }
+  }
+
+  async function save() {
+    saving.value = true
+    try {
+      await $fetch('/api/config', {
+        method: 'PUT',
+        body: {
+          auth: { enabled: app.auth.enabled },
+          machines: machines.value,
+          app: {
+            units: app.units,
+            macros: app.macros,
+            viewport: app.viewport,
+            jog: app.jog,
+            shortcuts: app.shortcuts,
+          },
+        },
+      })
+    } finally {
+      saving.value = false
+    }
+  }
 
   function addAppMacro(label: string, command: string) {
     app.macros.push({ id: `macro-${Date.now()}`, label, command })
@@ -376,12 +343,17 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   return {
+    initialized,
+    saving,
     machines,
     activeMachineId,
     activeMachine,
+    hasMachines,
     selectMachine,
     addMachine,
     removeMachine,
+    hydrate,
+    save,
     addAppMacro,
     removeAppMacro,
     addMachineMacro,

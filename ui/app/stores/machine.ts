@@ -61,71 +61,31 @@ export interface Job {
 
 export const useMachineStore = defineStore('machine', () => {
   const connected = ref(false)
-  const firmwareVersion = ref('3.7.14')
+  const firmwareVersion = ref('')
   const status = ref<MachineStatus>('DISCONNECTED')
 
-  const machinePos = ref<Position>({ x: -150.25, y: -80.0, z: -12.5 })
-  const workPos = ref<Position>({ x: 50.5, y: 25.0, z: -5.25 })
+  const machinePos = ref<Position>({ x: 0, y: 0, z: 0 })
+  const workPos = ref<Position>({ x: 0, y: 0, z: 0 })
 
   const feedOverride = ref(100)
   const spindleOverride = ref(100)
 
   const spindleOn = ref(false)
-  const spindleRpm = ref(8000)
+  const spindleRpm = ref(0)
   const spindleDir = ref<'cw' | 'ccw'>('cw')
   const coolant = ref<'off' | 'mist' | 'flood'>('off')
 
-  const limitSwitches = ref<LimitSwitch[]>([
-    { name: 'X_MIN', triggered: false },
-    { name: 'X_MAX', triggered: false },
-    { name: 'Y_MIN', triggered: false },
-    { name: 'Y_MAX', triggered: false },
-    { name: 'Z_MIN', triggered: true },
-    { name: 'Z_MAX', triggered: false },
-    { name: 'PROBE', triggered: false },
-  ])
+  const limitSwitches = ref<LimitSwitch[]>([])
 
   let _entryId = 0
-  const consoleLog = ref<ConsoleEntry[]>([
-    { id: _entryId++, type: 'info', text: 'FluidSender v0.0.1 ready', ts: Date.now() - 8000 },
-  ])
+  const consoleLog = ref<ConsoleEntry[]>([])
 
-  const job = ref<Job | null>({
-    filename: 'bracket_v3.nc',
-    totalLines: 2847,
-    currentLine: 0,
-    progress: 0,
-    estimatedRuntime: 3240,
-    startTime: null,
-    axisRanges: {
-      x: { min: 0.0, max: 200.0 },
-      y: { min: 0.0, max: 150.0 },
-      z: { min: -25.0, max: 0.0 },
-    },
-  })
+  const job = ref<Job | null>(null)
 
-  const tools = ref<Tool[]>([
-    { number: 1, description: '6mm End Mill — Roughing', lineStart: 1, lineEnd: 847 },
-    { number: 2, description: '3mm Ball Nose — Finishing', lineStart: 848, lineEnd: 2047 },
-    { number: 3, description: '1mm Engraving Bit — Detail', lineStart: 2048, lineEnd: 2847 },
-  ])
+  const tools = ref<Tool[]>([])
+  const toolLibrary = ref<ToolLibraryEntry[]>([])
 
-  const _now = Date.now()
-  const toolLibrary = ref<ToolLibraryEntry[]>([
-    { id: 'lib-1', number: 1, name: '6mm Flat End Mill', type: 'flat end mill', diameter: 6, fluteCount: 4, fluteLength: 19, overallLength: 63, material: 'carbide', usageMinutes: 272, lastUsed: _now - 2 * 86_400_000, source: 'M' },
-    { id: 'lib-2', number: 2, name: '3mm Ball Nose', type: 'ball end mill', diameter: 3, fluteCount: 2, fluteLength: 10, overallLength: 50, material: 'carbide', usageMinutes: 138, lastUsed: _now - 2 * 86_400_000, source: 'M' },
-    { id: 'lib-3', number: 3, name: '1mm Engraving Bit', type: 'v-cutter', diameter: 1, fluteCount: 1, fluteLength: 4, overallLength: 38, material: 'carbide', usageMinutes: 45, lastUsed: _now - 5 * 86_400_000, source: 'M' },
-    { id: 'lib-4', number: 4, name: '10mm Flat End Mill', type: 'flat end mill', diameter: 10, fluteCount: 4, fluteLength: 30, overallLength: 80, material: 'carbide', usageMinutes: 735, lastUsed: _now - 10 * 86_400_000, source: 'A' },
-    { id: 'lib-5', number: 5, name: '6mm Ball Nose', type: 'ball end mill', diameter: 6, fluteCount: 2, fluteLength: 20, overallLength: 65, material: 'carbide', usageMinutes: 192, lastUsed: _now - 7 * 86_400_000, source: 'A' },
-    { id: 'lib-6', number: 6, name: '8mm Roughing End Mill', type: 'flat end mill', diameter: 8, fluteCount: 3, fluteLength: 25, overallLength: 75, material: 'carbide', usageMinutes: 525, lastUsed: _now - 14 * 86_400_000, source: 'A' },
-    { id: 'lib-7', number: 7, name: '2mm Drill', type: 'drill', diameter: 2, fluteCount: 2, fluteLength: 15, overallLength: 45, material: 'hss', usageMinutes: 80, lastUsed: _now - 30 * 86_400_000, source: 'A' },
-    { id: 'lib-8', number: 8, name: '45° V-Cutter', type: 'v-cutter', diameter: 6, fluteCount: 2, fluteLength: 8, overallLength: 55, material: 'carbide', usageMinutes: 30, lastUsed: _now - 60 * 86_400_000, source: 'A' },
-    { id: 'lib-9', number: 9, name: '12mm Face Mill', type: 'face mill', diameter: 12, fluteCount: 3, fluteLength: 15, overallLength: 70, material: 'carbide', usageMinutes: 410, lastUsed: _now - 20 * 86_400_000, source: 'A' },
-    { id: 'lib-10', number: 10, name: 'M3 Tap', type: 'tap', diameter: 3, fluteCount: 3, overallLength: 45, material: 'hss', usageMinutes: 15, lastUsed: _now - 90 * 86_400_000, source: 'A' },
-  ])
-
-  // magazine slot assignments: index = slot (0-based), value = tool number or null
-  const magazineSlots = ref<(number | null)[]>([1, 2, 3, null, null, null, null, null])
+  const magazineSlots = ref<(number | null)[]>([])
 
   function setToolLibrary(entries: ToolLibraryEntry[]) {
     toolLibrary.value = entries
@@ -133,14 +93,26 @@ export const useMachineStore = defineStore('machine', () => {
 
   function connect() {
     connected.value = true
+    firmwareVersion.value = '3.7.14'
     status.value = 'IDLE'
+    limitSwitches.value = [
+      { name: 'X_MIN', triggered: false },
+      { name: 'X_MAX', triggered: false },
+      { name: 'Y_MIN', triggered: false },
+      { name: 'Y_MAX', triggered: false },
+      { name: 'Z_MIN', triggered: false },
+      { name: 'Z_MAX', triggered: false },
+      { name: 'PROBE', triggered: false },
+    ]
     addConsole('recv', `Grbl 3.7.14 [FluidNC v${firmwareVersion.value}] ready`)
     addConsole('recv', `[MSG: Machine: Connected]`)
   }
 
   function disconnect() {
     connected.value = false
+    firmwareVersion.value = ''
     status.value = 'DISCONNECTED'
+    limitSwitches.value = []
     addConsole('info', 'Disconnected')
   }
 

@@ -72,8 +72,30 @@
     <!-- Right panel -->
     <section class="flex-1 overflow-y-auto">
 
+      <!-- ── No machines yet ── -->
+      <div v-if="!editingMachine && panel !== 'app'" class="flex-1 flex items-center justify-center p-8">
+        <div class="text-center max-w-xs">
+          <div class="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center mx-auto mb-5">
+            <svg class="w-8 h-8 text-blue-500 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" />
+            </svg>
+          </div>
+          <h2 class="text-base font-semibold text-gray-900 dark:text-slate-100 mb-2">Add your first machine</h2>
+          <p class="text-sm text-gray-500 dark:text-slate-400 mb-6 leading-relaxed">
+            Configure a connection to your FluidNC controller to get started.
+          </p>
+          <button
+            type="button"
+            @click="addMachine"
+            class="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            Add Machine
+          </button>
+        </div>
+      </div>
+
       <!-- ── Machine Settings ── -->
-      <div v-if="editingMachine" class="p-5 space-y-4 max-w-3xl">
+      <div v-else-if="editingMachine" class="p-5 space-y-4 max-w-3xl">
 
         <!-- Machine header -->
         <div class="flex items-start justify-between">
@@ -89,7 +111,6 @@
                 : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400'"
             >{{ isEditingConnected ? 'Connected' : 'Offline' }}</span>
             <button
-              v-if="s.machines.length > 1"
               type="button"
               @click="removeMachine(editingMachine.id)"
               class="p-1.5 text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
@@ -595,6 +616,20 @@
             </div>
           </template>
         </template>
+
+        <!-- Save Machine Settings -->
+        <div class="pb-2 pt-1">
+          <button
+            type="button"
+            @click="saveMachineSettings"
+            :disabled="s.saving"
+            class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {{ s.saving ? 'Saving…' : 'Save Machine Settings' }}
+          </button>
+          <p v-if="saveError" class="mt-2 text-xs text-red-500 dark:text-red-400 text-center">{{ saveError }}</p>
+          <p v-if="saveSuccess" class="mt-2 text-xs text-emerald-600 dark:text-emerald-400 text-center">Settings saved.</p>
+        </div>
       </div>
 
       <!-- ── App Settings ── -->
@@ -913,9 +948,15 @@
         </template>
 
         <div class="pb-2">
-          <button type="button" class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors">
-            Save App Settings
+          <button
+            type="button"
+            @click="saveAppSettings"
+            :disabled="s.saving"
+            class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {{ s.saving ? 'Saving…' : 'Save App Settings' }}
           </button>
+          <p v-if="saveSuccess" class="mt-2 text-xs text-emerald-600 dark:text-emerald-400 text-center">Settings saved.</p>
         </div>
       </div>
 
@@ -936,7 +977,7 @@ const machine = useMachineStore()
 const { confirm } = useConfirm()
 
 // Which sidebar panel is shown: a machine id or 'app'
-const panel = ref<string>(s.activeMachineId)
+const panel = ref<string>(s.activeMachineId || (s.machines[0]?.id ?? ''))
 
 const editingMachine = computed(() => {
   if (panel.value === 'app') return null
@@ -961,16 +1002,47 @@ function addMachine() {
 }
 
 async function removeMachine(id: string) {
-  const machine = s.machines.find((m) => m.id === id)
+  const m = s.machines.find((mc) => mc.id === id)
   const ok = await confirm({
-    title: `Remove "${machine?.name ?? 'machine'}"?`,
+    title: `Remove "${m?.name ?? 'machine'}"?`,
     message: 'This will permanently delete the machine profile and all its settings.',
     confirmLabel: 'Remove',
     danger: true,
   })
   if (!ok) return
   s.removeMachine(id)
-  panel.value = s.activeMachineId
+  await s.save()
+  panel.value = s.activeMachineId || ''
+}
+
+const saveError = ref('')
+const saveSuccess = ref(false)
+let saveSuccessTimer: ReturnType<typeof setTimeout> | null = null
+
+async function saveMachineSettings() {
+  saveError.value = ''
+  saveSuccess.value = false
+  try {
+    await s.save()
+    saveSuccess.value = true
+    if (saveSuccessTimer) clearTimeout(saveSuccessTimer)
+    saveSuccessTimer = setTimeout(() => { saveSuccess.value = false }, 3000)
+  } catch {
+    saveError.value = 'Failed to save settings. Check server connection.'
+  }
+}
+
+async function saveAppSettings() {
+  saveError.value = ''
+  saveSuccess.value = false
+  try {
+    await s.save()
+    saveSuccess.value = true
+    if (saveSuccessTimer) clearTimeout(saveSuccessTimer)
+    saveSuccessTimer = setTimeout(() => { saveSuccess.value = false }, 3000)
+  } catch {
+    saveError.value = 'Failed to save settings.'
+  }
 }
 
 async function writeToFluidNC() {
