@@ -1,16 +1,38 @@
 import { defineStore } from 'pinia'
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 
 export type MachineState = 'Idle' | 'Run' | 'Hold' | 'Alarm' | 'Homing' | 'Door'
 export type StockShape = 'rect' | 'round'
 export type LimitKey = 'xMin' | 'xMax' | 'yMin' | 'yMax' | 'zMin' | 'zMax'
 
+export interface Scenario {
+  id: string
+  name: string
+  description?: string
+  machineState: MachineState
+  pos: { x: number; y: number; z: number }
+  wco: { x: number; y: number; z: number }
+  stock: {
+    shape: StockShape
+    width: number
+    height: number
+    depth: number
+    ox: number
+    oy: number
+    diameter: number
+    rotation: number
+  }
+}
+
 export const useSimStore = defineStore('sim', () => {
   const connected = ref(false)
   const machineState = ref<MachineState>('Idle')
 
-  // Work position in mm. Z is negative when cutting into the material.
-  const pos = reactive({ x: 45.0, y: 30.0, z: -5.0 })
+  // Machine position in mm. Z is negative when the spindle descends from home.
+  const pos = reactive({ x: 150.0, y: 100.0, z: 5.0 })
+
+  // Work coordinate offset. WPos = MPos - WCO.
+  const wco = reactive({ x: 0.0, y: 0.0, z: 0.0 })
 
   // Machine travel envelope in mm
   const travel = reactive({ x: 300, y: 200, z: 80 })
@@ -21,8 +43,8 @@ export const useSimStore = defineStore('sim', () => {
     width: 100,
     height: 80,
     depth: 20,
-    ox: 10,
-    oy: 10,
+    ox: 100,
+    oy: 60,
     diameter: 80,
     rotation: 0,
   })
@@ -62,6 +84,13 @@ export const useSimStore = defineStore('sim', () => {
     'axes/z/homing/cycle': '1',
   })
 
+  // Derived work position
+  const wpos = computed(() => ({
+    x: pos.x - wco.x,
+    y: pos.y - wco.y,
+    z: pos.z - wco.z,
+  }))
+
   function triggerProbe() {
     probe.triggered = true
     setTimeout(() => {
@@ -87,10 +116,19 @@ export const useSimStore = defineStore('sim', () => {
     probe.triggered = false
   }
 
+  function applyScenario(s: Scenario) {
+    machineState.value = s.machineState
+    Object.assign(pos, s.pos)
+    Object.assign(wco, s.wco)
+    Object.assign(stock, s.stock)
+  }
+
   return {
     connected,
     machineState,
     pos,
+    wco,
+    wpos,
     travel,
     stock,
     probe,
@@ -99,5 +137,6 @@ export const useSimStore = defineStore('sim', () => {
     triggerProbe,
     triggerLimit,
     softReset,
+    applyScenario,
   }
 })
