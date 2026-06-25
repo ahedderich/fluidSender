@@ -175,11 +175,11 @@ Pipelines live in `.github/workflows/`. Minimum required workflows:
 - GitHub Actions CI skeleton (lint + type-check only)
 - `config/` and `data/` volume structure defined with example files
 
-### Phase 2 — UI Design Mockups `[~]`
+### Phase 2 — UI Design Mockups `[x]`
 - [x] Static Vue mockup of main `ui/` interface: 3D toolpath viewport, DRO, jog controls, job panel, file browser, probing wizards, tool management, spindle/coolant, macros, console, settings page
 - [x] Light/dark theme implemented and togglable in `ui/`
-- [ ] Static Vue mockup of `fluid-sim/sim-ui/`: machine state viewer, dimension configurator, sensor triggers, stock definition, probe tip config, reset controls ← **in progress**
-- [ ] Light/dark theme in `sim-ui/`
+- [x] Static Vue mockup of `fluid-sim/sim-ui/`: machine state viewer, dimension configurator, sensor triggers, stock definition, probe tip config, reset controls
+- [x] Light/dark theme in `sim-ui/`
 - No real serial/TCP logic yet; all data is mocked
 
 ### Phase 3 — Rust Simulator Implementation `[ ]`
