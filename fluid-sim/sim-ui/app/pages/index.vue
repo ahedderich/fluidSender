@@ -1,17 +1,16 @@
 <template>
   <main class="flex-1 overflow-y-auto flex flex-col gap-2 p-2 min-h-0">
 
-    <!-- Row 1: machine view (32rem tall) | scenarios -->
+    <!-- Row 1: machine view | scenarios -->
     <div class="grid gap-2 shrink-0" style="grid-template-columns: 1fr 22rem; height: 32rem">
       <MachineViewport />
       <ScenariosPanel />
     </div>
 
-    <!-- Row 2: position | limit switches | probe | stock -->
-    <div class="grid gap-2 shrink-0" style="grid-template-columns: 1.6fr 1fr 1fr 1.4fr">
+    <!-- Row 2: position | switches+probe | stock -->
+    <div class="grid gap-2 shrink-0" style="grid-template-columns: 1.8fr 1fr 1.2fr">
       <PositionPanel />
       <LimitSwitchPanel />
-      <ProbePanel />
       <StockPanel />
     </div>
 

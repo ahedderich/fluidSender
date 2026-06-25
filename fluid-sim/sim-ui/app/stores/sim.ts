@@ -3,15 +3,18 @@ import { ref, reactive, computed } from 'vue'
 
 export type MachineState = 'Idle' | 'Run' | 'Hold' | 'Alarm' | 'Homing' | 'Door'
 export type StockShape = 'rect' | 'round'
-export type LimitKey = 'xMin' | 'xMax' | 'yMin' | 'yMax' | 'zMin' | 'zMax'
+export type LimitKey = 'xMin' | 'xMax' | 'yMin' | 'yMax' | 'zMin' | 'zMax' | 'door'
+
+export const AXES = ['x', 'y', 'z', 'a', 'b', 'c'] as const
+export type AxisKey = (typeof AXES)[number]
 
 export interface Scenario {
   id: string
   name: string
   description?: string
   machineState: MachineState
-  pos: { x: number; y: number; z: number }
-  wco: { x: number; y: number; z: number }
+  pos: Partial<Record<AxisKey, number>>
+  wco: Partial<Record<AxisKey, number>>
   stock: {
     shape: StockShape
     width: number
@@ -21,21 +24,25 @@ export interface Scenario {
     oy: number
     diameter: number
     rotation: number
+    hole?: { enabled: boolean; x: number; y: number; diameter: number; depth: number }
+    point?: { enabled: boolean; x: number; y: number; label: string }
   }
 }
 
 export const useSimStore = defineStore('sim', () => {
   const connected = ref(false)
   const machineState = ref<MachineState>('Idle')
+  const axisCount = ref(3)
 
-  // Machine position in mm. Z is negative when the spindle descends from home.
-  const pos = reactive({ x: 150.0, y: 100.0, z: 5.0 })
+  // Machine position in mm (linear) or ° (rotary A/B/C).
+  // Z is negative when the spindle descends from home.
+  const pos = reactive<Record<AxisKey, number>>({ x: 150.0, y: 100.0, z: 5.0, a: 0.0, b: 0.0, c: 0.0 })
 
   // Work coordinate offset. WPos = MPos - WCO.
-  const wco = reactive({ x: 0.0, y: 0.0, z: 0.0 })
+  const wco = reactive<Record<AxisKey, number>>({ x: 0.0, y: 0.0, z: 0.0, a: 0.0, b: 0.0, c: 0.0 })
 
-  // Machine travel envelope in mm
-  const travel = reactive({ x: 300, y: 200, z: 80 })
+  // Machine travel envelope (mm for linear, ° for rotary)
+  const travel = reactive<Record<AxisKey, number>>({ x: 300, y: 200, z: 80, a: 360, b: 360, c: 360 })
 
   // Stock definition
   const stock = reactive({
@@ -47,22 +54,30 @@ export const useSimStore = defineStore('sim', () => {
     oy: 60,
     diameter: 80,
     rotation: 0,
+    hole: {
+      enabled: false,
+      x: 50,       // center X relative to stock origin (ox)
+      y: 40,       // center Y relative to stock origin (oy)
+      diameter: 20,
+      depth: 20,
+    },
+    point: {
+      enabled: false,
+      x: 0,        // relative to stock origin (ox)
+      y: 0,        // relative to stock origin (oy)
+      label: 'Datum',
+    },
   })
 
   // Touch probe
-  const probe = reactive({
-    tipDiameter: 2.0,
-    triggered: false,
-  })
+  const probe = reactive({ tipDiameter: 2.0, triggered: false })
 
-  // Limit switch momentary states
-  const limits = reactive({
-    xMin: false,
-    xMax: false,
-    yMin: false,
-    yMax: false,
-    zMin: false,
-    zMax: false,
+  // Limit switches + door sensor — all momentary
+  const limits = reactive<Record<LimitKey, boolean>>({
+    xMin: false, xMax: false,
+    yMin: false, yMax: false,
+    zMin: false, zMax: false,
+    door: false,
   })
 
   // FluidNC config key-value pairs
@@ -84,59 +99,43 @@ export const useSimStore = defineStore('sim', () => {
     'axes/z/homing/cycle': '1',
   })
 
-  // Derived work position
-  const wpos = computed(() => ({
-    x: pos.x - wco.x,
-    y: pos.y - wco.y,
-    z: pos.z - wco.z,
-  }))
+  // Derived work position for all axes
+  const wpos = computed(() =>
+    Object.fromEntries(AXES.map((a) => [a, pos[a] - wco[a]])) as Record<AxisKey, number>,
+  )
 
   function triggerProbe() {
     probe.triggered = true
-    setTimeout(() => {
-      probe.triggered = false
-    }, 500)
+    setTimeout(() => { probe.triggered = false }, 500)
   }
 
   function triggerLimit(key: LimitKey) {
     limits[key] = true
-    setTimeout(() => {
-      limits[key] = false
-    }, 500)
+    setTimeout(() => { limits[key] = false }, 500)
   }
 
   function softReset() {
     machineState.value = 'Idle'
-    limits.xMin = false
-    limits.xMax = false
-    limits.yMin = false
-    limits.yMax = false
-    limits.zMin = false
-    limits.zMax = false
+    for (const k of Object.keys(limits) as LimitKey[]) limits[k] = false
     probe.triggered = false
   }
 
-  function applyScenario(s: Scenario) {
-    machineState.value = s.machineState
-    Object.assign(pos, s.pos)
-    Object.assign(wco, s.wco)
-    Object.assign(stock, s.stock)
+  function applyScenario(scenario: Scenario) {
+    machineState.value = scenario.machineState
+    for (const a of AXES) {
+      pos[a] = scenario.pos[a] ?? 0
+      wco[a] = scenario.wco[a] ?? 0
+    }
+    const { hole, point, ...stockBase } = scenario.stock
+    Object.assign(stock, stockBase)
+    if (hole) Object.assign(stock.hole, hole)
+    if (point) Object.assign(stock.point, point)
   }
 
   return {
-    connected,
-    machineState,
-    pos,
-    wco,
-    wpos,
-    travel,
-    stock,
-    probe,
-    limits,
-    fluidConfig,
-    triggerProbe,
-    triggerLimit,
-    softReset,
-    applyScenario,
+    connected, machineState, axisCount,
+    pos, wco, wpos, travel,
+    stock, probe, limits, fluidConfig,
+    triggerProbe, triggerLimit, softReset, applyScenario,
   }
 })
