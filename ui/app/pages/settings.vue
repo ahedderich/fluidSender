@@ -989,7 +989,7 @@ const isEditingConnected = computed(
 )
 
 function isMachineConnected(id: string): boolean {
-  return machine.connected && s.activeMachineId === id
+  return machine.connected && machine.connectedMachineId === id
 }
 
 function openMachine(id: string) {

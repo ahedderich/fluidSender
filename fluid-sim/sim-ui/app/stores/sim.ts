@@ -5,6 +5,15 @@ export type MachineState = 'Idle' | 'Run' | 'Hold' | 'Alarm' | 'Homing' | 'Door'
 export type StockShape = 'rect' | 'round'
 export type LimitKey = 'xMin' | 'xMax' | 'yMin' | 'yMax' | 'zMin' | 'zMax' | 'door'
 
+/** One line of FluidNC protocol traffic streamed from the sim (`/ws/console`). */
+export interface ConsoleLine {
+  /** "rx" = request received by the sim, "tx" = response sent by the sim. */
+  dir: 'rx' | 'tx'
+  source: string
+  text: string
+  ts: number
+}
+
 export const AXES = ['x', 'y', 'z', 'a', 'b', 'c'] as const
 export type AxisKey = (typeof AXES)[number]
 
@@ -36,8 +45,8 @@ export const useSimStore = defineStore('sim', () => {
   const axisCount = ref(3)
 
   // Machine position in mm (linear) or ° (rotary A/B/C).
-  // Z is negative when the spindle descends from home.
-  const pos = reactive<Record<AxisKey, number>>({ x: 150.0, y: 100.0, z: 5.0, a: 0.0, b: 0.0, c: 0.0 })
+  // X and Y home at 0; work area is negative. Z home at 0; descends negative.
+  const pos = reactive<Record<AxisKey, number>>({ x: -150.0, y: -100.0, z: 5.0, a: 0.0, b: 0.0, c: 0.0 })
 
   // Work coordinate offset. WPos = MPos - WCO.
   const wco = reactive<Record<AxisKey, number>>({ x: 0.0, y: 0.0, z: 0.0, a: 0.0, b: 0.0, c: 0.0 })
@@ -45,14 +54,14 @@ export const useSimStore = defineStore('sim', () => {
   // Machine travel envelope (mm for linear, ° for rotary)
   const travel = reactive<Record<AxisKey, number>>({ x: 300, y: 200, z: 80, a: 360, b: 360, c: 360 })
 
-  // Stock definition
+  // Stock definition. ox/oy are machine coords (negative — work area is in negative XY quadrant).
   const stock = reactive({
     shape: 'rect' as StockShape,
     width: 100,
     height: 80,
     depth: 20,
-    ox: 100,
-    oy: 60,
+    ox: -200,
+    oy: -140,
     oz: 5,
     diameter: 80,
     rotation: 0,
@@ -103,6 +112,21 @@ export const useSimStore = defineStore('sim', () => {
     'axes/y/homing/cycle': '2',
     'axes/z/homing/cycle': '1',
   })
+
+  // FluidNC protocol traffic streamed from the sim (display-only console)
+  const CONSOLE_LIMIT = 500
+  const consoleLog = ref<ConsoleLine[]>([])
+
+  function pushConsoleLine(line: ConsoleLine) {
+    consoleLog.value.push(line)
+    if (consoleLog.value.length > CONSOLE_LIMIT) {
+      consoleLog.value.splice(0, consoleLog.value.length - CONSOLE_LIMIT)
+    }
+  }
+
+  function clearConsole() {
+    consoleLog.value = []
+  }
 
   // Derived work position for all axes
   const wpos = computed(() =>
@@ -230,6 +254,7 @@ export const useSimStore = defineStore('sim', () => {
     connected, machineState, axisCount, simSpeed,
     pos, wco, wpos, travel,
     stock, probe, limits, fluidConfig,
+    consoleLog, pushConsoleLine, clearConsole,
     triggerProbe, triggerLimit, softReset, triggerAlarm,
     setSimSpeed, setPosition, setWco, pushStockToSim, applyScenario,
   }

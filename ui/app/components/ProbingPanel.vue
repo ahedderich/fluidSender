@@ -20,77 +20,100 @@
 
       <!-- Stock Definition -->
       <template v-if="activeTab === 'stock'">
-        <!-- Stock type badge + Set Stock button -->
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-slate-200">
-            <svg v-if="stock.shape === 'rect'" class="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-              <rect x="3" y="6" width="18" height="12" rx="1" />
-            </svg>
-            <svg v-else class="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-              <circle cx="12" cy="12" r="9" />
-            </svg>
-            {{ stock.shape === 'rect' ? 'Rectangle' : 'Round' }}
+        <!-- No stock set -->
+        <template v-if="!machine.stock">
+          <div class="flex flex-col items-center justify-center py-10 gap-3">
+            <p class="text-sm text-gray-400 dark:text-slate-500">No stock defined</p>
+            <button
+              @click="openStockDialog"
+              class="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
+            >
+              Set Stock
+            </button>
           </div>
-          <button
-            @click="openStockDialog"
-            class="px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg transition-colors"
-          >
-            Set Stock
-          </button>
-        </div>
+        </template>
 
-        <!-- Dimensions table -->
-        <div class="rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="bg-gray-50 dark:bg-slate-900 border-b border-gray-200 dark:border-slate-700">
-                <th class="text-left px-3 py-2 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Dimension</th>
-                <th class="text-right px-3 py-2 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Entered</th>
-                <th class="text-right px-3 py-2 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Measured</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100 dark:divide-slate-700">
-              <template v-if="stock.shape === 'rect'">
-                <tr>
-                  <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Width (X)</td>
-                  <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ stock.width }} mm</td>
-                  <td class="px-3 py-2.5 text-right font-mono">
-                    <span v-if="measured.width !== null" class="text-emerald-600 dark:text-emerald-400">{{ measured.width.toFixed(3) }} mm</span>
-                    <span v-else class="text-gray-300 dark:text-slate-600">—</span>
-                  </td>
+        <template v-else>
+          <!-- Stock type badge + Edit / Clear buttons -->
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-slate-200">
+              <svg v-if="machine.stock.shape === 'rect'" class="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="6" width="18" height="12" rx="1" />
+              </svg>
+              <svg v-else class="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="12" r="9" />
+              </svg>
+              {{ machine.stock.shape === 'rect' ? 'Rectangle' : 'Round' }}
+            </div>
+            <div class="flex gap-1.5">
+              <button
+                @click="openStockDialog"
+                class="px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg transition-colors"
+              >
+                Edit
+              </button>
+              <button
+                @click="machine.clearStock()"
+                class="px-3 py-1.5 text-xs font-medium bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400 rounded-lg transition-colors"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <!-- Dimensions table -->
+          <div class="rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="bg-gray-50 dark:bg-slate-900 border-b border-gray-200 dark:border-slate-700">
+                  <th class="text-left px-3 py-2 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Dimension</th>
+                  <th class="text-right px-3 py-2 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Entered</th>
+                  <th class="text-right px-3 py-2 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Measured</th>
                 </tr>
-                <tr>
-                  <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Length (Y)</td>
-                  <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ stock.depth }} mm</td>
-                  <td class="px-3 py-2.5 text-right font-mono">
-                    <span v-if="measured.depth !== null" class="text-emerald-600 dark:text-emerald-400">{{ measured.depth.toFixed(3) }} mm</span>
-                    <span v-else class="text-gray-300 dark:text-slate-600">—</span>
-                  </td>
-                </tr>
-                <tr>
-                  <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Height (Z)</td>
-                  <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ stock.height }} mm</td>
-                  <td class="px-3 py-2.5 text-right font-mono text-gray-300 dark:text-slate-600">—</td>
-                </tr>
-              </template>
-              <template v-else>
-                <tr>
-                  <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Diameter</td>
-                  <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ stock.diameter }} mm</td>
-                  <td class="px-3 py-2.5 text-right font-mono">
-                    <span v-if="measured.diameter !== null" class="text-emerald-600 dark:text-emerald-400">{{ measured.diameter.toFixed(3) }} mm</span>
-                    <span v-else class="text-gray-300 dark:text-slate-600">—</span>
-                  </td>
-                </tr>
-                <tr>
-                  <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Height (Z)</td>
-                  <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ stock.height }} mm</td>
-                  <td class="px-3 py-2.5 text-right font-mono text-gray-300 dark:text-slate-600">—</td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody class="divide-y divide-gray-100 dark:divide-slate-700">
+                <template v-if="machine.stock.shape === 'rect'">
+                  <tr>
+                    <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Width (X)</td>
+                    <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ machine.stock.width }} mm</td>
+                    <td class="px-3 py-2.5 text-right font-mono">
+                      <span v-if="measured.width !== null" class="text-emerald-600 dark:text-emerald-400">{{ measured.width.toFixed(3) }} mm</span>
+                      <span v-else class="text-gray-300 dark:text-slate-600">—</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Length (Y)</td>
+                    <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ machine.stock.height }} mm</td>
+                    <td class="px-3 py-2.5 text-right font-mono">
+                      <span v-if="measured.depth !== null" class="text-emerald-600 dark:text-emerald-400">{{ measured.depth.toFixed(3) }} mm</span>
+                      <span v-else class="text-gray-300 dark:text-slate-600">—</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Height (Z)</td>
+                    <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ machine.stock.depth }} mm</td>
+                    <td class="px-3 py-2.5 text-right font-mono text-gray-300 dark:text-slate-600">—</td>
+                  </tr>
+                </template>
+                <template v-else>
+                  <tr>
+                    <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Diameter</td>
+                    <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ machine.stock.diameter }} mm</td>
+                    <td class="px-3 py-2.5 text-right font-mono">
+                      <span v-if="measured.diameter !== null" class="text-emerald-600 dark:text-emerald-400">{{ measured.diameter.toFixed(3) }} mm</span>
+                      <span v-else class="text-gray-300 dark:text-slate-600">—</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Height (Z)</td>
+                    <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ machine.stock.depth }} mm</td>
+                    <td class="px-3 py-2.5 text-right font-mono text-gray-300 dark:text-slate-600">—</td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </template>
       </template>
 
       <!-- XYZ Probing -->
@@ -213,7 +236,7 @@
     <Teleport to="body">
       <div
         v-if="showStockDialog"
-        class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
         @click.self="showStockDialog = false"
       >
         <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-sm">
@@ -260,14 +283,14 @@
               <template v-if="dialogStock.shape === 'rect'">
                 <div class="grid grid-cols-2 gap-2">
                   <DimInput label="Width (X)" v-model="dialogStock.width" unit="mm" :min="0" />
-                  <DimInput label="Length (Y)" v-model="dialogStock.depth" unit="mm" :min="0" />
-                  <DimInput label="Height (Z)" v-model="dialogStock.height" unit="mm" :min="0" />
+                  <DimInput label="Length (Y)" v-model="dialogStock.height" unit="mm" :min="0" />
+                  <DimInput label="Height (Z)" v-model="dialogStock.depth" unit="mm" :min="0" />
                 </div>
               </template>
               <template v-else>
                 <div class="grid grid-cols-2 gap-2">
                   <DimInput label="Diameter" v-model="dialogStock.diameter" unit="mm" :min="0" />
-                  <DimInput label="Height (Z)" v-model="dialogStock.height" unit="mm" :min="0" />
+                  <DimInput label="Height (Z)" v-model="dialogStock.depth" unit="mm" :min="0" />
                 </div>
               </template>
             </div>
@@ -295,7 +318,7 @@
     <Teleport to="body">
       <div
         v-if="showHeightmapModal"
-        class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
         @click.self="showHeightmapModal = false"
       >
         <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-lg">
@@ -336,7 +359,7 @@
     <Teleport to="body">
       <div
         v-if="activeWizard"
-        class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
         @click.self="activeWizard = null"
       >
         <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-md">
@@ -406,8 +429,12 @@
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
+import { useNav } from '~/composables/useNav'
+import { useModals } from '~/composables/useModals'
 
 const machine = useMachineStore()
+const modals = useModals()
+const { probingTab: activeTab, activeWizard, wizardStep } = useNav()
 
 const tabs = [
   { key: 'stock', label: 'Stock' },
@@ -417,32 +444,49 @@ const tabs = [
   { key: 'heightmap', label: 'Heightmap' },
 ]
 
-const activeTab = ref('stock')
-
-const stock = reactive({
-  shape: 'rect' as 'rect' | 'round',
-  width: 200,
-  depth: 150,
-  height: 25,
-  diameter: 50,
-})
-
 const measured = reactive({
   width: null as number | null,
   depth: null as number | null,
   diameter: null as number | null,
 })
 
-const showStockDialog = ref(false)
-const dialogStock = reactive({ ...stock })
+// Open/close synced via the modal stack; dialog field values stay local.
+const stockModal = modals.active('stock')
+const showStockDialog = computed<boolean>({
+  get: () => !!stockModal.value,
+  set: (open) => {
+    if (open) modals.open('stock')
+    else if (stockModal.value) modals.resolve(stockModal.value.id)
+  },
+})
+
+// dialogStock field names match StockDef: height = Y-length (rect), depth = Z-thickness
+const dialogStock = reactive({ shape: 'rect' as 'rect' | 'round', width: 200, height: 150, depth: 25, diameter: 50 })
+
+function seedDialog() {
+  const s = machine.stock
+  Object.assign(dialogStock, s
+    ? { shape: s.shape, width: s.width ?? 200, height: s.height ?? 150, depth: s.depth, diameter: s.diameter ?? 50 }
+    : { shape: 'rect', width: 200, height: 150, depth: 25, diameter: 50 }
+  )
+}
+
+// Seed the local form whenever the dialog opens (including when opened remotely).
+watch(showStockDialog, (open) => { if (open) seedDialog() })
 
 function openStockDialog() {
-  Object.assign(dialogStock, stock)
+  seedDialog()
   showStockDialog.value = true
 }
 
 function applyStockDialog() {
-  Object.assign(stock, dialogStock)
+  machine.setStock({
+    shape: dialogStock.shape,
+    width: dialogStock.width,
+    height: dialogStock.height,
+    depth: dialogStock.depth,
+    diameter: dialogStock.diameter,
+  })
   measured.width = null
   measured.depth = null
   measured.diameter = null
@@ -459,8 +503,6 @@ const edgeDirs = [
   { key: 'z-neg', label: 'Z- Surface', icon: '↓Z' },
 ]
 
-const activeWizard = ref<string | null>(null)
-const wizardStep = ref(0)
 
 const wizardConfigs: Record<string, { title: string; steps: string[]; instructions: string[] }> = {
   corner: {
@@ -527,8 +569,8 @@ const wizardSteps = computed(() => (activeWizard.value ? (wizardConfigs[activeWi
 const wizardInstructions = computed(() => (activeWizard.value ? (wizardConfigs[activeWizard.value]?.instructions ?? []) : []))
 
 function openWizard(key: string) {
+  // Setting the wizard also resets the step to 0 (see useNav).
   activeWizard.value = key
-  wizardStep.value = 0
 }
 
 function runProbe() {
@@ -540,7 +582,14 @@ function runProbe() {
 }
 
 const hasHeightmap = ref(false)
-const showHeightmapModal = ref(false)
+const heightmapModal = modals.active('heightmap')
+const showHeightmapModal = computed<boolean>({
+  get: () => !!heightmapModal.value,
+  set: (open) => {
+    if (open) modals.open('heightmap')
+    else if (heightmapModal.value) modals.resolve(heightmapModal.value.id)
+  },
+})
 const heightmap = reactive({ gridX: 5, gridY: 5, depth: 2, feed: 100 })
 
 function cellColor(i: number): string {

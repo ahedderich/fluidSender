@@ -9,15 +9,12 @@
       leave-to-class="opacity-0"
     >
       <div
-        v-if="c.visible.value"
+        v-if="entry"
         class="fixed inset-0 z-50 flex items-center justify-center p-4"
-        @keydown.esc="c.dismiss()"
+        @keydown.esc="dismiss()"
       >
         <!-- Backdrop -->
-        <div
-          class="absolute inset-0 bg-black/50 backdrop-blur-sm"
-          @click="c.dismiss()"
-        />
+        <div class="absolute inset-0 bg-black/20" @click="dismiss()" />
 
         <!-- Modal -->
         <Transition
@@ -29,34 +26,34 @@
           leave-to-class="opacity-0 scale-95"
         >
           <div
-            v-if="c.visible.value"
+            v-if="entry"
             class="relative bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-600 shadow-2xl p-5 w-80 max-w-full"
             @click.stop
           >
             <h3 class="text-sm font-semibold text-gray-900 dark:text-slate-100">
-              {{ c.opts.title }}
+              {{ opts.title }}
             </h3>
-            <p v-if="c.opts.message" class="mt-1.5 text-sm text-gray-500 dark:text-slate-400 leading-relaxed">
-              {{ c.opts.message }}
+            <p v-if="opts.message" class="mt-1.5 text-sm text-gray-500 dark:text-slate-400 leading-relaxed">
+              {{ opts.message }}
             </p>
 
             <div class="flex gap-2 mt-4">
               <button
                 type="button"
-                @click="c.accept()"
+                @click="accept()"
                 class="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
-                :class="c.opts.danger
+                :class="opts.danger
                   ? 'bg-red-600 hover:bg-red-500 text-white'
                   : 'bg-blue-600 hover:bg-blue-500 text-white'"
               >
-                {{ c.opts.confirmLabel }}
+                {{ opts.confirmLabel }}
               </button>
               <button
                 type="button"
-                @click="c.dismiss()"
+                @click="dismiss()"
                 class="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors"
               >
-                {{ c.opts.cancelLabel }}
+                {{ opts.cancelLabel }}
               </button>
             </div>
           </div>
@@ -67,6 +64,25 @@
 </template>
 
 <script setup lang="ts">
-import { useConfirm } from '~/composables/useConfirm'
-const c = useConfirm()
+import { computed } from 'vue'
+import { useModals } from '~/composables/useModals'
+
+interface ConfirmProps {
+  title: string
+  message?: string
+  confirmLabel?: string
+  cancelLabel?: string
+  danger?: boolean
+}
+
+const modals = useModals()
+const entry = computed(() => modals.modals.find((m) => m.kind === 'confirm') ?? null)
+const opts = computed<ConfirmProps>(() => (entry.value?.props as ConfirmProps) ?? { title: '' })
+
+function accept() {
+  if (entry.value) modals.resolve(entry.value.id, true)
+}
+function dismiss() {
+  if (entry.value) modals.resolve(entry.value.id, false)
+}
 </script>

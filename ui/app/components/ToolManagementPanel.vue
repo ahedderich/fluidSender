@@ -295,7 +295,7 @@
     <Teleport to="body">
       <div
         v-if="showToolModal"
-        class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
         @click.self="showToolModal = false"
       >
         <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-sm">
@@ -477,7 +477,7 @@
     <Teleport to="body">
       <div
         v-if="showExportModal"
-        class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
         @click.self="showExportModal = false"
       >
         <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-sm">
@@ -584,19 +584,39 @@ const SourceBadge = defineComponent({
 <script setup lang="ts">
 import { defineComponent, h } from 'vue'
 import { useMachineStore, type ToolLibraryEntry } from '~/stores/machine'
+import { useJobControl } from '~/composables/useJobControl'
 import { useSettingsStore } from '~/stores/settings'
+import { useModals } from '~/composables/useModals'
 
 const machine = useMachineStore()
+const { job } = useJobControl()
 const settings = useSettingsStore()
+const modals = useModals()
 
 const filterText = ref('')
 const sortKey = ref<'default' | 'name' | 'diameter' | 'usetime' | 'number'>('default')
 const fileInput = ref<HTMLInputElement | null>(null)
 const toolIsUnloaded = ref(false)
 
-const showToolModal = ref(false)
+// Modal open/close synced across browsers; the edit form contents stay local.
+const toolModal = modals.active('tool')
+const showToolModal = computed<boolean>({
+  get: () => !!toolModal.value,
+  set: (open) => {
+    if (open) modals.open('tool')
+    else if (toolModal.value) modals.resolve(toolModal.value.id)
+  },
+})
 const editingTool = ref<ToolLibraryEntry | null>(null)
-const showExportModal = ref(false)
+
+const exportModal = modals.active('toolExport')
+const showExportModal = computed<boolean>({
+  get: () => !!exportModal.value,
+  set: (open) => {
+    if (open) modals.open('toolExport')
+    else if (exportModal.value) modals.resolve(exportModal.value.id)
+  },
+})
 
 const draggingToolId = ref<string | null>(null)
 const dragOverSlot = ref<number | null>(null)
@@ -793,9 +813,9 @@ function doExport() {
 const jobToolNumbers = computed(() => new Set(machine.tools.map(t => t.number)))
 
 const activeJobTool = computed(() => {
-  if (!machine.job || !machine.tools.length) return null
-  const line = machine.job.currentLine
-  return machine.tools.find(t => line >= t.lineStart && line <= t.lineEnd) ?? machine.tools[0]
+  if (!job.value || !machine.tools.length) return null
+  const line = job.value.sendPtr
+  return machine.tools.find((t) => line >= t.lineStart && line <= t.lineEnd) ?? machine.tools[0]
 })
 
 const activeTool = computed(() =>

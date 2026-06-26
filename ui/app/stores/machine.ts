@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia'
+import { useSettingsStore } from '~/stores/settings'
+import { useSyncStore } from '~/stores/sync'
+import { wsSend, wsConnected } from '~/composables/useWsSend'
 
-export type MachineStatus = 'DISCONNECTED' | 'IDLE' | 'RUN' | 'HOLD' | 'ALARM' | 'HOME' | 'DOOR' | 'SLEEP' | 'CHECK'
+// Re-export the canonical MachineStatus type from the server utils so
+// the client and server share the same shape
+export type { MachineStatus } from '~~/server/utils/machine/types'
+import type { MachineStatus } from '~~/server/utils/machine/types'
 
 export interface LimitSwitch {
   name: string
@@ -28,6 +34,18 @@ export interface Tool {
   lineEnd: number
 }
 
+export interface StockDef {
+  shape: 'rect' | 'round'
+  // rect
+  width?: number
+  height?: number
+  rotation?: number  // degrees
+  // round
+  diameter?: number
+  // common
+  depth: number
+}
+
 export interface ToolLibraryEntry {
   id: string
   number?: number
@@ -44,31 +62,31 @@ export interface ToolLibraryEntry {
   source: 'M' | 'A'
 }
 
-export interface AxisRange {
-  min: number
-  max: number
-}
-
-export interface Job {
-  filename: string
-  totalLines: number
-  currentLine: number
-  progress: number
-  estimatedRuntime: number
-  startTime: number | null
-  axisRanges?: { x: AxisRange; y: AxisRange; z: AxisRange }
+export interface ServerConnectionState {
+  machineId: string | null
+  connected: boolean
+  status: string
+  firmwareVersion: string
 }
 
 export const useMachineStore = defineStore('machine', () => {
   const connected = ref(false)
+  const connecting = ref(false)
+  const connectionError = ref('')
+  const connectedMachineId = ref<string | null>(null)
   const firmwareVersion = ref('')
-  const status = ref<MachineStatus>('DISCONNECTED')
+  const machineState = ref<MachineStatus['state']>('Disconnected')
+
+  /** True once live machine status has been received from the firmware. */
+  const controlsReady = ref(false)
+  const telemetryLoaded = ref(false)
 
   const machinePos = ref<Position>({ x: 0, y: 0, z: 0 })
   const workPos = ref<Position>({ x: 0, y: 0, z: 0 })
 
   const feedOverride = ref(100)
   const spindleOverride = ref(100)
+  const feed = ref(0)
 
   const spindleOn = ref(false)
   const spindleRpm = ref(0)
@@ -76,106 +94,107 @@ export const useMachineStore = defineStore('machine', () => {
   const coolant = ref<'off' | 'mist' | 'flood'>('off')
 
   const limitSwitches = ref<LimitSwitch[]>([])
+  const buffer = ref({ planner: 0, rx: 0 })
 
-  let _entryId = 0
-  const consoleLog = ref<ConsoleEntry[]>([])
-
-  const job = ref<Job | null>(null)
+  // Console is server-owned; this is a read alias so existing components work unchanged
+  const sync = useSyncStore()
+  const consoleLog = computed(() => sync.consoleLog)
 
   const tools = ref<Tool[]>([])
   const toolLibrary = ref<ToolLibraryEntry[]>([])
-
   const magazineSlots = ref<(number | null)[]>([])
+  const stock = ref<StockDef | null>(null)
 
   function setToolLibrary(entries: ToolLibraryEntry[]) {
     toolLibrary.value = entries
   }
 
+  function setStock(s: StockDef) { stock.value = s }
+  function clearStock() { stock.value = null }
+
+  let _connectTimeout: ReturnType<typeof setTimeout> | null = null
+
+  function applyServerStatus(state: ServerConnectionState) {
+    if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null }
+    connecting.value = false
+    connectionError.value = ''
+    connected.value = state.connected
+    connectedMachineId.value = state.machineId
+    firmwareVersion.value = state.firmwareVersion ?? ''
+
+    if (!state.connected) {
+      telemetryLoaded.value = false
+      controlsReady.value = false
+      limitSwitches.value = []
+      machinePos.value = { x: 0, y: 0, z: 0 }
+      workPos.value = { x: 0, y: 0, z: 0 }
+      machineState.value = 'Disconnected'
+    }
+  }
+
+  function applyMachineStatus(s: MachineStatus) {
+    machineState.value = s.state
+    machinePos.value = s.mpos
+    workPos.value = s.wpos
+    feed.value = s.feed
+    spindleRpm.value = s.spindleSpeed
+    spindleOn.value = s.spindleOn
+    coolant.value = s.coolantFlood ? 'flood' : s.coolantMist ? 'mist' : 'off'
+    limitSwitches.value = s.limitSwitches
+    feedOverride.value = s.overrides.feed
+    spindleOverride.value = s.overrides.spindle
+    buffer.value = s.buffer
+    if (!telemetryLoaded.value) {
+      telemetryLoaded.value = true
+      controlsReady.value = true
+    }
+  }
+
   function connect() {
-    connected.value = true
-    firmwareVersion.value = '3.7.14'
-    status.value = 'IDLE'
-    limitSwitches.value = [
-      { name: 'X_MIN', triggered: false },
-      { name: 'X_MAX', triggered: false },
-      { name: 'Y_MIN', triggered: false },
-      { name: 'Y_MAX', triggered: false },
-      { name: 'Z_MIN', triggered: false },
-      { name: 'Z_MAX', triggered: false },
-      { name: 'PROBE', triggered: false },
-    ]
-    addConsole('recv', `Grbl 3.7.14 [FluidNC v${firmwareVersion.value}] ready`)
-    addConsole('recv', `[MSG: Machine: Connected]`)
+    const s = useSettingsStore()
+    if (!s.activeMachineId) return
+    if (!wsConnected.value) {
+      connectionError.value = 'Server WebSocket offline — refresh or wait for reconnection.'
+      return
+    }
+    connecting.value = true
+    connectionError.value = ''
+    wsSend({ t: 'machine:connect', payload: { machineId: s.activeMachineId } })
+    _connectTimeout = setTimeout(() => {
+      connecting.value = false
+      connectionError.value = 'Connection timed out. Check the machine config and try again.'
+    }, 8000)
   }
 
   function disconnect() {
-    connected.value = false
-    firmwareVersion.value = ''
-    status.value = 'DISCONNECTED'
-    limitSwitches.value = []
-    addConsole('info', 'Disconnected')
+    connectionError.value = ''
+    wsSend({ t: 'machine:disconnect', payload: {} })
   }
 
   function addConsole(type: ConsoleEntry['type'], text: string) {
-    consoleLog.value.push({ id: _entryId++, type, text, ts: Date.now() })
-    if (consoleLog.value.length > 500) consoleLog.value.splice(0, 100)
+    wsSend({ t: 'ui:console:push', payload: { type, text, ts: Date.now() } })
+  }
+
+  function clearConsole() {
+    wsSend({ t: 'ui:console:clear', payload: {} })
   }
 
   function sendCommand(cmd: string) {
-    addConsole('sent', cmd)
-    if (cmd === '?') {
-      const m = machinePos.value
-      const w = workPos.value
-      addConsole(
-        'recv',
-        `<${status.value}|MPos:${m.x.toFixed(3)},${m.y.toFixed(3)},${m.z.toFixed(3)}|WPos:${w.x.toFixed(3)},${w.y.toFixed(3)},${w.z.toFixed(3)}>`,
-      )
-    } else if (cmd === '$H') {
-      status.value = 'HOME'
-      addConsole('recv', 'ok')
-      setTimeout(() => {
-        status.value = 'IDLE'
-        machinePos.value = { x: 0, y: 0, z: 0 }
-      }, 2000)
-    } else if (cmd.startsWith('$RS')) {
-      addConsole('info', 'Restarting firmware...')
-      setTimeout(() => {
-        addConsole('recv', `Grbl 3.7.14 [FluidNC v${firmwareVersion.value}] ready`)
-        status.value = 'IDLE'
-      }, 1500)
-    } else if (cmd === '$X') {
-      status.value = 'IDLE'
-      addConsole('recv', '[MSG:Caution: Unlocked]')
-      addConsole('recv', 'ok')
-    } else if (cmd === 'M5') {
-      spindleOn.value = false
-      addConsole('recv', 'ok')
-    } else if (cmd.startsWith('M3') || cmd.startsWith('M4')) {
-      spindleOn.value = true
-      spindleDir.value = cmd.startsWith('M3') ? 'cw' : 'ccw'
-      const m = cmd.match(/S(\d+)/)
-      if (m) spindleRpm.value = parseInt(m[1])
-      addConsole('recv', 'ok')
-    } else if (cmd === 'M9') {
-      coolant.value = 'off'
-      addConsole('recv', 'ok')
-    } else if (cmd === 'M7') {
-      coolant.value = 'mist'
-      addConsole('recv', 'ok')
-    } else if (cmd === 'M8') {
-      coolant.value = 'flood'
-      addConsole('recv', 'ok')
-    } else {
-      addConsole('recv', 'ok')
-    }
+    wsSend({ t: 'machine:command', payload: { cmd } })
   }
 
   return {
     connected,
+    connecting,
+    connectionError,
+    connectedMachineId,
     firmwareVersion,
-    status,
+    machineState,
+    controlsReady,
+    telemetryLoaded,
     machinePos,
     workPos,
+    feed,
     feedOverride,
     spindleOverride,
     spindleOn,
@@ -183,14 +202,20 @@ export const useMachineStore = defineStore('machine', () => {
     spindleDir,
     coolant,
     limitSwitches,
+    buffer,
     consoleLog,
-    job,
     tools,
     toolLibrary,
     magazineSlots,
+    stock,
+    setStock,
+    clearStock,
+    applyServerStatus,
+    applyMachineStatus,
     connect,
     disconnect,
     addConsole,
+    clearConsole,
     sendCommand,
     setToolLibrary,
   }

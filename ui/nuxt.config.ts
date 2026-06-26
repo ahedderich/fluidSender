@@ -9,6 +9,17 @@ export default defineNuxtConfig({
 
   vite: {
     plugins: [tailwindcss()],
+    optimizeDeps: {
+      include: [
+        '@vue/devtools-core',
+        '@vue/devtools-kit',
+        'three',
+        'three/examples/jsm/controls/OrbitControls.js',
+        'three/examples/jsm/lines/LineMaterial.js',
+        'three/examples/jsm/lines/LineSegments2.js',
+        'three/examples/jsm/lines/LineSegmentsGeometry.js',
+      ],
+    },
   },
 
   typescript: {
@@ -33,6 +44,12 @@ export default defineNuxtConfig({
           }),
         },
       ],
+    },
+  },
+
+  nitro: {
+    experimental: {
+      websocket: true,
     },
   },
 

@@ -3,5 +3,6 @@
     <TopBar />
     <slot />
     <ConfirmDialog />
+    <ToastHost />
   </div>
 </template>

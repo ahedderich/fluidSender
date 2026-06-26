@@ -9,26 +9,30 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
         </svg>
         <span class="text-xs font-medium text-gray-700 dark:text-slate-300 truncate">
-          {{ machine.job?.filename ?? 'No file loaded' }}
+          {{ job?.filename ?? 'No file loaded' }}
         </span>
       </div>
-      <div class="flex gap-1 shrink-0">
-        <button
-          class="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
-        >
-          Upload
-        </button>
-        <button
-          v-if="machine.job"
-          class="text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 rounded transition-colors"
-        >
-          Clear
-        </button>
-      </div>
+      <button
+        v-if="job"
+        class="text-xs px-2 py-0.5 text-gray-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 rounded transition-colors shrink-0"
+        title="Clear loaded file"
+        @click="clearJob"
+      >
+        Clear
+      </button>
+    </div>
+
+    <!-- Progress bar -->
+    <div v-if="job && job.status !== 'idle' && job.status !== 'loaded'" class="h-1.5 bg-gray-100 dark:bg-slate-700 shrink-0">
+      <div
+        class="h-full bg-blue-500 transition-all"
+        :class="{ 'animate-pulse': job.status === 'pausing' }"
+        :style="{ width: progress + '%' }"
+      />
     </div>
 
     <!-- Stats -->
-    <div v-if="machine.job" class="px-3 py-2 border-b border-gray-100 dark:border-slate-700 shrink-0 flex gap-4">
+    <div v-if="job" class="px-3 py-2 border-b border-gray-100 dark:border-slate-700 shrink-0 flex gap-4">
       <!-- XYZ range -->
       <table class="text-xs flex-1 min-w-0">
         <tbody>
@@ -45,11 +49,11 @@
         <tbody>
           <tr>
             <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2 whitespace-nowrap">Lines</td>
-            <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ machine.job.totalLines.toLocaleString() }}</td>
+            <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ job!.totalLines.toLocaleString() }}</td>
           </tr>
           <tr>
             <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2 whitespace-nowrap">Est. Time</td>
-            <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ formatRuntime(machine.job.estimatedRuntime) }}</td>
+            <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ formatRuntime(job!.estimatedTotalMs) }}</td>
           </tr>
           <tr>
             <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2">Tools</td>
@@ -61,7 +65,7 @@
 
     <!-- Tool list -->
     <div class="flex-1 overflow-y-auto min-h-0">
-      <template v-if="machine.job">
+      <template v-if="job">
         <div class="px-3 pt-2 pb-1 shrink-0">
           <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Tools</p>
         </div>
@@ -182,22 +186,30 @@
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
+import { useJobControl } from '~/composables/useJobControl'
 
 const machine = useMachineStore()
+const { job, startJob, pauseJob, resumeJob, cancelJob, clearJob } = useJobControl()
 const editingFeed = ref(false)
 const editingSpindle = ref(false)
 
+const progress = computed(() => {
+  const j = job.value
+  if (!j || j.totalLines === 0) return 0
+  return Math.round((j.sendPtr / j.totalLines) * 100)
+})
+
 const currentTool = computed(() => {
   if (!machine.tools.length) return null
-  const line = machine.job?.currentLine ?? 0
+  const line = job.value?.sendPtr ?? 0
   return (
-    machine.tools.find(t => line >= t.lineStart && line <= t.lineEnd) ??
+    machine.tools.find((t) => line >= t.lineStart && line <= t.lineEnd) ??
     machine.tools[0]
   )
 })
 
 const axisRanges = computed(() => {
-  const r = machine.job?.axisRanges
+  const r = job.value?.axisRanges
   const fmt = (v: number) => v.toFixed(1)
   return [
     { label: 'X', from: r ? fmt(r.x.min) : '—', to: r ? fmt(r.x.max) : '—' },
@@ -206,12 +218,13 @@ const axisRanges = computed(() => {
   ]
 })
 
-function formatRuntime(seconds: number) {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
+function formatRuntime(ms: number) {
+  const s = Math.round(ms / 1000)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
   if (h > 0) return `${h}h ${m}m`
-  if (m > 0) return `${m}m ${s}s`
-  return `${s}s`
+  if (m > 0) return `${m}m ${sec}s`
+  return `${sec}s`
 }
 </script>

@@ -90,15 +90,15 @@
       <div class="flex items-center justify-between text-xs text-slate-400 mb-1.5">
         <span>{{ startLabel }}</span>
         <span class="font-medium text-slate-200">
-          {{ machine.job?.progress ?? 0 }}%
-          <span v-if="machine.job?.filename" class="text-slate-400 ml-1">({{ machine.job.filename }})</span>
+          {{ job?.totalLines ? Math.round((job.sendPtr / job.totalLines) * 100) : 0 }}%
+          <span v-if="job?.filename" class="text-slate-400 ml-1">({{ job!.filename }})</span>
         </span>
         <span>{{ etaLabel }}</span>
       </div>
       <div class="h-1.5 bg-slate-700 rounded-full overflow-hidden">
         <div
           class="h-full bg-blue-500 rounded-full transition-all duration-500"
-          :style="{ width: (machine.job?.progress ?? 0) + '%' }"
+          :style="{ width: (job?.totalLines ? Math.round((job.sendPtr / job.totalLines) * 100) : 0) + '%' }"
         />
       </div>
     </div>
@@ -107,8 +107,12 @@
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
+import { useSettingsStore } from '~/stores/settings'
+import { useJobControl } from '~/composables/useJobControl'
 
 const machine = useMachineStore()
+const settings = useSettingsStore()
+const { job } = useJobControl()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -138,27 +142,52 @@ const layers = reactive([
   { key: 'zmove', label: 'Z Move', color: '#eab308', visible: true },
   { key: 'stock', label: 'Stock', color: '#a855f7', visible: true },
   { key: 'origin', label: 'Origin', color: '', visible: true },
+  { key: 'machineBounds', label: 'Machine', color: '#475569', visible: true },
 ])
 
 const startLabel = computed(() => {
-  if (!machine.job?.startTime) return 'Start: --:--'
-  return `Start: ${new Date(machine.job.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+  if (!job.value?.startWallClock) return 'Start: --:--'
+  return `Start: ${new Date(job.value.startWallClock).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
 })
 
 const etaLabel = computed(() => {
-  if (!machine.job?.startTime || !machine.job.estimatedRuntime) return 'ETA: --:--'
-  const eta = machine.job.startTime + machine.job.estimatedRuntime * 1000
+  if (!job.value?.startWallClock || !job.value.estimatedTotalMs) return 'ETA: --:--'
+  const eta = job.value.startWallClock + job.value.estimatedTotalMs
   return `ETA: ${new Date(eta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
 })
 
 const currentTool = computed(() => {
   if (!machine.tools.length) return null
-  const line = machine.job?.currentLine ?? 0
+  const line = job.value?.sendPtr ?? 0
   return (
-    machine.tools.find(t => line >= t.lineStart && line <= t.lineEnd) ??
+    machine.tools.find((t) => line >= t.lineStart && line <= t.lineEnd) ??
     machine.tools[0]
   )
 })
+
+const toolDiameter = computed(() => {
+  const t = currentTool.value
+  if (!t) return 8
+  const lib = machine.toolLibrary.find(e => e.number === t.number)
+  return lib?.diameter ?? 8
+})
+
+const machineBounds = computed(() => {
+  const axes = settings.activeMachine?.fluidncConfig?.axes
+  return {
+    x: axes?.x?.maxTravelMm ?? 300,
+    y: axes?.y?.maxTravelMm ?? 200,
+    z: axes?.z?.maxTravelMm ?? 100,
+  }
+})
+
+// Machine home expressed in work coordinates: wpos − mpos.
+// When not connected both are (0,0,0) so the box sits at the work origin.
+const machineHomeWpos = computed(() => ({
+  x: machine.workPos.x - machine.machinePos.x,
+  y: machine.workPos.y - machine.machinePos.y,
+  z: machine.workPos.z - machine.machinePos.z,
+}))
 
 // Three.js refs (non-reactive — plain refs to avoid proxy issues)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -171,6 +200,8 @@ let removeVisibilityListener: (() => void) | null = null
 // No-op defaults until initThree() assigns real implementations
 let requestRender: () => void = () => {}
 let renderFrame: () => void = () => {}
+let rebuildSpatialGeometry: (b: { x: number; y: number; z: number }) => void = () => {}
+let rebuildStock: (s: import('~/stores/machine').StockDef | null) => void = () => {}
 
 async function initThree() {
   const canvas = canvasRef.value
@@ -296,178 +327,220 @@ async function initThree() {
 
   const V3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z)
 
-  // Grid (XY plane, Z=0) — Line2-based so it anti-aliases at all view angles.
-  // depthTest/depthWrite disabled so it never Z-fights with axis lines or stock edges
-  // that share the same Z=0 plane; renderOrder=-1 keeps it visually behind everything.
-  {
-    const gPts: number[] = []
-    const gExt = 300, gStep = 20
-    for (let v = -gExt; v <= gExt; v += gStep) {
-      gPts.push(-gExt, v, 0, gExt, v, 0)  // horizontal
-      gPts.push(v, -gExt, 0, v, gExt, 0)  // vertical
-    }
-    const gMat = new LineMaterial({ color: 0x1e293b, linewidth: 1.0,
-      resolution: new THREE.Vector2(width, height), depthTest: false, depthWrite: false })
-    lineMats.push(gMat)
-    const gGeo = new LineSegmentsGeometry()
-    gGeo.setPositions(gPts)
-    const gLine = new LineSegments2(gGeo, gMat)
-    gLine.renderOrder = -1
-    scene.add(gLine)
-  }
-
-  // Origin axes: X (red) + Y (green) with tick marks and labels
-  const originGroup = new THREE.Group()
-  const axisExt = 500   // ± extent in mm
-  const tickStep = 100  // label every 100 mm
   const tickLen = 8
 
-  // Canvas sprite helper — always faces camera, renders on top
   function makeLabel(text: string, color: string, fontPx = 22) {
-    const canvas = document.createElement('canvas')
-    canvas.width = 128
-    canvas.height = 64
-    const ctx2d = canvas.getContext('2d')!
+    const cvs = document.createElement('canvas')
+    cvs.width = 128; cvs.height = 64
+    const ctx2d = cvs.getContext('2d')!
     ctx2d.font = `bold ${fontPx}px monospace`
     ctx2d.fillStyle = color
     ctx2d.textAlign = 'center'
     ctx2d.textBaseline = 'middle'
-    ctx2d.fillText(text, canvas.width / 2, canvas.height / 2)
-    const tex = new THREE.CanvasTexture(canvas)
+    ctx2d.fillText(text, cvs.width / 2, cvs.height / 2)
+    const tex = new THREE.CanvasTexture(cvs)
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false })
     const sprite = new THREE.Sprite(mat)
     sprite.renderOrder = 1
     return sprite
   }
 
-  // X axis line (red), −500 → +500
-  originGroup.add(lineSegs2([V3(-axisExt, 0, 0), V3(axisExt, 0, 0)], lineMat2(0xef4444, 2.0)))
+  // Builds (or rebuilds) the grid, axis rulers, and machine boundary box.
+  // All three are keyed in objectMap so they can be disposed and recreated when
+  // machineBounds changes (i.e. after firmware connects and config loads).
+  function buildSpatialGeometry(b: { x: number; y: number; z: number }) {
+    // Dispose previous spatial objects — geometry, textures, and materials.
+    // Materials that live in lineMats must be removed so the resize handler
+    // doesn't call .set() on a disposed object.
+    for (const key of ['grid', 'origin', 'machineBounds']) {
+      const old = objectMap[key] as any
+      if (!old) continue
+      scene.remove(old)
+      old.traverse((child: any) => {
+        child.geometry?.dispose()
+        if (child.material) {
+          const idx = lineMats.indexOf(child.material)
+          if (idx !== -1) lineMats.splice(idx, 1)
+          child.material.map?.dispose()
+          child.material.dispose()
+        }
+      })
+      delete objectMap[key]
+    }
 
-  // X ticks + number labels (both sides, skip 0)
-  const xTickPts: THREE.Vector3[] = []
-  for (let x = -axisExt; x <= axisExt; x += tickStep) {
-    if (x === 0) continue
-    xTickPts.push(V3(x, 0, 0), V3(x, -tickLen, 0))
-    const lbl = makeLabel(`${x}`, '#ef4444')
-    lbl.scale.set(20, 10, 1)
-    lbl.position.set(x, -20, 0)
-    originGroup.add(lbl)
-  }
-  originGroup.add(lineSegs2(xTickPts, lineMat2(0xef4444, 1.0)))
+    // Pick a grid step that gives ~10 divisions along the shorter axis.
+    const minTravel = Math.min(b.x, b.y)
+    const gStep = minTravel < 50 ? 5 : minTravel < 150 ? 10 : minTravel < 300 ? 25 : minTravel < 600 ? 50 : minTravel < 1200 ? 100 : 200
+    const tStep = gStep * 2  // ruler label interval
 
-  // X axis label near origin
-  const xLabel = makeLabel('X', '#ef4444', 32)
-  xLabel.scale.set(16, 8, 1)
-  xLabel.position.set(30, 16, 0)
-  originGroup.add(xLabel)
+    // Grid — origin at top-right; work area extends into negative X and Y.
+    // One step of margin beyond the boundary on each side.
+    {
+      const gPts: number[] = []
+      const x0 = -b.x - gStep, x1 = b.x + gStep
+      const y0 = -b.y - gStep, y1 = b.y + gStep
+      for (let y = Math.round(y0 / gStep) * gStep; y <= y1; y += gStep)
+        gPts.push(x0, y, 0, x1, y, 0)
+      for (let x = Math.round(x0 / gStep) * gStep; x <= x1; x += gStep)
+        gPts.push(x, y0, 0, x, y1, 0)
+      const gMat = new LineMaterial({ color: 0x1e293b, linewidth: 1.0,
+        resolution: new THREE.Vector2(width, height), depthTest: false, depthWrite: false })
+      lineMats.push(gMat)
+      const gGeo = new LineSegmentsGeometry()
+      gGeo.setPositions(gPts)
+      const gLine = new LineSegments2(gGeo, gMat)
+      gLine.renderOrder = -1
+      scene.add(gLine)
+      objectMap['grid'] = gLine
+    }
 
-  // Y axis line (green), −500 → +500
-  originGroup.add(lineSegs2([V3(0, -axisExt, 0), V3(0, axisExt, 0)], lineMat2(0x22c55e, 2.0)))
+    // Axis rulers: X (red) −bx→0, Y (green) −by→0
+    {
+      const grp = new THREE.Group()
 
-  // Y ticks + number labels (both sides, skip 0)
-  const yTickPts: THREE.Vector3[] = []
-  for (let y = -axisExt; y <= axisExt; y += tickStep) {
-    if (y === 0) continue
-    yTickPts.push(V3(0, y, 0), V3(-tickLen, y, 0))
-    const lbl = makeLabel(`${y}`, '#22c55e')
-    lbl.scale.set(20, 10, 1)
-    lbl.position.set(-20, y, 0)
-    originGroup.add(lbl)
-  }
-  originGroup.add(lineSegs2(yTickPts, lineMat2(0x22c55e, 1.0)))
+      grp.add(lineSegs2([V3(-b.x, 0, 0), V3(b.x, 0, 0)], lineMat2(0xef4444, 2.0)))
+      const xTickPts: THREE.Vector3[] = []
+      for (let x = Math.ceil(-b.x / tStep) * tStep; x <= b.x; x += tStep) {
+        xTickPts.push(V3(x, 0, 0), V3(x, -tickLen, 0))
+        if (x !== 0) {
+          const lbl = makeLabel(`${x}`, '#ef4444')
+          lbl.scale.set(20, 10, 1)
+          lbl.position.set(x, -20, 0)
+          grp.add(lbl)
+        }
+      }
+      grp.add(lineSegs2(xTickPts, lineMat2(0xef4444, 1.0)))
+      const xLbl = makeLabel('X', '#ef4444', 32)
+      xLbl.scale.set(16, 8, 1)
+      xLbl.position.set(b.x + 24, 14, 0)
+      grp.add(xLbl)
 
-  // Y axis label near origin
-  const yLabel = makeLabel('Y', '#22c55e', 32)
-  yLabel.scale.set(16, 8, 1)
-  yLabel.position.set(16, 30, 0)
-  originGroup.add(yLabel)
+      grp.add(lineSegs2([V3(0, -b.y, 0), V3(0, b.y, 0)], lineMat2(0x22c55e, 2.0)))
+      const yTickPts: THREE.Vector3[] = []
+      for (let y = Math.ceil(-b.y / tStep) * tStep; y <= b.y; y += tStep) {
+        yTickPts.push(V3(0, y, 0), V3(-tickLen, y, 0))
+        if (y !== 0) {
+          const lbl = makeLabel(`${y}`, '#22c55e')
+          lbl.scale.set(20, 10, 1)
+          lbl.position.set(-20, y, 0)
+          grp.add(lbl)
+        }
+      }
+      grp.add(lineSegs2(yTickPts, lineMat2(0x22c55e, 1.0)))
+      const yLbl = makeLabel('Y', '#22c55e', 32)
+      yLbl.scale.set(16, 8, 1)
+      yLbl.position.set(14, b.y + 24, 0)
+      grp.add(yLbl)
 
-  scene.add(originGroup)
-  objectMap['origin'] = originGroup
+      scene.add(grp)
+      objectMap['origin'] = grp
+    }
 
-  // Stock outline: 200 × 150 × 25 mm box, Z top = 0, Z bottom = -25 (world coords)
-  const S = { x: 100, y: 75, t: 0, b: -25 }
-  const stockLine = lineSegs2([
-    V3(-S.x,-S.y,S.t), V3(S.x,-S.y,S.t),  V3(S.x,-S.y,S.t),  V3(S.x,S.y,S.t),
-    V3(S.x,S.y,S.t),   V3(-S.x,S.y,S.t),  V3(-S.x,S.y,S.t),  V3(-S.x,-S.y,S.t),
-    V3(-S.x,-S.y,S.b), V3(S.x,-S.y,S.b),  V3(S.x,-S.y,S.b),  V3(S.x,S.y,S.b),
-    V3(S.x,S.y,S.b),   V3(-S.x,S.y,S.b),  V3(-S.x,S.y,S.b),  V3(-S.x,-S.y,S.b),
-    V3(-S.x,-S.y,S.t), V3(-S.x,-S.y,S.b), V3(S.x,-S.y,S.t),  V3(S.x,-S.y,S.b),
-    V3(S.x,S.y,S.t),   V3(S.x,S.y,S.b),   V3(-S.x,S.y,S.t),  V3(-S.x,S.y,S.b),
-  ], lineMat2(0xa855f7, 1.5))
-  scene.add(stockLine)
-  objectMap['stock'] = stockLine
+    // Machine boundary box — (−bx, −by, −bz) to (0, 0, 0)
+    {
+      const bx = b.x, by = b.y, bz = b.z
+      const bPts: number[] = [
+        // top face (Z=0)
+        0,0,0, -bx,0,0,  -bx,0,0, -bx,-by,0,  -bx,-by,0, 0,-by,0,  0,-by,0, 0,0,0,
+        // bottom face (Z=−bz)
+        0,0,-bz, -bx,0,-bz,  -bx,0,-bz, -bx,-by,-bz,  -bx,-by,-bz, 0,-by,-bz,  0,-by,-bz, 0,0,-bz,
+        // vertical edges
+        0,0,0, 0,0,-bz,  -bx,0,0, -bx,0,-bz,  -bx,-by,0, -bx,-by,-bz,  0,-by,0, 0,-by,-bz,
+      ]
+      const bGeo = new LineSegmentsGeometry()
+      bGeo.setPositions(bPts)
+      const bLine = new LineSegments2(bGeo, lineMat2(0x475569, 1.0))
+      const h0 = machineHomeWpos.value
+      bLine.position.set(h0.x, h0.y, h0.z)
+      scene.add(bLine)
+      objectMap['machineBounds'] = bLine
+    }
 
-  // Travel moves (green) — rapid moves above stock (stock centred at origin)
-  const travelPts = [
-    V3(-100, -75, 30), V3(100, -75, 30),
-    V3(100, -75, 30),  V3(100, 75, 30),
-    V3(100, 75, 30),   V3(-100, 75, 30),
-    V3(-100, 75, 30),  V3(-100, -75, 30),
-    V3(-100, -75, 30), V3(-70, -45, 30),
-    V3(-20, -15, 30),  V3(100, 75, 30),
-  ]
-  const travelLine = lineSegs2(travelPts, lineMat2(0x22c55e, 1.5))
-  scene.add(travelLine)
-  objectMap['travel'] = travelLine
-
-  // Z moves (yellow) — plunge / retract at key positions
-  const zPts = [
-    V3(-100, -75, 30), V3(-100, -75, -5),
-    V3(100, 75, 30),   V3(100, 75, -5),
-    V3(-70, -45, 30),  V3(-70, -45, -5),
-    V3(-20, -15, 30),  V3(-20, -15, -5),
-    V3(20, 15, 30),    V3(20, 15, -5),
-    V3(70, 45, 30),    V3(70, 45, -5),
-  ]
-  const zLine = lineSegs2(zPts, lineMat2(0xeab308, 1.5))
-  scene.add(zLine)
-  objectMap['zmove'] = zLine
-
-  // Cutting moves (blue) — outer profile + pocket + slot + spiral
-  const cutPts: THREE.Vector3[] = []
-
-  // Outer profile (5 mm inset from stock edges)
-  const outerProfile = [
-    [-95, -70], [95, -70], [95, 70], [-95, 70], [-95, -70],
-  ] as [number, number][]
-  for (let i = 0; i < outerProfile.length - 1; i++) {
-    cutPts.push(V3(outerProfile[i][0], outerProfile[i][1], -5))
-    cutPts.push(V3(outerProfile[i + 1][0], outerProfile[i + 1][1], -5))
-  }
-
-  // Inner pocket
-  const pocket = [
-    [-70, -45], [70, -45], [70, 45], [-70, 45], [-70, -45],
-  ] as [number, number][]
-  for (let i = 0; i < pocket.length - 1; i++) {
-    cutPts.push(V3(pocket[i][0], pocket[i][1], -5))
-    cutPts.push(V3(pocket[i + 1][0], pocket[i + 1][1], -5))
-  }
-
-  // Slot (centred at origin)
-  const slot = [
-    [-20, -20], [20, -20], [20, 20], [-20, 20], [-20, -20],
-  ] as [number, number][]
-  for (let i = 0; i < slot.length - 1; i++) {
-    cutPts.push(V3(slot[i][0], slot[i][1], -15))
-    cutPts.push(V3(slot[i + 1][0], slot[i + 1][1], -15))
-  }
-
-  // Spiral finishing passes (centred at origin)
-  for (let r = 8; r <= 60; r += 6) {
-    const segs = 48
-    for (let s = 0; s < segs; s++) {
-      const a0 = (s / segs) * Math.PI * 2
-      const a1 = ((s + 1) / segs) * Math.PI * 2
-      cutPts.push(V3(r * Math.cos(a0), r * Math.sin(a0), -5))
-      cutPts.push(V3(r * Math.cos(a1), r * Math.sin(a1), -5))
+    // Restore layer visibility that was toggled before this rebuild
+    for (const layer of layers) {
+      const obj = objectMap[layer.key] as any
+      if (obj && !layer.visible) obj.visible = false
     }
   }
 
-  const cutLine = lineSegs2(cutPts, lineMat2(0x3b82f6, 2.0))
-  scene.add(cutLine)
-  objectMap['cutting'] = cutLine
+  buildSpatialGeometry(machineBounds.value)
+  rebuildSpatialGeometry = buildSpatialGeometry
+
+  // Stock mesh — built on demand from machine.stock; null = no stock shown.
+  // The top-face centre is always at work (0,0,0): rect/round centered in XY, top at Z=0.
+  function buildStockMesh(s: import('~/stores/machine').StockDef | null) {
+    const old = objectMap['stock'] as any
+    if (old) {
+      scene.remove(old)
+      old.geometry?.dispose()
+      const idx = lineMats.indexOf(old.material)
+      if (idx !== -1) lineMats.splice(idx, 1)
+      old.material?.dispose()
+      delete objectMap['stock']
+    }
+    if (!s) return
+
+    const zTop = 0
+    const zBot = -s.depth
+    const pts: number[] = []
+
+    if (s.shape === 'rect') {
+      const hw = (s.width ?? 100) / 2
+      const hh = (s.height ?? 100) / 2
+      const rad = ((s.rotation ?? 0) * Math.PI) / 180
+      const cos = Math.cos(rad), sin = Math.sin(rad)
+      const corners = ([ [-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh] ] as [number,number][])
+        .map(([x,y]) => [ x*cos - y*sin, x*sin + y*cos ] as [number,number])
+      for (let i = 0; i < 4; i++) {
+        const [ax,ay] = corners[i], [bx,by] = corners[(i+1)%4]
+        pts.push(ax,ay,zTop, bx,by,zTop)   // top edge
+        pts.push(ax,ay,zBot, bx,by,zBot)   // bottom edge
+        pts.push(ax,ay,zTop, ax,ay,zBot)   // vertical
+      }
+    } else {
+      const r = (s.diameter ?? 100) / 2
+      const segs = 64
+      for (let i = 0; i < segs; i++) {
+        const a0 = (i / segs) * Math.PI * 2, a1 = ((i+1) / segs) * Math.PI * 2
+        const [x0,y0] = [r*Math.cos(a0), r*Math.sin(a0)]
+        const [x1,y1] = [r*Math.cos(a1), r*Math.sin(a1)]
+        pts.push(x0,y0,zTop, x1,y1,zTop)   // top circle
+        pts.push(x0,y0,zBot, x1,y1,zBot)   // bottom circle
+      }
+      // Four vertical lines at cardinal points
+      for (const a of [0, Math.PI/2, Math.PI, 3*Math.PI/2]) {
+        const [x,y] = [r*Math.cos(a), r*Math.sin(a)]
+        pts.push(x,y,zTop, x,y,zBot)
+      }
+    }
+
+    const geo = new LineSegmentsGeometry()
+    geo.setPositions(pts)
+    const mesh = new LineSegments2(geo, lineMat2(0xa855f7, 1.5))
+    const stockLayerVisible = layers.find(l => l.key === 'stock')?.visible ?? true
+    mesh.visible = stockLayerVisible
+    scene.add(mesh)
+    objectMap['stock'] = mesh
+  }
+
+  buildStockMesh(machine.stock)
+  rebuildStock = buildStockMesh
+
+  // Tool representation — unit CylinderGeometry (r=1, h=1), rotated so axis aligns with world Z.
+  // scale.x/z = radius, scale.y = height. Tip placed at workPos.z, body extends upward.
+  {
+    const toolH = 50
+    const toolGeo = new THREE.CylinderGeometry(1, 1, 1, 24)
+    const toolMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.8 })
+    const toolObj = new THREE.Mesh(toolGeo, toolMat)
+    toolObj.rotation.x = -Math.PI / 2
+    const r0 = toolDiameter.value / 2
+    toolObj.scale.set(r0, toolH, r0)
+    const wp0 = machine.workPos
+    toolObj.position.set(wp0.x, wp0.y, wp0.z + toolH / 2)
+    scene.add(toolObj)
+    objectMap['tool'] = toolObj
+  }
 
   threeCtx = { THREE, scene, camera, controls, renderer }
   setView('iso')
@@ -524,28 +597,51 @@ async function initThree() {
 
 function setView(view: ViewKey) {
   if (!threeCtx) return
-  const { camera, controls } = threeCtx
-  const cx = 0, cy = 0, cz = 0
-  const d = 420
+  const { THREE, camera, controls } = threeCtx
+  const b = machineBounds.value
+  const d = Math.max(b.x, b.y) * 1.8  // orbit target is origin — scale so work volume stays visible
+
+  // All presets orbit around the machine home (work origin = 0,0,0)
+  controls.target.set(0, 0, 0)
   switch (view) {
     case 'top':
-      camera.position.set(cx, cy, d)
+      camera.position.set(0, 0, d)
       camera.up.set(0, 1, 0)
       break
     case 'front':
-      camera.position.set(cx, cy - d, cz + 80)
+      camera.position.set(0, d, 0)
       camera.up.set(0, 0, 1)
       break
     case 'right':
-      camera.position.set(cx + d, cy, cz + 80)
+      camera.position.set(d, 0, 0)
       camera.up.set(0, 0, 1)
       break
     case 'iso':
-      camera.position.set(cx - 150, cy - 350, cz + 190)
+      camera.position.set(-d * 0.25, -d * 0.75, d * 0.45)
       camera.up.set(0, 0, 1)
       break
   }
-  controls.target.set(cx, cy, cz)
+
+  // In split mode the 3D canvas is full-width but only the left half is visible.
+  // Pan the orbit target to the right so that world (0,0,0) projects to the
+  // centre of the visible left half rather than the centre of the full canvas.
+  if (viewMode.value === 'split' && containerRef.value) {
+    const { width: w, height: h } = containerRef.value.getBoundingClientRect()
+    if (w > 0 && h > 0) {
+      camera.updateProjectionMatrix()
+      const dist = camera.position.distanceTo(controls.target)
+      const aspect = w / h
+      const frustumHalfW = dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * aspect
+      // Shift the target 0.5 NDC units to the right → (0,0,0) lands at NDC x = -0.5 = pixel w/4
+      const lookDir = new THREE.Vector3()
+      camera.getWorldDirection(lookDir)
+      const camRight = new THREE.Vector3().crossVectors(lookDir, camera.up).normalize()
+      const panDist = 0.5 * frustumHalfW
+      controls.target.addScaledVector(camRight, panDist)
+      camera.position.addScaledVector(camRight, panDist)
+    }
+  }
+
   controls.update()
   requestRender()
 }
@@ -556,6 +652,50 @@ function toggleLayer(layer: (typeof layers)[number]) {
   if (obj) (obj as { visible: boolean }).visible = layer.visible
   requestRender()
 }
+
+// Update tool position when machine moves
+watch(
+  () => machine.workPos,
+  (wp) => {
+    const obj = objectMap['tool'] as { position: { set(x: number, y: number, z: number): void } } | undefined
+    if (!obj) return
+    const h = (objectMap['tool'] as any).scale.y as number
+    obj.position.set(wp.x, wp.y, wp.z + h / 2)
+    requestRender()
+  },
+  { deep: true }
+)
+
+// Recreate tool scale when the active tool's diameter changes
+watch(toolDiameter, (d) => {
+  const obj = objectMap['tool'] as any
+  if (!obj) return
+  const h = obj.scale.y as number
+  obj.scale.set(d / 2, h, d / 2)
+  requestRender()
+})
+
+// Rebuild grid, rulers, and boundary box when machine config loads or changes
+watch(machineBounds, (b) => {
+  rebuildSpatialGeometry(b)
+  setView('iso')  // re-centre camera on the new work volume
+}, { deep: true })
+
+// Rebuild stock wireframe when the stock definition changes or is cleared
+watch(() => machine.stock, (s) => {
+  rebuildStock(s)
+  requestRender()
+})
+
+// Slide the boundary box to track machine home in work coordinates (= wpos − mpos).
+// This keeps the box correctly positioned when the operator sets a WCO (G54/G10).
+watch(machineHomeWpos, (h) => {
+  const box = objectMap['machineBounds'] as any
+  if (box) {
+    box.position.set(h.x, h.y, h.z)
+    requestRender()
+  }
+}, { deep: true })
 
 onMounted(() => initThree())
 

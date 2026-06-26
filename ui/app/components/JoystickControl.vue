@@ -1,9 +1,10 @@
 <template>
   <div
     ref="joystickEl"
-    class="relative w-36 h-36 rounded-full bg-gray-100 dark:bg-slate-900 border-2 border-gray-300 dark:border-slate-600 cursor-crosshair select-none touch-none"
-    @pointerdown="onStart"
-    @pointermove="onMove"
+    class="relative w-36 h-36 rounded-full bg-gray-100 dark:bg-slate-900 border-2 border-gray-300 dark:border-slate-600 select-none touch-none"
+    :class="disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-crosshair'"
+    @pointerdown="!disabled && onStart($event)"
+    @pointermove="!disabled && onMove($event)"
     @pointerup="onEnd"
     @pointercancel="onEnd"
     @pointerleave="onEnd"
@@ -38,6 +39,8 @@
 </template>
 
 <script setup lang="ts">
+const props = defineProps<{ disabled?: boolean }>()
+
 const emit = defineEmits<{
   move: [{ x: number; y: number; magnitude: number }]
 }>()
@@ -48,10 +51,31 @@ const dy = ref(0)
 const isDown = ref(false)
 const MAX_R = 52
 
+let tickInterval: ReturnType<typeof setInterval> | null = null
+
+function emitCurrent() {
+  const magnitude = Math.sqrt(dx.value * dx.value + dy.value * dy.value) / MAX_R
+  emit('move', { x: dx.value / MAX_R, y: -dy.value / MAX_R, magnitude })
+}
+
+function startTick() {
+  if (tickInterval !== null) return
+  // Emit continuously at 10 Hz while held so jogging persists without pointer movement
+  tickInterval = setInterval(emitCurrent, 100)
+}
+
+function stopTick() {
+  if (tickInterval !== null) {
+    clearInterval(tickInterval)
+    tickInterval = null
+  }
+}
+
 function onStart(e: PointerEvent) {
   isDown.value = true
   joystickEl.value?.setPointerCapture(e.pointerId)
   update(e)
+  startTick()
 }
 
 function onMove(e: PointerEvent) {
@@ -73,14 +97,16 @@ function update(e: PointerEvent) {
   }
   dx.value = x
   dy.value = y
-  const magnitude = Math.min(dist, MAX_R) / MAX_R
-  emit('move', { x: x / MAX_R, y: -y / MAX_R, magnitude })
+  emitCurrent()
 }
 
 function onEnd() {
+  stopTick()
   isDown.value = false
   dx.value = 0
   dy.value = 0
   emit('move', { x: 0, y: 0, magnitude: 0 })
 }
+
+onUnmounted(stopTick)
 </script>

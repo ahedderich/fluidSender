@@ -1,13 +1,8 @@
-import { writeFile, mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
-import { stringify } from 'yaml'
+import { setConfig, broadcast } from '../utils/appState'
 
 export default defineEventHandler(async (event) => {
-  const config = useRuntimeConfig(event)
-  const configDir = config.configPath as string
-  const configFile = join(configDir, 'app.yaml')
   const body = await readBody(event)
-  await mkdir(configDir, { recursive: true })
-  await writeFile(configFile, stringify(body), 'utf8')
+  await setConfig(body)
+  broadcast({ type: 'config:updated', payload: body })
   return { ok: true }
 })

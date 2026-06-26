@@ -263,7 +263,9 @@ fn max_rate_for_move(state: &MachineState, _target: &[f64; AXIS_COUNT]) -> f64 {
 /// Interpret a jog command ($J=...).
 /// Returns None if the jog is rejected (machine not ready), else the pending move.
 pub fn interpret_jog(words: &[Word], state: &mut MachineState) -> Option<PendingMove> {
-    if !matches!(state.status, MachineStatus::Idle) { return None; }
+    if !matches!(state.status, MachineStatus::Idle | MachineStatus::Run) { return None; }
+    // A new jog command overrides any pending cancel.
+    state.jog_cancel_pending = false;
 
     // $J always runs in relative or absolute based on G90/G91 in the jog command
     let mut jog_modal = state.modal.clone();
@@ -317,10 +319,10 @@ mod tests {
     #[test]
     fn g10_l20_updates_wco() {
         let mut state = default_state();
-        // Machine at X=150, G10 L20 X0 means WCO.x = 150 so WPos.x = 0
+        // Machine at X=-150, G10 L20 X0 means WCO.x = -150 so WPos.x = 0
         let words = parse_gcode_words("G10 L20 P1 X0").unwrap();
         interpret(&words, &mut state);
-        assert!((state.wco[0] - 150.0).abs() < 1e-6, "wco.x={}", state.wco[0]);
+        assert!((state.wco[0] + 150.0).abs() < 1e-6, "wco.x={}", state.wco[0]);
     }
 
     #[test]

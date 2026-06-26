@@ -271,22 +271,29 @@ export const useSettingsStore = defineStore('settings', () => {
     },
   })
 
+  function applyServerState(data: PersistedConfig) {
+    machines.value = data.machines ?? []
+    // Keep current selection if still valid; otherwise fall back to first machine
+    if (!machines.value.find((m) => m.id === activeMachineId.value)) {
+      activeMachineId.value = machines.value[0]?.id ?? ''
+    }
+    if (data.auth) {
+      app.auth.enabled = data.auth.enabled ?? false
+    }
+    if (data.app) {
+      if (data.app.units) app.units = data.app.units
+      if (data.app.macros) app.macros = data.app.macros
+      if (data.app.viewport) Object.assign(app.viewport, data.app.viewport)
+      if (data.app.jog) Object.assign(app.jog, data.app.jog)
+      if (data.app.shortcuts) Object.assign(app.shortcuts, data.app.shortcuts)
+    }
+  }
+
   async function hydrate() {
     if (initialized.value) return
     try {
       const data = await $fetch<PersistedConfig>('/api/config')
-      machines.value = data.machines ?? []
-      activeMachineId.value = machines.value[0]?.id ?? ''
-      if (data.auth) {
-        app.auth.enabled = data.auth.enabled ?? false
-      }
-      if (data.app) {
-        if (data.app.units) app.units = data.app.units
-        if (data.app.macros) app.macros = data.app.macros
-        if (data.app.viewport) Object.assign(app.viewport, data.app.viewport)
-        if (data.app.jog) Object.assign(app.jog, data.app.jog)
-        if (data.app.shortcuts) Object.assign(app.shortcuts, data.app.shortcuts)
-      }
+      applyServerState(data)
     } finally {
       initialized.value = true
     }
@@ -353,6 +360,7 @@ export const useSettingsStore = defineStore('settings', () => {
     addMachine,
     removeMachine,
     hydrate,
+    applyServerState,
     save,
     addAppMacro,
     removeAppMacro,

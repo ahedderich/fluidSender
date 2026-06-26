@@ -17,8 +17,8 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 
 use crate::machine::state::{
-    AxisMap, LimitState, MachineState, MachineStatus, SharedMachineState, StateBroadcast,
-    AXIS_COUNT,
+    AxisMap, ConsoleBroadcast, LimitState, MachineState, MachineStatus, SharedMachineState,
+    StateBroadcast, AXIS_COUNT,
 };
 use crate::machine::stock::StockDefinition;
 
@@ -26,6 +26,8 @@ use crate::machine::stock::StockDefinition;
 pub struct AppState {
     pub machine: SharedMachineState,
     pub broadcast: StateBroadcast,
+    /// FluidNC protocol traffic, forwarded to the sim-ui console.
+    pub console: ConsoleBroadcast,
     /// Optional stock; if set, used in probe collision detection
     pub stock: Arc<tokio::sync::RwLock<Option<StockDefinition>>>,
 }
@@ -86,6 +88,7 @@ pub fn router(app: AppState) -> Router {
         .route("/api/machine/config", post(set_machine_config))
         .route("/api/stock", post(set_stock))
         .route("/ws/state", get(ws_state_handler))
+        .route("/ws/console", get(ws_console_handler))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(app)
@@ -277,6 +280,31 @@ async fn ws_state_handler(
     State(app): State<AppState>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| ws_state(socket, app))
+}
+
+async fn ws_console_handler(
+    ws: WebSocketUpgrade,
+    State(app): State<AppState>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| ws_console(socket, app))
+}
+
+/// Streams FluidNC protocol traffic (requests + responses) to the sim-ui.
+/// Display-only — incoming messages from the client are ignored.
+async fn ws_console(mut socket: WebSocket, app: AppState) {
+    let mut rx = app.console.subscribe();
+    loop {
+        match rx.recv().await {
+            Ok(entry) => {
+                let json = serde_json::to_string(&entry).unwrap_or_default();
+                if socket.send(Message::Text(json.into())).await.is_err() {
+                    break;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(_) => break,
+        }
+    }
 }
 
 async fn ws_state(mut socket: WebSocket, app: AppState) {

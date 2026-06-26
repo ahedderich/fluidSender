@@ -1,4 +1,4 @@
-import { useSimStore, type MachineState, type LimitKey, type AxisKey, AXES } from '~/stores/sim'
+import { useSimStore, type MachineState, type LimitKey, type AxisKey, type ConsoleLine, AXES } from '~/stores/sim'
 
 interface SimStateMsg {
   machineState: MachineState
@@ -29,6 +29,10 @@ export function useSimConnection() {
   let ws: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let retryDelay = 1000
+
+  let consoleWs: WebSocket | null = null
+  let consoleReconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let consoleRetryDelay = 1000
 
   function applyState(msg: SimStateMsg) {
     store.connected = true
@@ -91,11 +95,43 @@ export function useSimConnection() {
     }
   }
 
+  // Separate WS for the display-only protocol console (`/ws/console`).
+  function connectConsole() {
+    if (consoleWs) { consoleWs.close(); consoleWs = null }
+
+    consoleWs = new WebSocket(`${config.public.simControlWsUrl}/ws/console`)
+
+    consoleWs.onopen = () => { consoleRetryDelay = 1000 }
+
+    consoleWs.onmessage = (event: MessageEvent) => {
+      try {
+        store.pushConsoleLine(JSON.parse(event.data as string) as ConsoleLine)
+      } catch {
+        // ignore malformed messages
+      }
+    }
+
+    consoleWs.onclose = () => {
+      consoleWs = null
+      consoleReconnectTimer = setTimeout(() => {
+        consoleRetryDelay = Math.min(consoleRetryDelay * 2, 5000)
+        connectConsole()
+      }, consoleRetryDelay)
+    }
+  }
+
+  function connectAll() {
+    connect()
+    connectConsole()
+  }
+
   function disconnect() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
     if (ws) { ws.close(); ws = null }
+    if (consoleReconnectTimer) { clearTimeout(consoleReconnectTimer); consoleReconnectTimer = null }
+    if (consoleWs) { consoleWs.close(); consoleWs = null }
     store.connected = false
   }
 
-  return { connect, disconnect }
+  return { connect: connectAll, disconnect }
 }

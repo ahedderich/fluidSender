@@ -37,6 +37,7 @@ async fn start_sim() -> u16 {
     use tokio::sync::RwLock;
 
     let (shared, broadcast) = fluidsim::machine::state::new_shared(state);
+    let console = fluidsim::machine::state::new_console();
     let stock = Arc::new(RwLock::new(None));
     let move_tx = fluidsim::machine::motion::spawn_motion_task(
         Arc::clone(&shared),
@@ -47,6 +48,7 @@ async fn start_sim() -> u16 {
     let app_state = fluidsim::server::control::AppState {
         machine: Arc::clone(&shared),
         broadcast: broadcast.clone(),
+        console: console.clone(),
         stock,
     };
 
@@ -54,6 +56,7 @@ async fn start_sim() -> u16 {
         fluidnc_port,
         Arc::clone(&shared),
         broadcast.clone(),
+        console.clone(),
         move_tx,
     ));
     tokio::spawn(fluidsim::server::control::run(control_port, app_state));
@@ -180,15 +183,15 @@ async fn gcode_g0_move_updates_position() {
     writer.write_all(b"$H\n").await.unwrap();
     read_until(&mut reader, "ok").await;
 
-    // Move to X50 Y50
-    writer.write_all(b"G0 X50 Y50\n").await.unwrap();
+    // Move to X-50 Y-50 (work area is in the negative quadrant)
+    writer.write_all(b"G0 X-50 Y-50\n").await.unwrap();
     read_until(&mut reader, "ok").await;
 
     // Poll until position reaches target (motion is async)
     for _ in 0..50 {
         writer.write_all(b"?\n").await.unwrap();
         let status = read_line(&mut reader).await;
-        if status.contains("MPos:50.000,50.000") {
+        if status.contains("MPos:-50.000,-50.000") {
             return;
         }
         sleep(Duration::from_millis(100)).await;
@@ -196,5 +199,5 @@ async fn gcode_g0_move_updates_position() {
     // Final check
     writer.write_all(b"?\n").await.unwrap();
     let status = read_line(&mut reader).await;
-    assert!(status.contains("MPos:50.000,50.000"), "final status: {}", status);
+    assert!(status.contains("MPos:-50.000,-50.000"), "final status: {}", status);
 }

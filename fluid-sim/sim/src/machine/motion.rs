@@ -117,13 +117,20 @@ async fn execute_linear(
     dt: f64,
     interval_dur: Duration,
 ) -> MoveResult {
-    // Set state to Run
     {
         let mut state = shared.write().await;
-        match mv.kind {
-            MoveKind::Jog => state.status = MachineStatus::Run,
-            _ => state.status = MachineStatus::Run,
+        // Skip moves queued behind an active hold or alarm — don't overwrite the status.
+        if matches!(state.status, MachineStatus::Hold | MachineStatus::Alarm) {
+            return MoveResult::Ok;
         }
+        // Skip jog moves queued behind a jog cancel.
+        if matches!(mv.kind, MoveKind::Jog) && state.jog_cancel_pending {
+            state.status = MachineStatus::Idle;
+            state.feed = 0.0;
+            let _ = broadcast.send(());
+            return MoveResult::Ok;
+        }
+        state.status = MachineStatus::Run;
         state.feed = mv.feed;
     }
     let _ = broadcast.send(());
@@ -142,10 +149,17 @@ async fn execute_linear(
         let tick = {
             let mut state = shared.write().await;
 
-            // Check for hold / jog cancel
-            if state.hold_pending || matches!(state.status, MachineStatus::Hold) {
+            // Jog cancel → return to Idle immediately (not Hold)
+            if matches!(mv.kind, MoveKind::Jog) && state.jog_cancel_pending {
+                state.status = MachineStatus::Idle;
+                state.feed = 0.0;
+                let _ = broadcast.send(());
+                TickResult::Done(MoveResult::Ok)
+            // Feed hold (non-jog moves only)
+            } else if state.hold_pending || matches!(state.status, MachineStatus::Hold) {
                 state.hold_pending = false;
                 state.status = MachineStatus::Hold;
+                let _ = broadcast.send(());
                 TickResult::Done(MoveResult::Ok)
             } else {
                 let sim_speed = state.sim_speed as f64;
@@ -192,13 +206,17 @@ async fn execute_linear(
                         state.pos[i] += nd[i] * step;
                     }
 
-                    // Check soft limits
+                    // Check soft limits.
+                    // X (i=0) and Y (i=1): home at 0, work area is negative → [-travel, 0].
+                    // Z (i=2): home at 0, tool descends to negative → only enforce lower bound.
                     let mut over_limit = false;
                     for i in 0..state.axis_count {
-                        if state.pos[i] < -0.001 || state.pos[i] > state.travel[i] + 0.001 {
-                            over_limit = true;
-                            break;
-                        }
+                        let out = if i < 2 {
+                            state.pos[i] > 0.001 || state.pos[i] < -state.travel[i] - 0.001
+                        } else {
+                            state.pos[i] < -state.travel[i] - 0.001
+                        };
+                        if out { over_limit = true; break; }
                     }
                     if over_limit {
                         state.status = MachineStatus::Alarm;
@@ -300,8 +318,8 @@ mod tests {
         let target = {
             let s = shared.read().await;
             let mut t = s.pos;
-            t[0] = 50.0;
-            t[1] = 50.0;
+            t[0] = -50.0;
+            t[1] = -50.0;
             t
         };
 
@@ -315,8 +333,8 @@ mod tests {
         assert!(matches!(result, MoveResult::Ok));
 
         let state = shared.read().await;
-        assert!((state.pos[0] - 50.0).abs() < 0.1, "x={}", state.pos[0]);
-        assert!((state.pos[1] - 50.0).abs() < 0.1, "y={}", state.pos[1]);
+        assert!((state.pos[0] + 50.0).abs() < 0.1, "x={}", state.pos[0]);
+        assert!((state.pos[1] + 50.0).abs() < 0.1, "y={}", state.pos[1]);
         assert_eq!(state.status, MachineStatus::Idle);
     }
 
@@ -325,9 +343,9 @@ mod tests {
         let (shared, bcast) = make_shared();
         let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
 
-        // Start a long jog
+        // Start a long jog toward the negative X limit
         let mut target = [0.0f64; AXIS_COUNT];
-        target[0] = 250.0; // far away
+        target[0] = -250.0;
 
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         tx.send((
@@ -342,8 +360,8 @@ mod tests {
         let result = result_rx.await.unwrap();
         assert!(matches!(result, MoveResult::Ok));
         let state = shared.read().await;
-        // Position should NOT have reached 250
-        assert!(state.pos[0] < 250.0, "should not have reached target");
+        // Position should NOT have reached -250
+        assert!(state.pos[0] > -250.0, "should not have reached target");
     }
 
     #[tokio::test]
@@ -351,9 +369,9 @@ mod tests {
         let (shared, bcast) = make_shared();
         let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
 
-        // Move past X travel limit (300mm)
+        // Move past X travel limit (past -300mm)
         let mut target = [0.0f64; AXIS_COUNT];
-        target[0] = 350.0;
+        target[0] = -350.0;
 
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         tx.send((

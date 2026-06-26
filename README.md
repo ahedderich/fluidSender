@@ -20,6 +20,8 @@ FluidSender is a native FluidNC client — not a generic GRBL sender. It impleme
 - **FluidNC simulator** — Rust-based firmware emulator with configurable machine, stock, and failure modes
 - **Light/dark theme** — toggleable system-aware theming
 - **Optional authentication** — protect the UI with a username/password when needed
+- **Role-based access** — Viewer, Operator, and Admin roles granting different levels of access
+- **Multi-user/session state sync** — every connected browser shows the same state, dialogs, and selections where it matters, kept in sync in real time by the server
 - **Fully containerized** — single `docker-compose.yaml` for production deployment
 
 ---

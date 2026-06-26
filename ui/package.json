@@ -10,6 +10,7 @@
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:server": "node_modules/.bin/esbuild tests/server/**/*.test.ts --bundle --platform=node --target=node18 --outdir=.test-out/ && node --test .test-out/*.js",
     "postinstall": "nuxt prepare"
   },
   "dependencies": {

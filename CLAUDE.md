@@ -30,7 +30,7 @@ Alternative projects this replaces: CNCjs, gSender, etc.
 ## Technology Stack
 
 ### UI (`ui/`)
-- **Runtime / package manager / bundler:** Bun (latest stable)
+- **Runtime / package manager / bundler:** Bun (latest stable) — **except the dev server, which runs under Node** because Bun's runtime breaks Nitro/crossws WebSocket upgrades in dev (see [State Sync Protocol](#state-sync-protocol-websocket)). Bun still handles `install`/`build`/production.
 - **Framework:** Nuxt 3 (latest stable) with Vue 3 Composition API (`<script setup>`)
 - **Language:** TypeScript (`strict: true`)
 - **Styling:** Tailwind CSS — light/dark theme support via Tailwind's `darkMode: 'class'`
@@ -85,6 +85,32 @@ Browser
 - The browser holds only a **read replica** of server state and a **display cache** of firmware state — never the source of truth for either.
 - On reconnect, the server re-sends full current state to the new client; the client must not persist any state between page loads.
 - When writing machine config back to firmware (settings page "Write to FluidNC"), the updated values must be re-read from firmware after the write to confirm and update the local cache.
+
+### State Sync Protocol (WebSocket)
+
+The browser ↔ server sync runs over a single WebSocket at `/ws` (`ui/server/routes/ws.ts`, crossws `defineWebSocketHandler`). It uses a **snapshot + delta-patch** protocol — never broadcast full state on every change.
+
+**Wire format** (all messages are `{ t, payload }`):
+- `{ t: 'snapshot', payload: { config, connection, ui } }` — sent **once** when a client connects.
+- `{ t: 'patch', payload: { ops: PatchOp[] } }` — every subsequent change. Each op is path-scoped and carries **only what changed**:
+  - `{ path, set }` — replace a scalar slice (e.g. `nav`, `selection`, `connection`).
+  - `{ path, push }` — append one array item (`modals`, `toasts`, `console`).
+  - `{ path, removeId, meta? }` — remove one array item by id (`meta.result` carries a modal's resolution).
+  - `{ path, clear }` — empty an array (`console`).
+- Client→server intents use `t` values like `ui:nav`, `ui:selection`, `ui:modal:open` / `ui:modal:resolve`, `ui:toast:push` / `ui:toast:dismiss`, `ui:console:push` / `ui:console:clear`, `machine:connect` / `machine:disconnect`.
+
+**Server-owned UI state** (`ui/server/utils/appState.ts`, the `ui` object) is the single source of truth and is broadcast to every client: `nav` (navMode, probingTab, route, wizard), `selection` (activeMachineId, selectedToolId, selectedFile), `modals` (stack), `toasts`, `console`. The server also owns timers (e.g. toast auto-dismiss) so they fire identically everywhere.
+
+**Client side** (`ui/app/stores/sync.ts` + `ui/app/plugins/serverSync.client.ts`): the plugin applies `snapshot`/`patch` to the precise reactive slice so only dependent components re-render; patches routed by `path` (`connection`→machine store, `config`→settings store, else→sync store). Helper composables: `useNav`, `useSelection`, `useToast`, `useModals` (+ `useConfirm`). Console is a server-owned stream — components read `machine.consoleLog` (a computed alias over the sync store); `addConsole` sends `ui:console:push` (single origin, no per-client duplication).
+
+**Synced modals:** all dialogs (confirm, stock, heightmap, goto-pos, tool, export, probing wizard) open/close on every browser via the modal stack. `useModals().open(kind, props)` returns a Promise that resolves when **any** browser closes it. Depth = open/close + result only; in-modal form fields stay local per browser.
+
+**Hard rules when extending sync:**
+- **Never reassign the sync store's array refs** (`modals`/`toasts`/`console`) — mutate in place (`push`/`splice`). `useModals`/`useToast` capture the array reference; reassigning (e.g. `.filter()`) stale-ifies it and silently breaks reactivity.
+- Avoid circular imports between `stores/sync.ts` and `composables/useModals.ts` — the store must not import the composable (it crashes SSR). `ModalEntry` lives in the store; the plugin (not the store) calls `settleModal`.
+- Generate one console entry / modal / toast at a **single** authority (the acting client or the server), never inside `applyServerStatus`-style code that runs on every client.
+
+> **Dev runtime caveat:** Nitro/crossws WebSocket upgrades **do not work when `nuxt dev` runs under Bun's runtime** ([nitro#2721](https://github.com/nitrojs/nitro/issues/2721)) — the handshake hangs (client stuck CONNECTING) even though the server `open()` fires. The dev image (`ui/Dockerfile`) therefore runs the dev server on **Node** (`npm run dev`) while keeping Bun for `bun install`. Production (`Dockerfile.prd`) stays on Bun, where WS works after `nuxt build`.
 
 ### Volumes (Docker)
 

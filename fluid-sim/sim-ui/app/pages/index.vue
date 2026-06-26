@@ -14,8 +14,11 @@
       <StockPanel />
     </div>
 
-    <!-- Row 3: FluidNC config -->
-    <FluidNCConfigPanel style="min-height: 14rem" class="shrink-0" />
+    <!-- Row 3: protocol console (2/3) | FluidNC config (1/3) -->
+    <div class="grid gap-2 shrink-0" style="grid-template-columns: 2fr 1fr; height: 18rem">
+      <ConsolePanel />
+      <FluidNCConfigPanel />
+    </div>
 
   </main>
 </template>

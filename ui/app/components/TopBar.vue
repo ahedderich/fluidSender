@@ -19,17 +19,12 @@
 
       <button
         @click="machine.connected ? machine.disconnect() : machine.connect()"
-        :disabled="!s.hasMachines"
-        :class="
-          machine.connected
-            ? 'bg-emerald-700 hover:bg-emerald-600 text-white'
-            : s.hasMachines
-              ? 'bg-blue-600 hover:bg-blue-500 text-white'
-              : 'bg-gray-300 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed'
-        "
-        class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
+        :disabled="!s.hasMachines || machine.connecting"
+        :class="connectBtnClass"
+        class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
       >
-        {{ machine.connected ? 'Disconnect' : 'Connect' }}
+        <span v-if="machine.connecting" class="inline-block w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+        {{ machine.connecting ? 'Connecting…' : machine.connected ? 'Disconnect' : 'Connect' }}
       </button>
 
       <span
@@ -37,6 +32,24 @@
         class="text-xs text-gray-500 dark:text-slate-400 bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded font-mono whitespace-nowrap border border-gray-200 dark:border-slate-700"
       >
         FluidNC {{ machine.firmwareVersion }}
+      </span>
+
+      <!-- WS offline indicator -->
+      <span
+        v-if="!wsConnected"
+        class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 px-2 py-1 rounded whitespace-nowrap"
+        title="Lost connection to server — reconnecting…"
+      >
+        Server offline
+      </span>
+
+      <!-- Connection error -->
+      <span
+        v-if="machine.connectionError"
+        class="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700/50 px-2 py-1 rounded max-w-xs truncate"
+        :title="machine.connectionError"
+      >
+        {{ machine.connectionError }}
       </span>
     </div>
 
@@ -46,16 +59,75 @@
         :class="statusClass"
         class="px-3 py-1 rounded-md text-sm font-bold tracking-widest select-none"
       >
-        {{ machine.status }}
+        {{ machine.connected && !machine.telemetryLoaded ? 'null' : machine.machineState }}
       </div>
 
       <button
-        v-if="machine.status === 'ALARM'"
+        v-if="machine.machineState === 'Alarm'"
         @click="machine.sendCommand('$X')"
         class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-sm font-medium transition-colors"
       >
         Unlock
       </button>
+
+      <!-- Job controls -->
+      <template v-if="job">
+        <button
+          v-if="job.status === 'loaded'"
+          @click="startJob"
+          class="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-md text-sm font-medium transition-colors"
+          title="Cycle Start"
+        >
+          <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          Cycle Start
+        </button>
+        <template v-else-if="job.status === 'running'">
+          <button
+            @click="pauseJob"
+            class="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-white rounded-md text-sm font-medium transition-colors"
+            title="Pause"
+          >
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+            </svg>
+            Pause
+          </button>
+          <button
+            @click="cancelJob"
+            class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-md text-sm font-medium transition-colors"
+            title="Stop"
+          >
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M6 6h12v12H6z" />
+            </svg>
+            Stop
+          </button>
+        </template>
+        <template v-else-if="job.status === 'paused'">
+          <button
+            @click="resumeJob"
+            class="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-md text-sm font-medium transition-colors"
+            title="Resume"
+          >
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            Resume
+          </button>
+          <button
+            @click="cancelJob"
+            class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-md text-sm font-medium transition-colors"
+            title="Stop"
+          >
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M6 6h12v12H6z" />
+            </svg>
+            Stop
+          </button>
+        </template>
+      </template>
 
       <button
         v-if="machine.connected"
@@ -97,6 +169,12 @@
           <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-2 uppercase tracking-wide">
             Limit Switches
           </div>
+          <p
+            v-if="!machine.telemetryLoaded"
+            class="text-sm font-mono text-gray-400 dark:text-slate-500 py-1.5"
+          >
+            null
+          </p>
           <div
             v-for="sw in machine.limitSwitches"
             :key="sw.name"
@@ -190,11 +268,14 @@ import { useMachineStore } from '~/stores/machine'
 import { useSettingsStore } from '~/stores/settings'
 import { useUiStore } from '~/stores/ui'
 import { useConfirm } from '~/composables/useConfirm'
+import { wsConnected } from '~/composables/useWsSend'
+import { useJobControl } from '~/composables/useJobControl'
 
 const machine = useMachineStore()
 const s = useSettingsStore()
 const ui = useUiStore()
 const { confirm } = useConfirm()
+const { job, startJob, pauseJob, resumeJob, cancelJob } = useJobControl()
 const route = useRoute()
 const isSettings = computed(() => route.path === '/settings')
 
@@ -202,20 +283,28 @@ const sensorOpen = ref(false)
 
 const anyTriggered = computed(() => machine.limitSwitches.some((s) => s.triggered))
 
+const connectBtnClass = computed(() => {
+  if (machine.connecting) return 'bg-blue-500 text-white opacity-75 cursor-not-allowed'
+  if (!s.hasMachines) return 'bg-gray-300 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed'
+  if (machine.connected) return 'bg-emerald-700 hover:bg-emerald-600 text-white'
+  return 'bg-blue-600 hover:bg-blue-500 text-white'
+})
+
 const statusClass = computed(() => {
   const base = 'min-w-24 text-center '
   const map: Record<string, string> = {
-    IDLE: base + 'bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200',
-    RUN: base + 'bg-blue-600 text-white',
-    HOLD: base + 'bg-amber-600 text-white',
-    ALARM: base + 'bg-red-600 text-white animate-pulse',
-    HOME: base + 'bg-purple-600 text-white',
-    DOOR: base + 'bg-orange-600 text-white',
-    SLEEP: base + 'bg-gray-300 dark:bg-slate-600 text-gray-600 dark:text-slate-300',
-    CHECK: base + 'bg-teal-600 text-white',
-    DISCONNECTED: base + 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500',
+    Idle: base + 'bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200',
+    Run: base + 'bg-blue-600 text-white',
+    Hold: base + 'bg-amber-600 text-white',
+    Jog: base + 'bg-blue-500 text-white',
+    Alarm: base + 'bg-red-600 text-white animate-pulse',
+    Home: base + 'bg-purple-600 text-white',
+    Door: base + 'bg-orange-600 text-white',
+    Sleep: base + 'bg-gray-300 dark:bg-slate-600 text-gray-600 dark:text-slate-300',
+    Check: base + 'bg-teal-600 text-white',
+    Disconnected: base + 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500',
   }
-  return map[machine.status] ?? map['DISCONNECTED']
+  return map[machine.machineState] ?? map['Disconnected']
 })
 
 async function restartFirmware() {

@@ -8,14 +8,20 @@
         File Browser
       </h2>
       <div class="flex items-center gap-1.5">
-        <button
-          class="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium"
-        >
+        <label class="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium cursor-pointer">
           Upload
-        </button>
+          <input
+            ref="uploadInput"
+            type="file"
+            accept=".nc,.gcode,.cnc,.tap"
+            class="hidden"
+            @change="onFileSelected"
+          />
+        </label>
         <button
           class="text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 rounded transition-colors"
           title="Refresh"
+          @click="refresh"
         >
           ↺
         </button>
@@ -32,11 +38,16 @@
       />
     </div>
 
+    <!-- Upload progress -->
+    <div v-if="uploading" class="px-3 py-2 text-xs text-blue-600 dark:text-blue-400 border-b border-gray-100 dark:border-slate-700 shrink-0">
+      Uploading…
+    </div>
+
     <!-- File list -->
     <div class="flex-1 overflow-y-auto min-h-0">
       <div
         v-for="file in filteredFiles"
-        :key="file.name"
+        :key="file.id"
         class="flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-700/50 border-b border-gray-100 dark:border-slate-800/60 last:border-0 group"
       >
         <svg class="w-4 h-4 text-gray-400 dark:text-slate-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -44,23 +55,28 @@
         </svg>
         <div class="flex-1 min-w-0">
           <p class="text-sm font-medium text-gray-800 dark:text-slate-200 truncate">{{ file.name }}</p>
-          <p class="text-xs text-gray-400 dark:text-slate-500">{{ file.size }} · {{ file.modified }}</p>
+          <p class="text-xs text-gray-400 dark:text-slate-500">{{ formatSize(file.size) }} · {{ formatDate(file.modifiedAt) }}</p>
         </div>
         <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
           <button
             class="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+            @click="loadFile(file.id)"
           >
             Load
           </button>
           <button
             class="text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-red-600 hover:text-white text-gray-500 dark:text-slate-400 rounded transition-colors"
+            @click="deleteFile(file.id)"
           >
             ✕
           </button>
         </div>
       </div>
 
-      <div v-if="filteredFiles.length === 0" class="flex items-center justify-center py-12">
+      <div v-if="pending" class="flex items-center justify-center py-12">
+        <p class="text-gray-400 dark:text-slate-500 text-sm">Loading…</p>
+      </div>
+      <div v-else-if="filteredFiles.length === 0" class="flex items-center justify-center py-12">
         <p class="text-gray-400 dark:text-slate-500 text-sm">No files found</p>
       </div>
     </div>
@@ -68,19 +84,67 @@
 </template>
 
 <script setup lang="ts">
-const filter = ref('')
+import { useJobControl } from '~/composables/useJobControl'
 
-const mockFiles = [
-  { name: 'bracket_v3.nc', size: '184 KB', modified: '2 hours ago' },
-  { name: 'enclosure_base.nc', size: '2.1 MB', modified: 'Yesterday' },
-  { name: 'pcb_drill_template.nc', size: '45 KB', modified: '3 days ago' },
-  { name: 'logo_engraving.nc', size: '610 KB', modified: 'Last week' },
-  { name: 'fixture_plate.nc', size: '98 KB', modified: 'Last week' },
-  { name: 'front_panel_v2.nc', size: '1.3 MB', modified: '2 weeks ago' },
-  { name: 'test_cuts.nc', size: '12 KB', modified: '3 weeks ago' },
-]
+interface FileEntry {
+  id: string
+  name: string
+  size: number
+  modifiedAt: number
+}
+
+const { loadJob } = useJobControl()
+const filter = ref('')
+const uploading = ref(false)
+
+const { data, pending, refresh } = await useFetch<{ files: FileEntry[] }>('/api/files', {
+  default: () => ({ files: [] }),
+})
 
 const filteredFiles = computed(() =>
-  mockFiles.filter((f) => f.name.toLowerCase().includes(filter.value.toLowerCase())),
+  (data.value?.files ?? []).filter((f) =>
+    f.name.toLowerCase().includes(filter.value.toLowerCase()),
+  ),
 )
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatDate(epochMs: number): string {
+  const diff = Date.now() - epochMs
+  const mins = Math.floor(diff / 60_000)
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d ago`
+  return new Date(epochMs).toLocaleDateString()
+}
+
+async function onFileSelected(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  uploading.value = true
+  try {
+    const form = new FormData()
+    form.append('file', file)
+    await $fetch('/api/files', { method: 'POST', body: form })
+    await refresh()
+  } finally {
+    uploading.value = false
+    ;(event.target as HTMLInputElement).value = ''
+  }
+}
+
+function loadFile(fileId: string) {
+  loadJob(fileId)
+}
+
+async function deleteFile(fileId: string) {
+  await $fetch(`/api/files/${fileId}`, { method: 'DELETE' })
+  await refresh()
+}
 </script>

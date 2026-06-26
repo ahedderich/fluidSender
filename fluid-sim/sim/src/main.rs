@@ -12,7 +12,7 @@ use tracing_subscriber::EnvFilter;
 
 use config::Config;
 use machine::motion::spawn_motion_task;
-use machine::state::{MachineState, new_shared};
+use machine::state::{MachineState, new_console, new_shared};
 use server::control::{AppState, run as run_control};
 use server::fluidnc::run as run_fluidnc;
 
@@ -61,6 +61,7 @@ async fn main() {
     );
 
     let (shared, broadcast) = new_shared(state);
+    let console = new_console();
     let stock = Arc::new(RwLock::new(None));
 
     let move_tx = spawn_motion_task(
@@ -72,6 +73,7 @@ async fn main() {
     let app_state = AppState {
         machine: Arc::clone(&shared),
         broadcast: broadcast.clone(),
+        console: console.clone(),
         stock: Arc::clone(&stock),
     };
 
@@ -82,6 +84,7 @@ async fn main() {
         fluidnc_port,
         Arc::clone(&shared),
         broadcast.clone(),
+        console.clone(),
         move_tx,
     ));
 

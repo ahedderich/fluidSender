@@ -135,6 +135,11 @@ pub struct MachineState {
     pub homing_in_progress: bool,
     #[serde(skip)]
     pub hold_pending: bool,
+    /// Set by \x85 jog-cancel; cleared when a new $J command is interpreted.
+    /// Causes the motion task to drain queued jog moves back to Idle instead
+    /// of executing them.
+    #[serde(skip)]
+    pub jog_cancel_pending: bool,
 }
 
 impl MachineState {
@@ -158,7 +163,7 @@ impl MachineState {
 
         Self {
             status: MachineStatus::Idle,
-            pos: [150.0, 100.0, 5.0, 0.0, 0.0, 0.0],
+            pos: [-150.0, -100.0, 5.0, 0.0, 0.0, 0.0],
             wco: [0.0; AXIS_COUNT],
             feed: 0.0,
             spindle_speed: 0.0,
@@ -174,6 +179,7 @@ impl MachineState {
             modal: ModalState::default(),
             homing_in_progress: false,
             hold_pending: false,
+            jog_cancel_pending: false,
         }
     }
 
@@ -192,6 +198,7 @@ impl MachineState {
         self.door = false;
         self.homing_in_progress = false;
         self.hold_pending = false;
+        self.jog_cancel_pending = false;
         self.feed = 0.0;
     }
 
@@ -207,4 +214,33 @@ pub fn new_shared(state: MachineState) -> (SharedMachineState, StateBroadcast) {
     let shared = Arc::new(RwLock::new(state));
     let (tx, _) = broadcast::channel(64);
     (shared, tx)
+}
+
+/// One line of FluidNC protocol traffic, broadcast to the sim-ui console.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsoleEntry {
+    /// "rx" = received by the sim (a request), "tx" = sent by the sim (a response).
+    pub dir: &'static str,
+    /// Origin of the request (FluidNC client peer address).
+    pub source: String,
+    pub text: String,
+    /// Epoch milliseconds.
+    pub ts: u64,
+}
+
+pub type ConsoleBroadcast = broadcast::Sender<ConsoleEntry>;
+
+pub fn new_console() -> ConsoleBroadcast {
+    let (tx, _) = broadcast::channel(512);
+    tx
+}
+
+/// Current time in epoch milliseconds (used for console timestamps).
+pub fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }

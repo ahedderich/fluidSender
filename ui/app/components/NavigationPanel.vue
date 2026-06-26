@@ -9,15 +9,15 @@
       </h2>
       <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded-md p-0.5">
         <button
-          @click="ui.navMode = 'buttons'"
-          :class="ui.navMode === 'buttons' ? 'bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 shadow-sm' : 'text-gray-400 dark:text-slate-500'"
+          @click="navMode = 'buttons'"
+          :class="navMode === 'buttons' ? 'bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 shadow-sm' : 'text-gray-400 dark:text-slate-500'"
           class="px-2.5 py-1 rounded text-xs font-medium transition-all"
         >
           Buttons
         </button>
         <button
-          @click="ui.navMode = 'joystick'"
-          :class="ui.navMode === 'joystick' ? 'bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 shadow-sm' : 'text-gray-400 dark:text-slate-500'"
+          @click="navMode = 'joystick'"
+          :class="navMode === 'joystick' ? 'bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 shadow-sm' : 'text-gray-400 dark:text-slate-500'"
           class="px-2.5 py-1 rounded text-xs font-medium transition-all"
         >
           Joystick
@@ -88,7 +88,7 @@
 
       <!-- Col 3: XY direction buttons or joystick — fixed footprint keeps panel height stable -->
       <div class="flex-none flex items-center justify-center w-[9.75rem] min-h-[9.75rem] mx-4">
-        <div v-if="ui.navMode === 'buttons'" class="grid grid-cols-3 gap-1.5">
+        <div v-if="navMode === 'buttons'" class="grid grid-cols-3 gap-1.5">
           <button
             v-for="dir in xyDirs"
             :key="dir.label"
@@ -96,14 +96,15 @@
             @pointerup="stopJog"
             @pointerleave="stopJog"
             @pointercancel="stopJog"
-            :class="dir.label === '○' ? 'bg-gray-200 dark:bg-slate-900 cursor-default text-gray-400 dark:text-slate-600' : 'bg-gray-100 dark:bg-slate-700 hover:bg-blue-700 active:bg-blue-600 text-gray-800 dark:text-slate-200 cursor-pointer'"
+            :disabled="!canJog || dir.label === '○'"
+            :class="dir.label === '○' ? 'bg-gray-200 dark:bg-slate-900 cursor-default text-gray-400 dark:text-slate-600' : !canJog ? 'bg-gray-100 dark:bg-slate-700 opacity-40 cursor-not-allowed text-gray-800 dark:text-slate-200' : 'bg-gray-100 dark:bg-slate-700 hover:bg-blue-700 active:bg-blue-600 text-gray-800 dark:text-slate-200 cursor-pointer'"
             class="w-12 h-12 rounded-lg text-lg font-bold flex items-center justify-center transition-colors select-none touch-none"
           >
             {{ dir.label }}
           </button>
         </div>
         <div v-else>
-          <JoystickControl @move="onJoystickMove" />
+          <JoystickControl :disabled="!canJog" @move="onJoystickMove" />
         </div>
       </div>
 
@@ -114,7 +115,9 @@
           @pointerup="stopJog"
           @pointerleave="stopJog"
           @pointercancel="stopJog"
-          class="w-full flex-1 min-h-0 bg-gray-100 dark:bg-slate-700 hover:bg-blue-700 active:bg-blue-600 text-gray-800 dark:text-slate-200 rounded-lg text-lg font-bold flex items-center justify-center transition-colors select-none touch-none"
+          :disabled="!canJog"
+          :class="!canJog ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-700 active:bg-blue-600 cursor-pointer'"
+          class="w-full flex-1 min-h-0 bg-gray-100 dark:bg-slate-700 text-gray-800 dark:text-slate-200 rounded-lg text-lg font-bold flex items-center justify-center transition-colors select-none touch-none"
         >
           ▲
         </button>
@@ -124,7 +127,9 @@
           @pointerup="stopJog"
           @pointerleave="stopJog"
           @pointercancel="stopJog"
-          class="w-full flex-1 min-h-0 bg-gray-100 dark:bg-slate-700 hover:bg-blue-700 active:bg-blue-600 text-gray-800 dark:text-slate-200 rounded-lg text-lg font-bold flex items-center justify-center transition-colors select-none touch-none"
+          :disabled="!canJog"
+          :class="!canJog ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-700 active:bg-blue-600 cursor-pointer'"
+          class="w-full flex-1 min-h-0 bg-gray-100 dark:bg-slate-700 text-gray-800 dark:text-slate-200 rounded-lg text-lg font-bold flex items-center justify-center transition-colors select-none touch-none"
         >
           ▼
         </button>
@@ -164,7 +169,7 @@
     <Teleport to="body">
       <div
         v-if="showGotoPos"
-        class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
         @click.self="showGotoPos = false"
       >
         <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-sm">
@@ -243,12 +248,22 @@
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
-import { useUiStore } from '~/stores/ui'
 import { useSettingsStore } from '~/stores/settings'
+import { useSyncStore } from '~/stores/sync'
+import { useNav } from '~/composables/useNav'
+import { useModals } from '~/composables/useModals'
+import { wsSend } from '~/composables/useWsSend'
 
 const machine = useMachineStore()
-const ui = useUiStore()
 const settings = useSettingsStore()
+const sync = useSyncStore()
+const { navMode } = useNav()
+const modals = useModals()
+
+// true only on the browser that is actively jogging right now
+const isJogging = ref(false)
+// other browsers may not jog while this is true
+const canJog = computed(() => !sync.jogActive || isJogging.value)
 
 const xyDirs = [
   { label: '↖', dx: -1, dy: 1 },
@@ -286,6 +301,9 @@ let jogInterval: ReturnType<typeof setInterval> | null = null
 let jogTimeout: ReturnType<typeof setTimeout> | null = null
 
 function startJog(dx: number, dy: number, dz: number) {
+  if (!canJog.value) return
+  isJogging.value = true
+  wsSend({ t: 'ui:jog:start' })
   doJog(dx, dy, dz)
   jogTimeout = setTimeout(() => {
     jogInterval = setInterval(() => doJog(dx, dy, dz), 100)
@@ -302,9 +320,6 @@ function doJog(dx: number, dy: number, dz: number) {
   if (dz !== 0) parts.push(`Z${(dz * zStep).toFixed(3)}`)
   if (parts.length) {
     machine.sendCommand(`$J=G91 ${parts.join(' ')} F${feed}`)
-    if (dx !== 0) machine.workPos.x += dx * xyStep
-    if (dy !== 0) machine.workPos.y += dy * xyStep
-    if (dz !== 0) machine.workPos.z += dz * zStep
   }
 }
 
@@ -316,16 +331,39 @@ function stopJog() {
   }
   jogTimeout = null
   jogInterval = null
+  if (isJogging.value) {
+    isJogging.value = false
+    wsSend({ t: 'ui:jog:stop' })
+  }
 }
 
 function onJoystickMove({ x, y, magnitude }: { x: number; y: number; magnitude: number }) {
-  stopJog()
-  if (magnitude < 0.1) return
+  if (magnitude < 0.1) {
+    if (isJogging.value) {
+      isJogging.value = false
+      wsSend({ t: 'ui:jog:stop' })
+    }
+    return
+  }
+  if (!canJog.value) return
+  if (!isJogging.value) {
+    isJogging.value = true
+    wsSend({ t: 'ui:jog:start' })
+  }
   const speed = magnitude * jogSpeed.value
   machine.sendCommand(`$J=G91 X${(x * xyStepSize.value).toFixed(3)} Y${(y * xyStepSize.value).toFixed(3)} F${Math.round(speed)}`)
 }
 
-const showGotoPos = ref(false)
+// Open/close synced across browsers via the modal stack; the form values below
+// stay local to each browser (open/close + result sync depth).
+const gotoModal = modals.active('gotopos')
+const showGotoPos = computed<boolean>({
+  get: () => !!gotoModal.value,
+  set: (open) => {
+    if (open) modals.open('gotopos')
+    else if (gotoModal.value) modals.resolve(gotoModal.value.id)
+  },
+})
 const gotoCoord = ref<'work' | 'machine'>('work')
 const gotoMode = ref<'abs' | 'rel'>('abs')
 const gotoValues = reactive({ X: 0, Y: 0, Z: 0 })
