@@ -24,8 +24,8 @@
         :class="connectBtnClass"
         class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
       >
-        <span v-if="machine.connecting" class="inline-block w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-        {{ machine.connecting ? 'Connecting…' : machine.connected ? 'Disconnect' : 'Connect' }}
+        <span v-if="isMounted && machine.connecting" class="inline-block w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+        {{ isMounted ? (machine.connecting ? 'Connecting…' : machine.connected ? 'Disconnect' : 'Connect') : 'Connect' }}
       </button>
 
       <span
@@ -269,6 +269,8 @@ const { confirm } = useConfirm()
 const { job, startJob, pauseJob, resumeJob, cancelJob } = useJobControl()
 const route = useRoute()
 const isSettings = computed(() => route.path === '/settings')
+const isMounted = ref(false)
+onMounted(() => { isMounted.value = true })
 
 const sensorOpen = ref(false)
 
