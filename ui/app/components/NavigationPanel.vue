@@ -262,8 +262,12 @@ const modals = useModals()
 
 // true only on the browser that is actively jogging right now
 const isJogging = ref(false)
-// other browsers may not jog while this is true
-const canJog = computed(() => !sync.jogActive || isJogging.value)
+// block jog when another browser is jogging, or when a job is running (jog oks would corrupt job ack tracking)
+const canJog = computed(() =>
+  (!sync.jogActive || isJogging.value) &&
+  sync.job?.status !== 'running' &&
+  sync.job?.status !== 'pausing',
+)
 
 const xyDirs = [
   { label: '↖', dx: -1, dy: 1 },
@@ -319,20 +323,21 @@ function doJog(dx: number, dy: number, dz: number) {
   if (dy !== 0) parts.push(`Y${(dy * xyStep).toFixed(3)}`)
   if (dz !== 0) parts.push(`Z${(dz * zStep).toFixed(3)}`)
   if (parts.length) {
-    machine.sendCommand(`$J=G91 ${parts.join(' ')} F${feed}`)
+    wsSend({ t: 'machine:jog:move', payload: { cmd: `$J=G91 ${parts.join(' ')} F${feed}` } })
   }
 }
 
 function stopJog() {
   if (jogTimeout) clearTimeout(jogTimeout)
-  if (jogInterval) {
-    clearInterval(jogInterval)
-    machine.sendCommand('\x85')
-  }
+  const wasRunning = jogInterval !== null
+  if (jogInterval) clearInterval(jogInterval)
   jogTimeout = null
   jogInterval = null
   if (isJogging.value) {
     isJogging.value = false
+    // Only cancel buffered moves when continuous jog was active; a single tap
+    // sends one small step that should complete naturally.
+    if (wasRunning) wsSend({ t: 'machine:jog:cancel' })
     wsSend({ t: 'ui:jog:stop' })
   }
 }
@@ -341,6 +346,8 @@ function onJoystickMove({ x, y, magnitude }: { x: number; y: number; magnitude: 
   if (magnitude < 0.1) {
     if (isJogging.value) {
       isJogging.value = false
+      // Joystick ticks continuously so the jog buffer may hold pending moves
+      wsSend({ t: 'machine:jog:cancel' })
       wsSend({ t: 'ui:jog:stop' })
     }
     return
@@ -351,7 +358,7 @@ function onJoystickMove({ x, y, magnitude }: { x: number; y: number; magnitude: 
     wsSend({ t: 'ui:jog:start' })
   }
   const speed = magnitude * jogSpeed.value
-  machine.sendCommand(`$J=G91 X${(x * xyStepSize.value).toFixed(3)} Y${(y * xyStepSize.value).toFixed(3)} F${Math.round(speed)}`)
+  wsSend({ t: 'machine:jog:move', payload: { cmd: `$J=G91 X${(x * xyStepSize.value).toFixed(3)} Y${(y * xyStepSize.value).toFixed(3)} F${Math.round(speed)}` } })
 }
 
 // Open/close synced across browsers via the modal stack; the form values below

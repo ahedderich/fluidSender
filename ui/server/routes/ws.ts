@@ -175,6 +175,15 @@ export default defineWebSocketHandler({
         broadcastPatch([pushConsole({ type: 'sent', text: cmd.trim(), ts: Date.now() })])
         break
       }
+      // Jog commands bypass the job ack queue and console logging (too noisy at 10 Hz)
+      case 'machine:jog:move': {
+        const { cmd } = msg.payload as { cmd: string }
+        machineConnection.sendRaw(cmd)
+        break
+      }
+      case 'machine:jog:cancel':
+        machineConnection.sendByte(0x85)
+        break
 
       // ── Job control ────────────────────────────────────────────────────────
       case 'job:analyze:abort':
@@ -259,6 +268,8 @@ export default defineWebSocketHandler({
   close(peer) {
     removePeer(peer)
     if (getUiState().jogActive) {
+      // Cancel any in-flight jog moves so the machine doesn't drift after the client drops
+      machineConnection.sendByte(0x85)
       broadcastPatch([setJogActive(false)])
     }
   },

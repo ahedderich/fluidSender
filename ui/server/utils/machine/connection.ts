@@ -98,6 +98,12 @@ class MachineConnection extends EventEmitter {
     this.socket.write(data)
   }
 
+  // Send a single real-time control byte without a newline (e.g. 0x85 jog-cancel, 0x18 soft-reset)
+  sendByte(byte: number): void {
+    if (!this.socket || this.socket.destroyed) return
+    this.socket.write(Buffer.from([byte]))
+  }
+
   disconnect(): void {
     this.intentionalDisconnect = true
     this._destroySocket()

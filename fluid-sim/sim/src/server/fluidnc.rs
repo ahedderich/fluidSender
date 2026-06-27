@@ -75,6 +75,27 @@ fn log_console(console: &ConsoleBroadcast, dir: &'static str, source: &str, text
     });
 }
 
+/// Split a raw chunk (bytes up to and including `\n`) into the text line and any
+/// real-time bytes that were embedded in it.  Real-time bytes (0x85, 0x18, `?`, etc.)
+/// are binary commands that FluidNC clients may send without a newline; they can end up
+/// concatenated with the next newline-terminated line in the TCP buffer.  Extracting them
+/// first lets us handle them without attempting invalid UTF-8 decoding via `lines()`.
+fn extract_line_and_rt(buf: &[u8]) -> (String, Vec<u8>) {
+    let mut line_bytes: Vec<u8> = Vec::with_capacity(buf.len());
+    let mut rt_bytes: Vec<u8> = Vec::new();
+    for &b in buf {
+        if crate::protocol::parser::is_realtime_byte(b) {
+            rt_bytes.push(b);
+        } else {
+            line_bytes.push(b);
+        }
+    }
+    let line = String::from_utf8_lossy(&line_bytes)
+        .trim_end_matches(|c: char| c == '\n' || c == '\r')
+        .to_string();
+    (line, rt_bytes)
+}
+
 async fn handle_connection(
     stream: TcpStream,
     shared: SharedMachineState,
@@ -84,7 +105,8 @@ async fn handle_connection(
     peer: String,
 ) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
+    let mut reader = BufReader::new(reader);
+    let mut raw_buf: Vec<u8> = Vec::new();
     // Channel for async alarm messages from background move-result monitors.
     let (alarm_tx, mut alarm_rx) = mpsc::channel::<String>(32);
 
@@ -102,99 +124,113 @@ async fn handle_connection(
                 log_console(&console, "tx", &peer, alarm_msg.trim_end());
             }
 
-            line_result = lines.next_line() => {
-                let Some(line) = line_result? else { break; };
+            // read_until reads raw bytes — no UTF-8 validation — so real-time bytes like
+            // 0x85 (jog cancel) never cause the UTF-8 decode error that `lines()` would.
+            n = reader.read_until(b'\n', &mut raw_buf) => {
+                let n = n?;
+                if n == 0 { break; } // EOF
+
+                let (line, rt_bytes) = extract_line_and_rt(&raw_buf);
+                raw_buf.clear();
+
                 log_console(&console, "rx", &peer, &line);
 
-                // Check for embedded real-time bytes in the line
-                for b in line.bytes() {
-                    if crate::protocol::parser::is_realtime_byte(b) {
-                        let response = handle_realtime(classify(b), &shared, &broadcast).await;
-                        if let Some(resp) = response {
-                            writer.write_all(resp.as_bytes()).await?;
-                            log_console(&console, "tx", &peer, &resp);
-                        }
+                // Handle real-time bytes extracted from this chunk.
+                for b in &rt_bytes {
+                    let response = handle_realtime(classify(*b), &shared, &broadcast).await;
+                    if let Some(resp) = response {
+                        writer.write_all(resp.as_bytes()).await?;
+                        log_console(&console, "tx", &peer, resp.trim_end());
                     }
                 }
 
-                let parsed = parse_line(&line);
-                let (response, pending) =
-                    dispatch(parsed, &shared, &broadcast, &move_tx, &alarm_tx).await;
-                if !response.is_empty() {
-                    writer.write_all(response.as_bytes()).await?;
-                    log_console(&console, "tx", &peer, response.trim_end());
-                }
+                // Only dispatch a line command if there is actual text content, OR if the
+                // chunk was a bare blank line (no RT bytes mixed in).  A chunk that contained
+                // only real-time bytes (e.g. \x85 flushed out by the next \n) should not
+                // generate a spurious `ok`.
+                if !line.is_empty() || rt_bytes.is_empty() {
+                    let parsed = parse_line(&line);
+                    let (response, pending) =
+                        dispatch(parsed, &shared, &broadcast, &move_tx, &alarm_tx).await;
+                    if !response.is_empty() {
+                        writer.write_all(response.as_bytes()).await?;
+                        log_console(&console, "tx", &peer, response.trim_end());
+                    }
 
-                // For probe / homing / dwell we must wait for the result before sending
-                // the final response, but keep reading the stream so `?` queries are
-                // answered in real time during the move.
-                if let Some((kind, mut rx)) = pending {
-                    // in_pause is set after M0's drain dwell completes; the loop then waits
-                    // for ~ (cycle-start) before sending ok and breaking.
-                    let mut in_pause = false;
-                    loop {
-                        tokio::select! {
-                            // Guard prevents polling a consumed oneshot in the pause phase.
-                            result = &mut rx, if !in_pause => {
-                                if matches!(kind, PendingKind::ProgramPause) {
-                                    // Drain complete — enter M0 Hold; wait for ~ below.
-                                    let mut state = shared.write().await;
-                                    state.status = MachineStatus::Hold;
-                                    let _ = broadcast.send(());
-                                    drop(state);
-                                    in_pause = true;
-                                } else {
-                                    handle_pending_result(
-                                        kind,
-                                        result.unwrap_or(MoveResult::Ok),
-                                        &shared,
-                                        &broadcast,
-                                        &mut writer,
-                                        &console,
-                                        &peer,
-                                    ).await?;
-                                    break;
+                    // For probe / homing / dwell we must wait for the result before sending
+                    // the final response, but keep reading the stream so `?` queries are
+                    // answered in real time during the move.
+                    if let Some((kind, mut rx)) = pending {
+                        // in_pause is set after M0's drain dwell completes; the loop then waits
+                        // for ~ (cycle-start) before sending ok and breaking.
+                        let mut in_pause = false;
+                        loop {
+                            tokio::select! {
+                                // Guard prevents polling a consumed oneshot in the pause phase.
+                                result = &mut rx, if !in_pause => {
+                                    if matches!(kind, PendingKind::ProgramPause) {
+                                        // Drain complete — enter M0 Hold; wait for ~ below.
+                                        let mut state = shared.write().await;
+                                        state.status = MachineStatus::Hold;
+                                        let _ = broadcast.send(());
+                                        drop(state);
+                                        in_pause = true;
+                                    } else {
+                                        handle_pending_result(
+                                            kind,
+                                            result.unwrap_or(MoveResult::Ok),
+                                            &shared,
+                                            &broadcast,
+                                            &mut writer,
+                                            &console,
+                                            &peer,
+                                        ).await?;
+                                        break;
+                                    }
                                 }
-                            }
-                            next_line = lines.next_line() => {
-                                match next_line? {
-                                    None => return Ok(()), // EOF
-                                    Some(ql) => {
-                                        log_console(&console, "rx", &peer, &ql);
-                                        for b in ql.bytes() {
-                                            if crate::protocol::parser::is_realtime_byte(b) {
-                                                let resp = handle_realtime(classify(b), &shared, &broadcast).await;
+                                inner_n = reader.read_until(b'\n', &mut raw_buf) => {
+                                    match inner_n? {
+                                        0 => return Ok(()), // EOF
+                                        _ => {
+                                            let (ql, ql_rt) = extract_line_and_rt(&raw_buf);
+                                            raw_buf.clear();
+
+                                            log_console(&console, "rx", &peer, &ql);
+
+                                            for b in &ql_rt {
+                                                let resp = handle_realtime(classify(*b), &shared, &broadcast).await;
                                                 if let Some(r) = resp {
                                                     writer.write_all(r.as_bytes()).await?;
                                                     log_console(&console, "tx", &peer, r.trim_end());
                                                 }
                                             }
-                                        }
-                                        let p = parse_line(&ql);
-                                        if matches!(p, ParsedLine::StatusQuery) {
-                                            let state = shared.read().await;
-                                            let resp = response::status(&state);
-                                            writer.write_all(resp.as_bytes()).await?;
-                                            log_console(&console, "tx", &peer, resp.trim_end());
-                                        }
-                                        if in_pause {
-                                            // CycleStart (~) sets state to Idle via handle_realtime.
-                                            // Check whether Hold was exited by any means.
-                                            let state = shared.read().await;
-                                            if !matches!(state.status, MachineStatus::Hold) {
-                                                drop(state);
-                                                let resp = response::ok();
+
+                                            // During a pending move only status queries matter.
+                                            if matches!(parse_line(&ql), ParsedLine::StatusQuery) {
+                                                let state = shared.read().await;
+                                                let resp = response::status(&state);
                                                 writer.write_all(resp.as_bytes()).await?;
                                                 log_console(&console, "tx", &peer, resp.trim_end());
-                                                break;
+                                            }
+                                            if in_pause {
+                                                // CycleStart (~) sets state to Idle via handle_realtime.
+                                                // Check whether Hold was exited by any means.
+                                                let state = shared.read().await;
+                                                if !matches!(state.status, MachineStatus::Hold) {
+                                                    drop(state);
+                                                    let resp = response::ok();
+                                                    writer.write_all(resp.as_bytes()).await?;
+                                                    log_console(&console, "tx", &peer, resp.trim_end());
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                            Some(alarm_msg) = alarm_rx.recv() => {
-                                writer.write_all(alarm_msg.as_bytes()).await?;
-                                log_console(&console, "tx", &peer, alarm_msg.trim_end());
+                                Some(alarm_msg) = alarm_rx.recv() => {
+                                    writer.write_all(alarm_msg.as_bytes()).await?;
+                                    log_console(&console, "tx", &peer, alarm_msg.trim_end());
+                                }
                             }
                         }
                     }
