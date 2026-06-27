@@ -57,7 +57,7 @@
             v-else
             class="bg-gray-50 dark:bg-slate-900 rounded px-1.5 py-1 font-mono text-right text-sm text-gray-900 dark:text-slate-100 tabular-nums hover:bg-gray-100 dark:hover:bg-slate-700/60 transition-colors cursor-text"
           >
-            {{ machine.telemetryLoaded ? formatPos(workPos[axis.toLowerCase() as 'x' | 'y' | 'z']) : 'null' }}
+            {{ machine.connected ? formatPos(workPos[axis.toLowerCase() as 'x' | 'y' | 'z']) : 'null' }}
           </div>
         </div>
 
@@ -65,7 +65,7 @@
         <div
           class="bg-gray-50 dark:bg-slate-900/60 rounded px-1.5 py-1 font-mono text-right text-sm text-gray-500 dark:text-slate-400 tabular-nums"
         >
-          {{ machine.telemetryLoaded ? formatPos(machinePos[axis.toLowerCase() as 'x' | 'y' | 'z']) : 'null' }}
+          {{ machine.connected ? formatPos(machinePos[axis.toLowerCase() as 'x' | 'y' | 'z']) : 'null' }}
         </div>
 
         <!-- Zero axis button -->

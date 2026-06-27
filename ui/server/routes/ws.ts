@@ -7,6 +7,7 @@ import {
   getConfig,
   getSnapshot,
   getUiState,
+  getConnection,
   setNav,
   setSelection,
   setJogActive,
@@ -132,6 +133,17 @@ export default defineWebSocketHandler({
     }
 
     switch (msg.t) {
+      // ── Machine status request (new client needs current status) ─────────
+      case 'machine:status:request': {
+        const status = getLastMachineStatus()
+        if (status) {
+          peer.send(JSON.stringify({ t: 'machine:status', payload: status }))
+        } else if (getConnection().connected) {
+          machineConnection.sendRaw('?')
+        }
+        break
+      }
+
       // ── Machine connection ─────────────────────────────────────────────────
       case 'machine:connect': {
         const { machineId } = msg.payload as { machineId: string }
@@ -153,9 +165,6 @@ export default defineWebSocketHandler({
       }
 
       // ── Job control ────────────────────────────────────────────────────────
-      case 'job:load':
-        jobEngine.loadJob((msg.payload as { fileId: string }).fileId)
-        break
       case 'job:analyze:abort':
         jobEngine.abortAnalysis()
         break

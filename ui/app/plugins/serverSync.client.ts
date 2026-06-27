@@ -27,7 +27,13 @@ export default defineNuxtPlugin(() => {
   function applyPatchOp(op: PatchOp) {
     switch (op.path) {
       case 'connection':
-        if ('set' in op) machineStore.applyServerStatus(op.set as unknown as ServerConnectionState)
+        if ('set' in op) {
+          const connState = op.set as unknown as ServerConnectionState
+          machineStore.applyServerStatus(connState)
+          if (connState.connected) {
+            send({ t: 'machine:status:request' })
+          }
+        }
         break
       case 'config':
         if ('set' in op) {
@@ -65,6 +71,7 @@ export default defineNuxtPlugin(() => {
         syncStore.applySnapshot(p.ui)
         if (p.job) syncStore.applyJobState(p.job)
         if (p.machine) machineStore.applyMachineStatus(p.machine)
+        else if (p.connection.connected) send({ t: 'machine:status:request' })
         break
       }
       case 'patch': {

@@ -773,27 +773,43 @@ watch(machineHomeWpos, (h) => {
 // Fetch and render 3D path vectors when a job finishes loading.
 // Clear the toolpath when the job is cleared.
 let lastLoadedFileId: string | null = null
+
+async function fetchAndLoadVectors(fileId: string) {
+  try {
+    const segs = await $fetch<PathSegment[]>(`/api/jobs/vectors?fileId=${encodeURIComponent(fileId)}`)
+    loadToolpathSegments(segs)
+  } catch (err) {
+    console.warn('[GCodeViewport] vectors not available:', err)
+  }
+}
+
 watch(
   () => job.value?.status,
   async (status) => {
     if (status === 'loaded') {
       const fileId = job.value?.fileId
       if (!fileId || fileId === lastLoadedFileId) return
+      // Skip if Three.js isn't initialised yet — onMounted will retry after initThree() resolves.
+      if (!ready.value) return
       lastLoadedFileId = fileId
-      try {
-        const segs = await $fetch<PathSegment[]>(`/api/jobs/vectors?fileId=${encodeURIComponent(fileId)}`)
-        loadToolpathSegments(segs)
-      } catch (err) {
-        console.warn('[GCodeViewport] vectors not available:', err)
-      }
+      await fetchAndLoadVectors(fileId)
     } else if (status === 'idle') {
       lastLoadedFileId = null
       clearToolpath()
     }
   },
+  { immediate: true },
 )
 
-onMounted(() => initThree())
+onMounted(async () => {
+  await initThree()
+  // If a job was already in 'loaded' state while Three.js was initialising, load its vectors now.
+  const j = job.value
+  if (j?.status === 'loaded' && j.fileId && j.fileId !== lastLoadedFileId) {
+    lastLoadedFileId = j.fileId
+    await fetchAndLoadVectors(j.fileId)
+  }
+})
 
 onUnmounted(() => {
   if (animId !== null) cancelAnimationFrame(animId)

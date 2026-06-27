@@ -8,10 +8,10 @@
       </h2>
       <span
         class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
-        :class="machine.telemetryLoaded && machine.coolant !== 'off'
+        :class="machine.connected && machine.coolant !== 'off'
           ? 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-400'
           : 'bg-gray-100 dark:bg-slate-700 text-gray-400 dark:text-slate-500'"
-      >{{ !machine.telemetryLoaded ? 'null' : machine.coolant === 'off' ? 'OFF' : machine.coolant.toUpperCase() }}</span>
+      >{{ !machine.connected ? 'null' : machine.coolant === 'off' ? 'OFF' : machine.coolant.toUpperCase() }}</span>
     </div>
 
     <!-- Three-state buttons -->

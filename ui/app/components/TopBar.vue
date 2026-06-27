@@ -59,7 +59,7 @@
         :class="statusClass"
         class="px-3 py-1 rounded-md text-sm font-bold tracking-widest select-none"
       >
-        {{ machine.connected && !machine.telemetryLoaded ? 'null' : machine.machineState }}
+        {{ machine.machineState }}
       </div>
 
       <button
@@ -160,7 +160,7 @@
             Limit Switches
           </div>
           <p
-            v-if="!machine.telemetryLoaded"
+            v-if="!machine.connected"
             class="text-sm font-mono text-gray-400 dark:text-slate-500 py-1.5"
           >
             null
@@ -274,9 +274,14 @@ const sensorOpen = ref(false)
 const anyTriggered = computed(() => machine.limitSwitches.some((s) => s.triggered))
 
 const connectBtnClass = computed(() => {
-  if (machine.connecting) return 'bg-blue-500 text-white opacity-75 cursor-not-allowed'
-  if (!s.hasMachines) return 'bg-gray-300 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed'
-  if (machine.connected) return 'bg-emerald-700 hover:bg-emerald-600 text-white'
+  // Read all deps unconditionally so Vue tracks them regardless of which branch executes.
+  // Early-return branches would silently drop deps, leaving the computed stale when they change.
+  const hasMachines = s.hasMachines
+  const isConnecting = machine.connecting
+  const isConnected = machine.connected
+  if (!hasMachines) return 'bg-gray-300 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed'
+  if (isConnecting) return 'bg-blue-500 text-white opacity-75 cursor-not-allowed'
+  if (isConnected) return 'bg-emerald-700 hover:bg-emerald-600 text-white'
   return 'bg-blue-600 hover:bg-blue-500 text-white'
 })
 

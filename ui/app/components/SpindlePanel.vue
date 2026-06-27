@@ -8,12 +8,12 @@
       </h2>
       <span
         class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
-        :class="!machine.telemetryLoaded
+        :class="!machine.connected
           ? 'bg-gray-100 dark:bg-slate-700 text-gray-400 dark:text-slate-500'
           : machine.spindleOn
             ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
             : 'bg-gray-100 dark:bg-slate-700 text-gray-400 dark:text-slate-500'"
-      >{{ !machine.telemetryLoaded ? 'null' : machine.spindleOn ? 'ON' : 'OFF' }}</span>
+      >{{ !machine.connected ? 'null' : machine.spindleOn ? 'ON' : 'OFF' }}</span>
     </div>
 
     <!-- ── Spindle (router / plasma) ── -->

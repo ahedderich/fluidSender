@@ -77,10 +77,6 @@ export const useMachineStore = defineStore('machine', () => {
   const firmwareVersion = ref('')
   const machineState = ref<MachineStatus['state']>('Disconnected')
 
-  /** True once live machine status has been received from the firmware. */
-  const controlsReady = ref(false)
-  const telemetryLoaded = ref(false)
-
   const machinePos = ref<Position>({ x: 0, y: 0, z: 0 })
   const workPos = ref<Position>({ x: 0, y: 0, z: 0 })
 
@@ -123,8 +119,6 @@ export const useMachineStore = defineStore('machine', () => {
     firmwareVersion.value = state.firmwareVersion ?? ''
 
     if (!state.connected) {
-      telemetryLoaded.value = false
-      controlsReady.value = false
       limitSwitches.value = []
       machinePos.value = { x: 0, y: 0, z: 0 }
       workPos.value = { x: 0, y: 0, z: 0 }
@@ -144,10 +138,6 @@ export const useMachineStore = defineStore('machine', () => {
     feedOverride.value = s.overrides.feed
     spindleOverride.value = s.overrides.spindle
     buffer.value = s.buffer
-    if (!telemetryLoaded.value) {
-      telemetryLoaded.value = true
-      controlsReady.value = true
-    }
   }
 
   function connect() {
@@ -190,8 +180,6 @@ export const useMachineStore = defineStore('machine', () => {
     connectedMachineId,
     firmwareVersion,
     machineState,
-    controlsReady,
-    telemetryLoaded,
     machinePos,
     workPos,
     feed,
