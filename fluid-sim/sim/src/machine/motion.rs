@@ -68,7 +68,14 @@ async fn motion_loop(
     let interval_dur = Duration::from_secs_f64(dt);
 
     while let Some((mv, result_tx)) = rx.recv().await {
+        let is_dwell = matches!(mv.kind, MoveKind::Dwell { .. });
         let result = execute_move(&shared, &broadcast, &mv, dt, interval_dur).await;
+        // Decrement planner count — but NOT for dwell: G4 drains the planner, never fills it.
+        if !is_dwell {
+            let mut state = shared.write().await;
+            if state.planner_buf_used > 0 { state.planner_buf_used -= 1; }
+            let _ = broadcast.send(());
+        }
         let _ = result_tx.send(result);
     }
 }
@@ -82,8 +89,21 @@ async fn execute_move(
 ) -> MoveResult {
     match &mv.kind {
         MoveKind::Dwell { seconds } => {
+            {
+                let mut state = shared.write().await;
+                state.status = MachineStatus::Run;
+                let _ = broadcast.send(());
+            }
             let millis = (*seconds * 1000.0) as u64;
             time::sleep(Duration::from_millis(millis)).await;
+            {
+                let mut state = shared.write().await;
+                // Dwell always completes to Idle — all prior planner moves are done
+                // because the motion channel is FIFO and dwell queues after them.
+                state.status = MachineStatus::Idle;
+                state.feed = 0.0;
+                let _ = broadcast.send(());
+            }
             return MoveResult::Ok;
         }
         MoveKind::Arc { clockwise, offset } => {
@@ -206,22 +226,21 @@ async fn execute_linear(
                         state.pos[i] += nd[i] * step;
                     }
 
-                    // Check soft limits.
-                    // X (i=0) and Y (i=1): home at 0, work area is negative → [-travel, 0].
-                    // Z (i=2): home at 0, tool descends to negative → only enforce lower bound.
+                    // Check soft limits: |pos| must not exceed travel on any axis.
+                    // This supports both negative-travel (router home at max) and
+                    // positive-travel coordinate systems without assuming sign convention.
                     let mut over_limit = false;
                     for i in 0..state.axis_count {
-                        let out = if i < 2 {
-                            state.pos[i] > 0.001 || state.pos[i] < -state.travel[i] - 0.001
-                        } else {
-                            state.pos[i] < -state.travel[i] - 0.001
-                        };
-                        if out { over_limit = true; break; }
+                        if state.pos[i].abs() > state.travel[i] + 0.001 {
+                            over_limit = true;
+                            break;
+                        }
                     }
                     if over_limit {
                         state.status = MachineStatus::Alarm;
+                        state.planned_pos = state.pos;
                         let _ = broadcast.send(());
-                        return MoveResult::Alarm(1);
+                        return MoveResult::Alarm(2);
                     }
 
                     // Check if reached target
@@ -254,22 +273,34 @@ async fn execute_linear(
 }
 
 /// Convert a G2/G3 arc to a series of linear segment targets.
+/// Respects G17 (XY), G18 (XZ), G19 (YZ) plane modal state.
 fn arc_to_segments(
     start: &[f64; AXIS_COUNT],
     end: &[f64; AXIS_COUNT],
     clockwise: bool,
     offset: [f64; 3],
-    _state: &MachineState,
+    state: &MachineState,
 ) -> Vec<[f64; AXIS_COUNT]> {
-    // Work in XY plane (G17 default)
-    let cx = start[0] + offset[0];
-    let cy = start[1] + offset[1];
+    use crate::machine::modal::Plane;
 
-    let r = ((start[0] - cx).powi(2) + (start[1] - cy).powi(2)).sqrt();
+    // Select axis indices and center offsets based on active plane.
+    // G17 XY: primary=X(0), secondary=Y(1), linear=Z(2), offsets=I(0),J(1)
+    // G18 XZ: primary=X(0), secondary=Z(2), linear=Y(1), offsets=I(0),K(2)
+    // G19 YZ: primary=Y(1), secondary=Z(2), linear=X(0), offsets=J(1),K(2)
+    let (a1, a2, a_lin, o1, o2) = match state.modal.plane {
+        Plane::Xy => (0, 1, 2, offset[0], offset[1]),
+        Plane::Xz => (0, 2, 1, offset[0], offset[2]),
+        Plane::Yz => (1, 2, 0, offset[1], offset[2]),
+    };
+
+    let c1 = start[a1] + o1;
+    let c2 = start[a2] + o2;
+
+    let r = ((start[a1] - c1).powi(2) + (start[a2] - c2).powi(2)).sqrt();
     if r < 1e-6 { return vec![*end]; }
 
-    let start_angle = (start[1] - cy).atan2(start[0] - cx);
-    let end_angle = (end[1] - cy).atan2(end[0] - cx);
+    let start_angle = (start[a2] - c2).atan2(start[a1] - c1);
+    let end_angle = (end[a2] - c2).atan2(end[a1] - c1);
 
     let arc_span = if clockwise {
         let mut span = start_angle - end_angle;
@@ -290,10 +321,10 @@ fn arc_to_segments(
         let frac = i as f64 / n_segs as f64;
         let angle = start_angle + arc_span * frac;
         let mut seg = *start;
-        seg[0] = cx + r * angle.cos();
-        seg[1] = cy + r * angle.sin();
-        // Interpolate Z linearly
-        seg[2] = start[2] + (end[2] - start[2]) * frac;
+        seg[a1] = c1 + r * angle.cos();
+        seg[a2] = c2 + r * angle.sin();
+        // Interpolate the linear (out-of-plane) axis
+        seg[a_lin] = start[a_lin] + (end[a_lin] - start[a_lin]) * frac;
         segments.push(seg);
     }
     segments

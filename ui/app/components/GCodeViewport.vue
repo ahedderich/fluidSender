@@ -109,6 +109,7 @@
 import { useMachineStore } from '~/stores/machine'
 import { useSettingsStore } from '~/stores/settings'
 import { useJobControl } from '~/composables/useJobControl'
+import type { PathSegment } from '~/types/job'
 
 const machine = useMachineStore()
 const settings = useSettingsStore()
@@ -202,6 +203,8 @@ let requestRender: () => void = () => {}
 let renderFrame: () => void = () => {}
 let rebuildSpatialGeometry: (b: { x: number; y: number; z: number }) => void = () => {}
 let rebuildStock: (s: import('~/stores/machine').StockDef | null) => void = () => {}
+let loadToolpathSegments: (segs: PathSegment[]) => void = () => {}
+let clearToolpath: () => void = () => {}
 
 async function initThree() {
   const canvas = canvasRef.value
@@ -526,6 +529,76 @@ async function initThree() {
   buildStockMesh(machine.stock)
   rebuildStock = buildStockMesh
 
+  // Toolpath rendering — keyed in objectMap under 'travel', 'cutting', 'zmove' so
+  // the existing layer toggle logic works automatically.
+  const TOOLPATH_KEYS = ['travel', 'cutting', 'zmove'] as const
+
+  function disposeToolpathObjects() {
+    for (const key of TOOLPATH_KEYS) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const old = objectMap[key] as any
+      if (!old) continue
+      scene.remove(old)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      old.traverse((child: any) => {
+        child.geometry?.dispose()
+        if (child.material) {
+          const idx = lineMats.indexOf(child.material)
+          if (idx !== -1) lineMats.splice(idx, 1)
+          child.material.dispose()
+        }
+      })
+      delete objectMap[key]
+    }
+  }
+
+  function buildToolpathGeometry(segs: PathSegment[]) {
+    disposeToolpathObjects()
+
+    // Separate point arrays per layer
+    const rapidPts: number[] = []
+    const feedPts: number[] = []
+    const zmovePts: number[] = []
+
+    for (const seg of segs) {
+      const isZOnly = seg.x0 === seg.x1 && seg.y0 === seg.y1
+      const arr = seg.t === 'R' ? rapidPts : isZOnly ? zmovePts : feedPts
+      arr.push(seg.x0, seg.y0, seg.z0, seg.x1, seg.y1, seg.z1)
+    }
+
+    if (rapidPts.length > 0) {
+      const geo = new LineSegmentsGeometry()
+      geo.setPositions(rapidPts)
+      const obj = new LineSegments2(geo, lineMat2(0x22c55e, 1.0))
+      obj.visible = layers.find(l => l.key === 'travel')?.visible ?? true
+      scene.add(obj)
+      objectMap['travel'] = obj
+    }
+
+    if (feedPts.length > 0) {
+      const geo = new LineSegmentsGeometry()
+      geo.setPositions(feedPts)
+      const obj = new LineSegments2(geo, lineMat2(0x3b82f6, 1.5))
+      obj.visible = layers.find(l => l.key === 'cutting')?.visible ?? true
+      scene.add(obj)
+      objectMap['cutting'] = obj
+    }
+
+    if (zmovePts.length > 0) {
+      const geo = new LineSegmentsGeometry()
+      geo.setPositions(zmovePts)
+      const obj = new LineSegments2(geo, lineMat2(0xeab308, 1.0))
+      obj.visible = layers.find(l => l.key === 'zmove')?.visible ?? true
+      scene.add(obj)
+      objectMap['zmove'] = obj
+    }
+
+    requestRender()
+  }
+
+  loadToolpathSegments = buildToolpathGeometry
+  clearToolpath = () => { disposeToolpathObjects(); requestRender() }
+
   // Tool representation — unit CylinderGeometry (r=1, h=1), rotated so axis aligns with world Z.
   // scale.x/z = radius, scale.y = height. Tip placed at workPos.z, body extends upward.
   {
@@ -696,6 +769,29 @@ watch(machineHomeWpos, (h) => {
     requestRender()
   }
 }, { deep: true })
+
+// Fetch and render 3D path vectors when a job finishes loading.
+// Clear the toolpath when the job is cleared.
+let lastLoadedFileId: string | null = null
+watch(
+  () => job.value?.status,
+  async (status) => {
+    if (status === 'loaded') {
+      const fileId = job.value?.fileId
+      if (!fileId || fileId === lastLoadedFileId) return
+      lastLoadedFileId = fileId
+      try {
+        const segs = await $fetch<PathSegment[]>(`/api/jobs/vectors?fileId=${encodeURIComponent(fileId)}`)
+        loadToolpathSegments(segs)
+      } catch (err) {
+        console.warn('[GCodeViewport] vectors not available:', err)
+      }
+    } else if (status === 'idle') {
+      lastLoadedFileId = null
+      clearToolpath()
+    }
+  },
+)
 
 onMounted(() => initThree())
 

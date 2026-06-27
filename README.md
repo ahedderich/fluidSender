@@ -12,6 +12,8 @@ FluidSender is a native FluidNC client — not a generic GRBL sender. It impleme
 - **USB & TCP/WiFi connectivity** — USB serial (recommended) and TCP/WiFi with clear warnings when running over WiFi
 - **3D toolpath preview** — interactive toolpath visualization with webcam overlay support
 - **GCode file management** — upload, browse, and queue GCode jobs with real-time progress tracking
+- **Planner-buffer-aware job execution** — tracks sent vs. confirmed-executed line counts separately using FluidNC's `Bf:` field; keeps a configurable number of motion commands in the firmware planner so the machine never stalls waiting for the sender, while execution progress reflects lines that have physically left the planner — not just lines dispatched over the wire
+- **Job crash recovery** (hopefully never needed) — checkpoints job progress every 50 lines; if the connection drops mid-job, the server detects the interruption on reconnect and offers to resume from a safe lookback point, replaying modal state (units, WCS, spindle, coolant) and positioning the tool before re-entering the cut
 - **Probing wizards** — guided workflows for edge finding, corner/center probing, and surface heightmap generation
 - **Tool & magazine management** — tool library with active tool tracking and load/unload workflow
 - **Spindle & coolant control** — full spindle (router/laser) and coolant (mist/flood) control with live overrides

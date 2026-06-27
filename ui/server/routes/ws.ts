@@ -50,6 +50,7 @@ machineConnection.on('event', (ev) => {
     }
     case 'disconnected': {
       stopPoller()
+      jobEngine.onMachineDisconnected()
       const next = setConnection({ machineId: null, connected: false, status: 'DISCONNECTED', firmwareVersion: '' })
       broadcastPatch([
         { path: 'connection', set: { ...next } },
@@ -60,11 +61,15 @@ machineConnection.on('event', (ev) => {
     case 'statusLine': {
       onStatusLine(ev.line)
       const lastStatus = getLastMachineStatus()
-      if (lastStatus?.state === 'Idle') jobEngine.onMachineIdle()
+      if (lastStatus) jobEngine.onBufUpdate(lastStatus.buffer.planner, lastStatus.state)
       break
     }
     case 'responseLine': {
       broadcastPatch([pushConsole({ type: 'recv', text: ev.line, ts: Date.now() })])
+      // error:N is a rejected-command acknowledgement — unblock pendingAck just like ok
+      if (ev.line.startsWith('error:')) {
+        jobEngine.onAckReceived()
+      }
       // Handle $G modal-state response for pause capture
       if (ev.line.startsWith('[GC:')) {
         jobEngine.onGQueryResponse(ev.line, getLastMachineStatus())
@@ -95,6 +100,7 @@ machineConnection.on('event', (ev) => {
       break
     }
     case 'ok':
+      jobEngine.onAckReceived()
       break
   }
 })
@@ -149,6 +155,9 @@ export default defineWebSocketHandler({
       // ── Job control ────────────────────────────────────────────────────────
       case 'job:load':
         jobEngine.loadJob((msg.payload as { fileId: string }).fileId)
+        break
+      case 'job:analyze:abort':
+        jobEngine.abortAnalysis()
         break
       case 'job:start':
         jobEngine.start()

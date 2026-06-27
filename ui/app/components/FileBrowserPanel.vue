@@ -43,6 +43,36 @@
       Uploading…
     </div>
 
+    <!-- Analysis loading overlay -->
+    <Teleport to="body">
+      <div
+        v-if="isAnalyzing"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      >
+        <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-gray-200 dark:border-slate-700 p-6 w-80">
+          <h3 class="text-sm font-semibold text-gray-800 dark:text-slate-100 mb-1">Analysing GCode</h3>
+          <p class="text-xs text-gray-500 dark:text-slate-400 mb-4">
+            {{ analyzingFilename }} — calculating time estimate, tool sections and 3D path…
+          </p>
+          <div class="h-2 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden mb-4">
+            <div
+              class="h-full bg-blue-500 rounded-full transition-all duration-300"
+              :style="{ width: analyzeProgress + '%' }"
+            />
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-gray-400 dark:text-slate-500">{{ analyzeProgress }}%</span>
+            <button
+              class="text-xs px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded transition-colors font-medium"
+              @click="abortAnalysis()"
+            >
+              Abort
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- File list -->
     <div class="flex-1 overflow-y-auto min-h-0">
       <div
@@ -93,9 +123,13 @@ interface FileEntry {
   modifiedAt: number
 }
 
-const { loadJob } = useJobControl()
+const { loadJob, abortAnalysis, job } = useJobControl()
 const filter = ref('')
 const uploading = ref(false)
+
+const isAnalyzing = computed(() => job.value?.status === 'analyzing')
+const analyzeProgress = computed(() => job.value?.analyzeProgress ?? 0)
+const analyzingFilename = computed(() => job.value?.filename ?? '')
 
 const { data, pending, refresh } = await useFetch<{ files: FileEntry[] }>('/api/files', {
   default: () => ({ files: [] }),

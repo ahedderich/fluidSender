@@ -38,8 +38,9 @@ export function stopPoller() {
 export function onStatusLine(line: string) {
   const status = parseStatusLine(line)
   if (!status) return
-  if (_changed(lastStatus, status)) {
-    lastStatus = status
+  const changed = _changed(lastStatus, status)
+  lastStatus = status  // always update so buffer.planner is current for Buf routing
+  if (changed) {
     _broadcast?.({ t: 'machine:status', payload: status })
   }
 }

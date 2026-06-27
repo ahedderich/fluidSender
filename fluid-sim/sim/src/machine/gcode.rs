@@ -7,18 +7,34 @@ use crate::protocol::parser::{Word, extract_axes, gcodes, mcodes, word_val};
 
 /// Outcome of interpreting one GCode line.
 pub enum InterpretResult {
-    /// Enqueue a motion/probe move (async, `ok` sent immediately before move completes).
+    /// Category A: enqueue a motion/probe move; `ok` sent as soon as the command is queued.
     Move(PendingMove),
-    /// Immediate success — return `ok` right away.
+    /// Category C: immediate success — `ok` sent right away.
     Ok,
-    /// Error — return `error:N`.
+    /// Error — `error:N` sent.
     Error(u32),
-    /// Soft reset requested.
     SoftReset,
-    /// Feed hold.
     FeedHold,
-    /// Cycle start.
     CycleStart,
+    /// G4 dwell (B2): drains planner then sleeps; `ok` delayed until dwell elapses.
+    Dwell(f64),
+    /// Soft limit violation detected pre-flight — machine enters alarm.
+    Alarm(u32),
+    /// B1: state mutation already applied; `ok` delayed until planner drains to 0.
+    DrainAndApply,
+    /// B2 (M0): planner drains, machine enters Hold; `ok` only after cycle-start (~).
+    ProgramPause,
+}
+
+/// Returns true if `target` violates soft limits on any linear axis.
+/// Uses symmetric travel: valid range is [-travel[i], +travel[i]].
+fn soft_limit_violated(target: &[f64; AXIS_COUNT], state: &MachineState) -> bool {
+    for i in 0..state.axis_count {
+        if target[i].abs() > state.travel[i] + 0.001 {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
@@ -31,12 +47,22 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
     let f = word_val(words, 'F');
     let s = word_val(words, 'S');
 
-    // Update feed rate if F present
+    let mut drain_needed = false;
+    let mut pause_needed = false;
+
+    // Update feed rate if F present.
     if let Some(feed) = f {
         state.feed = feed;
     }
 
-    // Process modal G codes first (units, plane, distance, WCS)
+    // S word always updates spindle_speed (category C3 when spindle is off;
+    // the spindle-on speed-change drain path is not modelled here).
+    if let Some(speed) = s {
+        state.spindle_speed = speed;
+    }
+
+    // Modal G codes — G17-G21, G90-G91 are category C (immediate).
+    // G54-G59 are B1: WCS switch requires planner drain (FORCE_BUFFER_SYNC_DURING_WCO_CHANGE).
     for &g in &gs {
         match g as u32 {
             17 => state.modal.plane = Plane::Xy,
@@ -44,63 +70,70 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
             19 => state.modal.plane = Plane::Yz,
             20 => state.modal.units = Units::Inch,
             21 => state.modal.units = Units::Mm,
-            54 => state.modal.wcs = 1,
-            55 => state.modal.wcs = 2,
-            56 => state.modal.wcs = 3,
-            57 => state.modal.wcs = 4,
-            58 => state.modal.wcs = 5,
-            59 => state.modal.wcs = 6,
+            54 => { state.modal.wcs = 1; drain_needed = true; }
+            55 => { state.modal.wcs = 2; drain_needed = true; }
+            56 => { state.modal.wcs = 3; drain_needed = true; }
+            57 => { state.modal.wcs = 4; drain_needed = true; }
+            58 => { state.modal.wcs = 5; drain_needed = true; }
+            59 => { state.modal.wcs = 6; drain_needed = true; }
             90 => state.modal.distance = DistanceMode::Absolute,
             91 => state.modal.distance = DistanceMode::Relative,
             _ => {}
         }
     }
 
-    // M codes
+    // M codes — B1 commands apply state immediately but set drain_needed so `ok` is
+    // delayed until the motion channel (FIFO) confirms all prior moves are done.
     for &m in &ms {
         match m as u32 {
-            3 => { // spindle CW
-                let rpm = s.unwrap_or(0.0);
-                state.spindle = SpindleState::on_cw(rpm);
-                state.spindle_speed = rpm;
+            3 => {
+                state.spindle = SpindleState::on_cw(state.spindle_speed);
+                drain_needed = true;
             }
-            4 => { // spindle CCW
-                let rpm = s.unwrap_or(0.0);
-                state.spindle = SpindleState::on_ccw(rpm);
-                state.spindle_speed = rpm;
+            4 => {
+                state.spindle = SpindleState::on_ccw(state.spindle_speed);
+                drain_needed = true;
             }
             5 => {
                 state.spindle = SpindleState::off();
                 state.spindle_speed = 0.0;
+                drain_needed = true;
             }
-            7 => state.coolant = CoolantState::Mist,
-            8 => state.coolant = CoolantState::Flood,
-            9 => state.coolant = CoolantState::Off,
-            0 | 1 => { // program pause
-                state.status = MachineStatus::Hold;
+            7 => { state.coolant = CoolantState::Mist; drain_needed = true; }
+            8 => { state.coolant = CoolantState::Flood; drain_needed = true; }
+            9 => { state.coolant = CoolantState::Off; drain_needed = true; }
+            0 => {
+                // B2: drain planner then Hold; `ok` arrives only after cycle-start (~).
+                pause_needed = true;
             }
-            2 | 30 => { // program end
+            1 => {} // optional stop — no-op in FluidNC
+            2 | 30 => {
                 state.status = MachineStatus::Idle;
                 state.spindle = SpindleState::off();
                 state.coolant = CoolantState::Off;
+                drain_needed = true;
             }
-            _ => {} // ignore unknown M codes
+            _ => {}
         }
     }
 
-    // Motion / coordinate G codes
+    // Motion / coordinate G codes.
     for &g in &gs {
         match g {
-            // G0 rapid, G1 linear
+            // G0 rapid, G1 linear — category A
             g if g == 0.0 || g == 1.0 => {
                 let axes = extract_axes(words);
                 let target = resolve_target(state, axes);
+                if soft_limit_violated(&target, state) {
+                    state.status = MachineStatus::Alarm;
+                    return InterpretResult::Alarm(2);
+                }
                 let feed = if g == 0.0 {
-                    // Rapid: use max rate for slowest axis involved
                     max_rate_for_move(state, &target)
                 } else {
                     state.feed
                 };
+                state.planned_pos = target;
                 return InterpretResult::Move(PendingMove {
                     kind: MoveKind::Linear,
                     target,
@@ -108,14 +141,19 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
                     probe: None,
                 });
             }
-            // G2/G3 arc
+            // G2/G3 arc — category A
             g if g == 2.0 || g == 3.0 => {
                 let axes = extract_axes(words);
                 let target = resolve_target(state, axes);
+                if soft_limit_violated(&target, state) {
+                    state.status = MachineStatus::Alarm;
+                    return InterpretResult::Alarm(2);
+                }
                 let i = word_val(words, 'I').unwrap_or(0.0);
                 let j = word_val(words, 'J').unwrap_or(0.0);
                 let k = word_val(words, 'K').unwrap_or(0.0);
                 let feed = state.feed;
+                state.planned_pos = target;
                 return InterpretResult::Move(PendingMove {
                     kind: MoveKind::Arc {
                         clockwise: g == 2.0,
@@ -126,17 +164,12 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
                     probe: None,
                 });
             }
-            // G4 dwell
+            // G4 dwell — B2: drains planner then sleeps; `ok` delayed until dwell elapses
             g if g == 4.0 => {
                 let p = word_val(words, 'P').unwrap_or(0.0);
-                return InterpretResult::Move(PendingMove {
-                    kind: MoveKind::Dwell { seconds: p },
-                    target: state.pos,
-                    feed: 0.0,
-                    probe: None,
-                });
+                return InterpretResult::Dwell(p);
             }
-            // G10 L20 Pn — set WCO so current WPos = specified value
+            // G10 L2/L20 Pn — B1: set WCS offset (FORCE_BUFFER_SYNC_DURING_WCO_CHANGE + NVS)
             g if g == 10.0 => {
                 let l = word_val(words, 'L').unwrap_or(0.0) as u32;
                 if l == 20 {
@@ -148,54 +181,50 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
                         }
                     }
                 }
-                return InterpretResult::Ok;
+                return if pause_needed { InterpretResult::ProgramPause } else { InterpretResult::DrainAndApply };
             }
-            // G28 go to stored position
+            // G28 go to stored position — category A
             g if g == 28.0 => {
-                if let Some(stored) = state.modal.g28_pos {
-                    return InterpretResult::Move(PendingMove {
-                        kind: MoveKind::Linear,
-                        target: stored,
-                        feed: max_rate_for_move(state, &stored),
-                        probe: None,
-                    });
+                let target = state.modal.g28_pos.unwrap_or([0.0; AXIS_COUNT]);
+                if soft_limit_violated(&target, state) {
+                    state.status = MachineStatus::Alarm;
+                    return InterpretResult::Alarm(2);
                 }
-                // No stored pos: go to machine zero
-                let home = [0.0; AXIS_COUNT];
+                state.planned_pos = target;
                 return InterpretResult::Move(PendingMove {
                     kind: MoveKind::Linear,
-                    target: home,
-                    feed: max_rate_for_move(state, &home),
+                    target,
+                    feed: max_rate_for_move(state, &target),
                     probe: None,
                 });
             }
-            // G28.1 store current position for G28
+            // G28.1 store current position for G28 — B1 (NVS write drains planner)
             g if (g - 28.1).abs() < 0.01 => {
-                state.modal.g28_pos = Some(state.pos);
-                return InterpretResult::Ok;
+                // planned_pos is the settled position after all queued moves drain.
+                state.modal.g28_pos = Some(state.planned_pos);
+                return if pause_needed { InterpretResult::ProgramPause } else { InterpretResult::DrainAndApply };
             }
-            // G30 secondary predefined position
+            // G30 secondary predefined position — category A
             g if g == 30.0 => {
-                if let Some(stored) = state.modal.g30_pos {
-                    return InterpretResult::Move(PendingMove {
-                        kind: MoveKind::Linear,
-                        target: stored,
-                        feed: max_rate_for_move(state, &stored),
-                        probe: None,
-                    });
+                let target = state.modal.g30_pos.unwrap_or([0.0; AXIS_COUNT]);
+                if soft_limit_violated(&target, state) {
+                    state.status = MachineStatus::Alarm;
+                    return InterpretResult::Alarm(2);
                 }
-                let home = [0.0; AXIS_COUNT];
+                state.planned_pos = target;
                 return InterpretResult::Move(PendingMove {
                     kind: MoveKind::Linear,
-                    target: home,
-                    feed: max_rate_for_move(state, &home),
+                    target,
+                    feed: max_rate_for_move(state, &target),
                     probe: None,
                 });
             }
-            // G38.2 probe toward, error on miss
-            // G38.3 probe toward, no error
-            // G38.4 probe away, error on miss
-            // G38.5 probe away, no error
+            // G30.1 store current position for G30 — B1 (NVS write drains planner)
+            g if (g - 30.1).abs() < 0.01 => {
+                state.modal.g30_pos = Some(state.planned_pos);
+                return if pause_needed { InterpretResult::ProgramPause } else { InterpretResult::DrainAndApply };
+            }
+            // G38.2–G38.5 probe — B2: drains planner then blocks until probe done
             g if (g - 38.2).abs() < 0.01 || (g - 38.3).abs() < 0.01
               || (g - 38.4).abs() < 0.01 || (g - 38.5).abs() < 0.01 =>
             {
@@ -204,6 +233,7 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
                 let feed = state.feed;
                 let error_on_miss = (g - 38.2).abs() < 0.01 || (g - 38.4).abs() < 0.01;
                 let away = (g - 38.4).abs() < 0.01 || (g - 38.5).abs() < 0.01;
+                state.planned_pos = target;
                 return InterpretResult::Move(PendingMove {
                     kind: MoveKind::Linear,
                     target,
@@ -214,41 +244,48 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
                     }),
                 });
             }
-            // G53 machine coordinate one-shot (handled in resolve_target via word)
-            g if g == 53.0 => {} // resolved at target computation time
-            // G92 set coordinate offset
+            g if g == 53.0 => {}
+            // G92 set coordinate offset — B1 (FORCE_BUFFER_SYNC_DURING_WCO_CHANGE)
             g if g == 92.0 => {
                 let axes = extract_axes(words);
                 for i in 0..AXIS_COUNT {
                     if let Some(v) = axes[i] {
                         let v_mm = state.modal.units.to_mm(v);
-                        // G92 sets offset so current pos reads as v_mm in WCS
                         state.modal.g92_offset[i] = state.pos[i] - state.wco[i] - v_mm;
                     }
                 }
-                return InterpretResult::Ok;
+                return if pause_needed { InterpretResult::ProgramPause } else { InterpretResult::DrainAndApply };
             }
-            // G92.1 clear G92 offsets
+            // G92.1 clear G92 offsets — B1
             g if (g - 92.1).abs() < 0.01 => {
                 state.modal.g92_offset = [0.0; AXIS_COUNT];
-                return InterpretResult::Ok;
+                return if pause_needed { InterpretResult::ProgramPause } else { InterpretResult::DrainAndApply };
             }
             _ => {}
         }
     }
 
-    InterpretResult::Ok
+    if pause_needed {
+        InterpretResult::ProgramPause
+    } else if drain_needed {
+        InterpretResult::DrainAndApply
+    } else {
+        InterpretResult::Ok
+    }
 }
 
 /// Resolve target machine position from axis words + current modal state.
+/// Unspecified axes stay at `planned_pos`; relative offsets are applied to `planned_pos`
+/// so that queued G91 commands chain off the planned end of the previous move rather
+/// than the live mid-move position.
 pub fn resolve_target(state: &MachineState, axes: [Option<f64>; AXIS_COUNT]) -> [f64; AXIS_COUNT] {
-    let mut target = state.pos;
+    let mut target = state.planned_pos;
     for i in 0..AXIS_COUNT {
         let Some(v) = axes[i] else { continue };
         let v_mm = state.modal.units.to_mm(v);
         target[i] = match state.modal.distance {
             DistanceMode::Absolute => v_mm + state.wco[i],
-            DistanceMode::Relative => state.pos[i] + v_mm,
+            DistanceMode::Relative => state.planned_pos[i] + v_mm,
         };
     }
     target
@@ -284,6 +321,9 @@ pub fn interpret_jog(words: &[Word], state: &mut MachineState) -> Option<Pending
     state.modal = saved_modal;
 
     let feed = word_val(words, 'F').unwrap_or(state.feed).max(1.0);
+
+    // Advance planned_pos so chained relative jogs resolve from planned end
+    state.planned_pos = target;
 
     Some(PendingMove {
         kind: MoveKind::Jog,

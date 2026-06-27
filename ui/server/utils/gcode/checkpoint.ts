@@ -1,13 +1,15 @@
-import { readFile, rename, writeFile, unlink } from 'node:fs/promises'
+import { readFile, rename, writeFile, unlink, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { JobCheckpoint } from './types'
 
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
-const CHECKPOINT_PATH = join(DATA_DIR, '.job-checkpoint.json')
+const CURRENT_JOB_DIR = join(DATA_DIR, 'current_job')
+const CHECKPOINT_PATH = join(CURRENT_JOB_DIR, 'checkpoint.json')
 const CHECKPOINT_TMP = CHECKPOINT_PATH + '.tmp'
 
 export async function saveCheckpoint(checkpoint: JobCheckpoint): Promise<void> {
   try {
+    await mkdir(CURRENT_JOB_DIR, { recursive: true })
     await writeFile(CHECKPOINT_TMP, JSON.stringify(checkpoint), 'utf8')
     await rename(CHECKPOINT_TMP, CHECKPOINT_PATH)
   } catch (err) {

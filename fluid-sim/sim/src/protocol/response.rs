@@ -1,4 +1,4 @@
-use crate::machine::state::{MachineState, AXIS_COUNT};
+use crate::machine::state::{MachineState, AXIS_COUNT, MAX_PLANNER_SLOTS};
 
 pub const GREETING: &str = "Grbl 3.7.14 [FluidNC v3.7.14 (Simulator)] ready\r\n[MSG: Machine: Connected]\r\nok\r\n";
 
@@ -20,11 +20,14 @@ pub fn status(state: &MachineState) -> String {
     let s = state.spindle_speed as u64;
     let pn = state.limits.pn_string(state.probe.triggered, state.door);
 
+    let planner_free = (MAX_PLANNER_SLOTS - state.planner_buf_used).max(0);
+
     let mut parts = vec![
         state.status.to_string(),
         format!("MPos:{}", mpos),
         format!("WCO:{}", wco),
         format!("FS:{},{}", f, s),
+        format!("Bf:{},128", planner_free),
     ];
     if !pn.is_empty() { parts.push(format!("Pn:{}", pn)); }
 

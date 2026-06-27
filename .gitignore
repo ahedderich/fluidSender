@@ -55,6 +55,7 @@ vitest.results.json
 htmlcov/
 .nyc_output/
 .playwright-cli/
+ui/.test-out
 
 # -----------------------------------------------------------------------------
 # Rust (fluid-sim/sim/)
@@ -175,6 +176,12 @@ tramp
 *.tmPreferences.cache
 *.stTheme.cache
 *.sublime-workspace
+
+# -----------------------------------------------------------------------------
+# Reference repositories (cloned locally for firmware behaviour research)
+# Clone with: git clone <url> <repo-name>/ inside this folder
+# -----------------------------------------------------------------------------
+FluidNC/
 
 # -----------------------------------------------------------------------------
 # Temporary & misc

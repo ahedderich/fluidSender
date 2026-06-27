@@ -4,11 +4,11 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
-const JOBS_DIR = join(DATA_DIR, 'jobs')
+const UPLOADS_DIR = join(DATA_DIR, 'uploads')
 const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100 MB
 
 export default defineEventHandler(async (event) => {
-  await mkdir(JOBS_DIR, { recursive: true })
+  await mkdir(UPLOADS_DIR, { recursive: true })
 
   const formData = await readMultipartFormData(event)
   if (!formData || formData.length === 0) {
@@ -35,7 +35,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const fileId = `${randomUUID()}-${safeName}`
-  const destPath = join(JOBS_DIR, fileId)
+  const destPath = join(UPLOADS_DIR, fileId)
 
   await new Promise<void>((resolve, reject) => {
     const ws = createWriteStream(destPath)

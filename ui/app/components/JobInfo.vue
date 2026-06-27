@@ -22,15 +22,6 @@
       </button>
     </div>
 
-    <!-- Progress bar -->
-    <div v-if="job && job.status !== 'idle' && job.status !== 'loaded'" class="h-1.5 bg-gray-100 dark:bg-slate-700 shrink-0">
-      <div
-        class="h-full bg-blue-500 transition-all"
-        :class="{ 'animate-pulse': job.status === 'pausing' }"
-        :style="{ width: progress + '%' }"
-      />
-    </div>
-
     <!-- Stats -->
     <div v-if="job" class="px-3 py-2 border-b border-gray-100 dark:border-slate-700 shrink-0 flex gap-4">
       <!-- XYZ range -->
@@ -52,12 +43,12 @@
             <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ job!.totalLines.toLocaleString() }}</td>
           </tr>
           <tr>
-            <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2 whitespace-nowrap">Est. Time</td>
-            <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ formatRuntime(job!.estimatedTotalMs) }}</td>
+            <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2 whitespace-nowrap">Sent / Exec</td>
+            <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ job!.sendPtr.toLocaleString() }} / {{ job!.execPtr.toLocaleString() }}</td>
           </tr>
           <tr>
-            <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2">Tools</td>
-            <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ machine.tools.length }}</td>
+            <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2 whitespace-nowrap">Est. Time</td>
+            <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ formatRuntime(job!.estimatedTotalMs) }}</td>
           </tr>
         </tbody>
       </table>
@@ -67,7 +58,7 @@
     <div class="flex-1 overflow-y-auto min-h-0">
       <template v-if="job">
         <div class="px-3 pt-2 pb-1 shrink-0">
-          <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Tools</p>
+          <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Tools ({{ machine.tools.length }})</p>
         </div>
         <div class="px-3 pb-3 space-y-1.5">
           <div
@@ -192,12 +183,6 @@ const machine = useMachineStore()
 const { job, startJob, pauseJob, resumeJob, cancelJob, clearJob } = useJobControl()
 const editingFeed = ref(false)
 const editingSpindle = ref(false)
-
-const progress = computed(() => {
-  const j = job.value
-  if (!j || j.totalLines === 0) return 0
-  return Math.round((j.sendPtr / j.totalLines) * 100)
-})
 
 const currentTool = computed(() => {
   if (!machine.tools.length) return null

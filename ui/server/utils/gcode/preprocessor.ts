@@ -34,6 +34,25 @@ function dist3(
   return Math.sqrt(dx * dx + dy * dy + dz * dz)
 }
 
+/**
+ * Convert an R-word arc radius to I/J center offsets.
+ * Follows GRBL/FluidNC convention: positive R = minor arc (<180°), negative R = major arc.
+ * Condition CCW XOR R<0 controls which side of the chord the center lands on.
+ */
+function rToIJ(
+  sx: number, sy: number,
+  ex: number, ey: number,
+  r: number, ccw: boolean,
+): { i: number; j: number } {
+  const dx = ex - sx
+  const dy = ey - sy
+  const chord = Math.sqrt(dx * dx + dy * dy)
+  if (chord < 1e-6) return { i: r, j: 0 } // degenerate: full circle, arbitrary start
+  let h = -Math.sqrt(Math.max(0, 4 * r * r - chord * chord)) / chord
+  if (ccw !== r < 0) h = -h  // CCW XOR R<0 → negate
+  return { i: 0.5 * (dx - dy * h), j: 0.5 * (dy + dx * h) }
+}
+
 /** Approximate arc length from I/J center offsets or R radius. */
 function arcLength(
   startX: number,
@@ -126,7 +145,7 @@ export function preprocessGCode(
     const clean = stripComments(raw).toUpperCase()
 
     if (!clean) {
-      lines.push({ index: i, raw, type: 'comment', estimatedDurationMs: 0, cumulativeDurationMs: cumulativeMs })
+      lines.push({ index: i, raw, type: 'comment', isMotion: false, estimatedDurationMs: 0, cumulativeDurationMs: cumulativeMs })
       continue
     }
 
@@ -149,12 +168,15 @@ export function preprocessGCode(
     // G20 coords and F-words are in inches; multiply by 25.4 to convert.
     const toMm = units === 'G20' ? 25.4 : 1
 
+    let toPos: [number, number, number] | undefined
+
     // Rapid move (G0)
     if (/\bG0\b/.test(clean) || /\bG00\b/.test(clean)) {
       const { tx, ty, tz } = resolveTarget(clean)
       const d = dist3(curX, curY, curZ, tx, ty, tz) * toMm
       durationMs = (d / maxRapidMmPerMin) * 60_000
       updateAxisRanges(tx, ty, tz)
+      toPos = [tx, ty, tz]
       curX = tx; curY = ty; curZ = tz
       type = 'rapid'
     }
@@ -167,6 +189,7 @@ export function preprocessGCode(
         durationMs = (d / feedMmPerMin) * 60_000
       }
       updateAxisRanges(tx, ty, tz)
+      toPos = [tx, ty, tz]
       curX = tx; curY = ty; curZ = tz
       type = 'feed'
     }
@@ -178,13 +201,21 @@ export function preprocessGCode(
       const jw = word(clean, 'J')
       const rw = word(clean, 'R')
       const len = arcLength(curX, curY, tx, ty, iw, jw, rw, cw) * toMm
-      // Add Z component to arc length (helical arc)
       const totalLen = Math.sqrt(len * len + ((tz - curZ) * toMm) ** 2)
       const feedMmPerMin = feedRate * toMm
       if (feedMmPerMin > 0) durationMs = (totalLen / feedMmPerMin) * 60_000
+      if (durationMs === 0) durationMs = 1
       updateAxisRanges(tx, ty, tz)
+      toPos = [tx, ty, tz]
+      // Resolve center offsets for tessellation in the same units as the position words.
+      const arcIJ = rw !== undefined && iw === undefined && jw === undefined
+        ? rToIJ(curX, curY, tx, ty, rw, !cw)
+        : { i: iw ?? 0, j: jw ?? 0 }
       curX = tx; curY = ty; curZ = tz
-      type = 'arc'
+      cumulativeMs += durationMs
+      lines.push({ index: i, raw, type: 'arc', isMotion: true, estimatedDurationMs: durationMs,
+        cumulativeDurationMs: cumulativeMs, toPos, arcI: arcIJ.i, arcJ: arcIJ.j, arcCw: cw })
+      continue
     }
     // Dwell (G4)
     else if (/\bG0?4\b/.test(clean)) {
@@ -192,6 +223,15 @@ export function preprocessGCode(
       // FluidNC G4 P is in seconds (GRBL convention)
       durationMs = pSec !== undefined ? pSec * 1000 : 0
       type = 'dwell'
+    }
+    // G28 / G30 — move to stored position (queues to planner; target unknown so duration = 0)
+    else if (/\bG28\b/.test(clean) || /\bG30\b/.test(clean)) {
+      type = 'rapid'
+    }
+    // G38.x probe — Category B2: drains planner, then blocks until probe completes.
+    // ok arrives only after probe finishes, so isMotion must be false (no persistent planner slot).
+    else if (/\bG38\.[2-5]\b/.test(clean)) {
+      type = 'probe'
     }
     // Canned cycles — unsupported, warn
     else if (/\bG[78]\d\b/.test(clean)) {
@@ -215,8 +255,15 @@ export function preprocessGCode(
       type = 'coord'
     }
 
+    // Non-motion GCode commands cost at least 1ms (controller overhead).
+    // Blank/comment lines are excluded by the `continue` above so no type guard needed.
+    if (durationMs === 0) durationMs = 1
+
+    // G4 dwell and G38.x probe drain the planner but never queue persistent blocks;
+    // they are interpreter-blocking (Category B2) so isMotion must be false.
+    const isMotion = type === 'rapid' || type === 'feed'
     cumulativeMs += durationMs
-    lines.push({ index: i, raw, type, estimatedDurationMs: durationMs, cumulativeDurationMs: cumulativeMs })
+    lines.push({ index: i, raw, type, isMotion, estimatedDurationMs: durationMs, cumulativeDurationMs: cumulativeMs, toPos })
   }
 
   // Clamp axis ranges to 0 if no motion found

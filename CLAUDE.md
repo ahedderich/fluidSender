@@ -4,8 +4,6 @@
 
 FluidSender is a modern, web-based GCode sender designed specifically for [FluidNC](https://github.com/bdring/FluidNC) (ESP32-based CNC firmware). It is a first-class FluidNC client — no GRBL compatibility layer is needed or targeted. It implements all FluidNC-specific features including firmware configuration, restart, and real-time machine control.
 
-Alternative projects this replaces: CNCjs, gSender, etc.
-
 ---
 
 ## Repository Structure
@@ -20,10 +18,31 @@ Alternative projects this replaces: CNCjs, gSender, etc.
 ├── fluid-sim/                 # FluidNC simulator
 │   ├── sim/                   # Rust firmware simulator
 │   └── sim-ui/                # Bun + Nuxt simulator control UI
+├── FluidNC/                   # FluidNC firmware reference (gitignored — clone locally)
 ├── .github/
 │   └── workflows/             # GitHub Actions CI/CD pipelines
 └── CLAUDE.md
 ```
+
+### Reference Repositories
+
+The following repos are cloned locally for firmware/protocol research and **must not be committed** (they are gitignored). Clone them manually if needed:
+
+```bash
+git clone https://github.com/bdring/FluidNC FluidNC/
+```
+
+**When to consult these references:**
+- Before classifying any GCode command as planner-buffered vs. immediate-execution — verify against `FluidNC/FluidNC/src/` source code (specifically `GCode.cpp`, `Motion/Planner.cpp`, `Protocol.cpp`)
+- Before assuming `ok` ack behaviour for any command type — FluidNC sends `ok` for every non-empty, non-comment line; blank and comment-only lines are silently dropped without an ack
+- When updating `fluid-sim/sim/` — the sim **must match FluidNC's exact ack and planner-buffer behaviour** for all command types; divergence here will corrupt the send loop's `execPtr` tracking
+
+**Key FluidNC behaviours to keep in sync with the sim:**
+- **Planner-buffered** (reduce `Bf:` free count; `ok` sent immediately when queued): `G0`, `G1`, `G2`, `G3`, `G28`, `G30`, `G38.x` (probe)
+- **Interpreter-blocking** (do NOT reduce `Bf:`; `ok` delayed until complete): `G4` dwell — calls `protocol_buffer_synchronize()` to drain the planner, then sleeps; `ok` arrives only after the full dwell elapses
+- **Immediate-execution** (do NOT reduce `Bf:`; `ok` sent right away): `M3`/`M4`/`M5` (spindle), `M7`/`M8`/`M9` (coolant), `M6` (tool change), `G10`, `G92`, standalone `F`/`S`/`T` words, modal-only lines — note: real FluidNC calls `protocol_buffer_synchronize()` for M3/M4/M5/M6/M7/M8/M9 before applying, so `ok` is technically delayed; the sim currently applies these immediately (a known divergence)
+- **Status field name**: FluidNC firmware emits `Bf:plannerFree,rxFree` (not `Buf:`); the status parser accepts both for compatibility
+- `ok` is sent for every line that reaches the GCode parser; blank lines and comment-only lines (`;` or `(...)`) are filtered before reaching the parser and also generate an `ok` (empty-line fast path in firmware)
 
 ---
 

@@ -9,6 +9,7 @@ export function useJobControl() {
   return {
     job,
     loadJob: (fileId: string) => wsSend({ t: 'job:load', payload: { fileId } }),
+    abortAnalysis: () => wsSend({ t: 'job:analyze:abort' }),
     startJob: () => wsSend({ t: 'job:start' }),
     pauseJob: () => wsSend({ t: 'job:pause' }),
     resumeJob: () => wsSend({ t: 'job:resume' }),

@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info, warn};
 
 use crate::machine::gcode::{interpret, interpret_jog, InterpretResult};
 use crate::machine::motion::{MoveKind, MoveResult, MoveTx, PendingMove};
 use crate::machine::state::{
     now_ms, ConsoleBroadcast, ConsoleEntry, MachineStatus, SharedMachineState, StateBroadcast,
-    AXIS_COUNT,
+    AXIS_COUNT, MAX_PLANNER_SLOTS,
 };
 use crate::protocol::parser::{parse_line, ParsedLine};
 use crate::protocol::realtime::classify;
@@ -21,6 +21,12 @@ enum PendingKind {
     Probe,
     /// $H homing: reset position to 0 and send ok after the move completes.
     Homing,
+    /// G4 dwell: send ok after planner drains + dwell elapses (no planner slot consumed).
+    Dwell,
+    /// B1: planner drained (0-sec dwell used for ordering); send ok immediately.
+    Drain,
+    /// B2 M0: planner drained; connection loop sets Hold and waits for ~ before sending ok.
+    ProgramPause,
 }
 
 pub async fn run(
@@ -79,73 +85,116 @@ async fn handle_connection(
 ) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
+    // Channel for async alarm messages from background move-result monitors.
+    let (alarm_tx, mut alarm_rx) = mpsc::channel::<String>(32);
 
     // Send greeting
     writer.write_all(GREETING.as_bytes()).await?;
     log_console(&console, "tx", &peer, GREETING);
 
-    while let Some(line) = lines.next_line().await? {
-        log_console(&console, "rx", &peer, &line);
+    loop {
+        tokio::select! {
+            biased;
 
-        // Check for embedded real-time bytes in the line
-        for b in line.bytes() {
-            if crate::protocol::parser::is_realtime_byte(b) {
-                let response = handle_realtime(classify(b), &shared, &broadcast).await;
-                if let Some(resp) = response {
-                    writer.write_all(resp.as_bytes()).await?;
-                    log_console(&console, "tx", &peer, &resp);
-                }
+            // Async alarm from a background move-result monitor fires here.
+            Some(alarm_msg) = alarm_rx.recv() => {
+                writer.write_all(alarm_msg.as_bytes()).await?;
+                log_console(&console, "tx", &peer, alarm_msg.trim_end());
             }
-        }
 
-        let parsed = parse_line(&line);
-        let (response, pending) = dispatch(parsed, &shared, &broadcast, &move_tx).await;
-        if !response.is_empty() {
-            writer.write_all(response.as_bytes()).await?;
-            log_console(&console, "tx", &peer, response.trim_end());
-        }
+            line_result = lines.next_line() => {
+                let Some(line) = line_result? else { break; };
+                log_console(&console, "rx", &peer, &line);
 
-        // For probe and homing operations we must wait for the result before sending the final
-        // response — but we keep reading the line stream so that `?` status queries are
-        // answered in real time during the move (matching real FluidNC behaviour).
-        if let Some((kind, mut rx)) = pending {
-            loop {
-                tokio::select! {
-                    result = &mut rx => {
-                        handle_pending_result(
-                            kind,
-                            result.unwrap_or(MoveResult::Ok),
-                            &shared,
-                            &broadcast,
-                            &mut writer,
-                            &console,
-                            &peer,
-                        ).await?;
-                        break;
+                // Check for embedded real-time bytes in the line
+                for b in line.bytes() {
+                    if crate::protocol::parser::is_realtime_byte(b) {
+                        let response = handle_realtime(classify(b), &shared, &broadcast).await;
+                        if let Some(resp) = response {
+                            writer.write_all(resp.as_bytes()).await?;
+                            log_console(&console, "tx", &peer, &resp);
+                        }
                     }
-                    next_line = lines.next_line() => {
-                        match next_line? {
-                            None => return Ok(()), // EOF
-                            Some(ql) => {
-                                log_console(&console, "rx", &peer, &ql);
-                                // Handle real-time bytes embedded in the line
-                                for b in ql.bytes() {
-                                    if crate::protocol::parser::is_realtime_byte(b) {
-                                        let resp = handle_realtime(classify(b), &shared, &broadcast).await;
-                                        if let Some(r) = resp {
-                                            writer.write_all(r.as_bytes()).await?;
-                                            log_console(&console, "tx", &peer, r.trim_end());
+                }
+
+                let parsed = parse_line(&line);
+                let (response, pending) =
+                    dispatch(parsed, &shared, &broadcast, &move_tx, &alarm_tx).await;
+                if !response.is_empty() {
+                    writer.write_all(response.as_bytes()).await?;
+                    log_console(&console, "tx", &peer, response.trim_end());
+                }
+
+                // For probe / homing / dwell we must wait for the result before sending
+                // the final response, but keep reading the stream so `?` queries are
+                // answered in real time during the move.
+                if let Some((kind, mut rx)) = pending {
+                    // in_pause is set after M0's drain dwell completes; the loop then waits
+                    // for ~ (cycle-start) before sending ok and breaking.
+                    let mut in_pause = false;
+                    loop {
+                        tokio::select! {
+                            // Guard prevents polling a consumed oneshot in the pause phase.
+                            result = &mut rx, if !in_pause => {
+                                if matches!(kind, PendingKind::ProgramPause) {
+                                    // Drain complete — enter M0 Hold; wait for ~ below.
+                                    let mut state = shared.write().await;
+                                    state.status = MachineStatus::Hold;
+                                    let _ = broadcast.send(());
+                                    drop(state);
+                                    in_pause = true;
+                                } else {
+                                    handle_pending_result(
+                                        kind,
+                                        result.unwrap_or(MoveResult::Ok),
+                                        &shared,
+                                        &broadcast,
+                                        &mut writer,
+                                        &console,
+                                        &peer,
+                                    ).await?;
+                                    break;
+                                }
+                            }
+                            next_line = lines.next_line() => {
+                                match next_line? {
+                                    None => return Ok(()), // EOF
+                                    Some(ql) => {
+                                        log_console(&console, "rx", &peer, &ql);
+                                        for b in ql.bytes() {
+                                            if crate::protocol::parser::is_realtime_byte(b) {
+                                                let resp = handle_realtime(classify(b), &shared, &broadcast).await;
+                                                if let Some(r) = resp {
+                                                    writer.write_all(r.as_bytes()).await?;
+                                                    log_console(&console, "tx", &peer, r.trim_end());
+                                                }
+                                            }
+                                        }
+                                        let p = parse_line(&ql);
+                                        if matches!(p, ParsedLine::StatusQuery) {
+                                            let state = shared.read().await;
+                                            let resp = response::status(&state);
+                                            writer.write_all(resp.as_bytes()).await?;
+                                            log_console(&console, "tx", &peer, resp.trim_end());
+                                        }
+                                        if in_pause {
+                                            // CycleStart (~) sets state to Idle via handle_realtime.
+                                            // Check whether Hold was exited by any means.
+                                            let state = shared.read().await;
+                                            if !matches!(state.status, MachineStatus::Hold) {
+                                                drop(state);
+                                                let resp = response::ok();
+                                                writer.write_all(resp.as_bytes()).await?;
+                                                log_console(&console, "tx", &peer, resp.trim_end());
+                                                break;
+                                            }
                                         }
                                     }
                                 }
-                                // Answer status queries immediately; queue other commands until motion ends
-                                let p = parse_line(&ql);
-                                if matches!(p, ParsedLine::StatusQuery) {
-                                    let state = shared.read().await;
-                                    let resp = response::status(&state);
-                                    writer.write_all(resp.as_bytes()).await?;
-                                    log_console(&console, "tx", &peer, resp.trim_end());
-                                }
+                            }
+                            Some(alarm_msg) = alarm_rx.recv() => {
+                                writer.write_all(alarm_msg.as_bytes()).await?;
+                                log_console(&console, "tx", &peer, alarm_msg.trim_end());
                             }
                         }
                     }
@@ -168,6 +217,16 @@ async fn handle_pending_result(
     peer: &str,
 ) -> anyhow::Result<()> {
     match kind {
+        PendingKind::Dwell | PendingKind::Drain => {
+            let resp = response::ok();
+            writer.write_all(resp.as_bytes()).await?;
+            log_console(console, "tx", peer, resp.trim_end());
+        }
+        PendingKind::ProgramPause => {
+            // M0 pause is handled entirely in handle_connection's pending loop;
+            // this arm is never reached.
+            unreachable!("ProgramPause resolved in connection loop")
+        }
         PendingKind::Homing => {
             {
                 let mut state = shared.write().await;
@@ -271,11 +330,14 @@ async fn handle_realtime(
 /// Non-probe moves return `(ok, None)` — the ok is sent as soon as the move is queued,
 /// matching real FluidNC behaviour where `ok` means "command accepted into planner".
 /// The connection loop is then free to process incoming `?` queries during motion.
+/// A background task monitors the move result and pushes ALARM messages to `alarm_tx` if
+/// the motion executor trips a soft limit during execution.
 async fn dispatch(
     parsed: ParsedLine,
     shared: &SharedMachineState,
     broadcast: &StateBroadcast,
     move_tx: &MoveTx,
+    alarm_tx: &mpsc::Sender<String>,
 ) -> (String, Option<(PendingKind, oneshot::Receiver<MoveResult>)>) {
     match parsed {
         ParsedLine::Empty => (response::ok(), None),
@@ -357,6 +419,11 @@ async fn dispatch(
             match result {
                 InterpretResult::Ok => (response::ok(), None),
                 InterpretResult::Error(code) => (response::error(code), None),
+                InterpretResult::Alarm(code) => {
+                    // Pre-flight soft limit: machine already set to Alarm in interpret().
+                    let _ = broadcast.send(());
+                    (response::alarm(code), None)
+                }
                 InterpretResult::SoftReset => {
                     let r = handle_realtime(RealtimeCmd::SoftReset, shared, broadcast)
                         .await
@@ -374,17 +441,90 @@ async fn dispatch(
                 InterpretResult::Move(mv) => {
                     let is_probe = mv.probe.is_some();
                     let (res_tx, res_rx) = oneshot::channel();
+                    // Probe moves (B2) drain the planner before running — they never add a
+                    // planner slot. Only category-A moves (linear/arc/jog) consume a slot.
+                    if !is_probe {
+                        let mut state = shared.write().await;
+                        state.planner_buf_used = (state.planner_buf_used + 1).min(MAX_PLANNER_SLOTS);
+                        let _ = broadcast.send(());
+                    }
                     if move_tx.send((mv, res_tx)).await.is_err() {
+                        if !is_probe {
+                            let mut state = shared.write().await;
+                            if state.planner_buf_used > 0 { state.planner_buf_used -= 1; }
+                            let _ = broadcast.send(());
+                        }
                         return (response::error(9), None);
                     }
                     if is_probe {
                         // Probe moves must report contact position after completion
                         (response::ok(), Some((PendingKind::Probe, res_rx)))
                     } else {
-                        // Non-probe: ok as soon as queued; motion runs concurrently so the
-                        // connection loop can immediately service incoming `?` queries
+                        // Non-probe: ok as soon as queued; motion runs concurrently.
+                        // Spawn a background task so in-motion soft limit alarms (e.g. arc
+                        // intermediate points) are still delivered to the client.
+                        let atx = alarm_tx.clone();
+                        tokio::spawn(async move {
+                            if let Ok(MoveResult::Alarm(code)) = res_rx.await {
+                                let _ = atx.send(response::alarm(code)).await;
+                            }
+                        });
                         (response::ok(), None)
                     }
+                }
+                InterpretResult::Dwell(seconds) => {
+                    // G4 drains the planner then sleeps — it does NOT consume a planner slot.
+                    // Queue to the motion channel for correct ordering after prior moves,
+                    // but block this connection loop (don't send ok) until dwell completes.
+                    let (res_tx, res_rx) = oneshot::channel();
+                    let current_pos = { shared.read().await.pos };
+                    if move_tx.send((
+                        PendingMove {
+                            kind: MoveKind::Dwell { seconds },
+                            target: current_pos,
+                            feed: 0.0,
+                            probe: None,
+                        },
+                        res_tx,
+                    )).await.is_err() {
+                        return (response::error(9), None);
+                    }
+                    (String::new(), Some((PendingKind::Dwell, res_rx)))
+                }
+                InterpretResult::DrainAndApply => {
+                    // B1: state already applied. Queue a 0-second dwell so the FIFO motion
+                    // channel ensures all prior moves finish before ok is sent.
+                    let (res_tx, res_rx) = oneshot::channel();
+                    let current_pos = { shared.read().await.pos };
+                    if move_tx.send((
+                        PendingMove {
+                            kind: MoveKind::Dwell { seconds: 0.0 },
+                            target: current_pos,
+                            feed: 0.0,
+                            probe: None,
+                        },
+                        res_tx,
+                    )).await.is_err() {
+                        return (response::error(9), None);
+                    }
+                    (String::new(), Some((PendingKind::Drain, res_rx)))
+                }
+                InterpretResult::ProgramPause => {
+                    // B2 M0: drain planner, then Hold, then wait for ~ before sending ok.
+                    let (res_tx, res_rx) = oneshot::channel();
+                    let current_pos = { shared.read().await.pos };
+                    if move_tx.send((
+                        PendingMove {
+                            kind: MoveKind::Dwell { seconds: 0.0 },
+                            target: current_pos,
+                            feed: 0.0,
+                            probe: None,
+                        },
+                        res_tx,
+                    )).await.is_err() {
+                        return (response::error(9), None);
+                    }
+                    (String::new(), Some((PendingKind::ProgramPause, res_rx)))
                 }
             }
         }

@@ -9,6 +9,8 @@ use crate::machine::coolant::CoolantState;
 
 pub const AXIS_COUNT: usize = 6;
 pub const AXIS_NAMES: [&str; AXIS_COUNT] = ["x", "y", "z", "a", "b", "c"];
+/// Number of planner buffer slots, matching FluidNC firmware default.
+pub const MAX_PLANNER_SLOTS: i32 = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -131,6 +133,11 @@ pub struct MachineState {
     #[serde(rename = "fluidConfig")] pub fluid_config: HashMap<String, String>,
     #[serde(skip)]
     pub modal: ModalState,
+    /// Planned end position: updated when a motion command is accepted into the queue.
+    /// Used by resolve_target() so queued G91 relative moves chain off the planned
+    /// end of the previous move rather than the live mid-move position.
+    #[serde(skip)]
+    pub planned_pos: [f64; AXIS_COUNT],
     #[serde(skip)]
     pub homing_in_progress: bool,
     #[serde(skip)]
@@ -140,6 +147,10 @@ pub struct MachineState {
     /// of executing them.
     #[serde(skip)]
     pub jog_cancel_pending: bool,
+    /// Number of motion commands currently queued in the motion executor (including
+    /// the command being actively executed). Reported in the Buf: status field.
+    #[serde(skip)]
+    pub planner_buf_used: i32,
 }
 
 impl MachineState {
@@ -161,9 +172,10 @@ impl MachineState {
         fluid_config.insert("axes/y/homing/cycle".into(), "2".into());
         fluid_config.insert("axes/z/homing/cycle".into(), "1".into());
 
+        let initial_pos = [-150.0, -100.0, 5.0, 0.0, 0.0, 0.0];
         Self {
             status: MachineStatus::Idle,
-            pos: [-150.0, -100.0, 5.0, 0.0, 0.0, 0.0],
+            pos: initial_pos,
             wco: [0.0; AXIS_COUNT],
             feed: 0.0,
             spindle_speed: 0.0,
@@ -177,9 +189,11 @@ impl MachineState {
             travel,
             fluid_config,
             modal: ModalState::default(),
+            planned_pos: initial_pos,
             homing_in_progress: false,
             hold_pending: false,
             jog_cancel_pending: false,
+            planner_buf_used: 0,
         }
     }
 
@@ -199,7 +213,10 @@ impl MachineState {
         self.homing_in_progress = false;
         self.hold_pending = false;
         self.jog_cancel_pending = false;
+        self.planner_buf_used = 0;
         self.feed = 0.0;
+        // Snap planned position to actual — queued moves are discarded on reset
+        self.planned_pos = self.pos;
     }
 
     pub fn is_accepting_commands(&self) -> bool {

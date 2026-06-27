@@ -71,63 +71,53 @@
       </button>
 
       <!-- Job controls -->
-      <template v-if="job">
-        <button
-          v-if="job.status === 'loaded'"
-          @click="startJob"
-          class="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-md text-sm font-medium transition-colors"
-          title="Cycle Start"
-        >
-          <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M8 5v14l11-7z" />
-          </svg>
-          Cycle Start
-        </button>
-        <template v-else-if="job.status === 'running'">
-          <button
-            @click="pauseJob"
-            class="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-white rounded-md text-sm font-medium transition-colors"
-            title="Pause"
-          >
-            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-            </svg>
-            Pause
-          </button>
-          <button
-            @click="cancelJob"
-            class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-md text-sm font-medium transition-colors"
-            title="Stop"
-          >
-            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M6 6h12v12H6z" />
-            </svg>
-            Stop
-          </button>
-        </template>
-        <template v-else-if="job.status === 'paused'">
-          <button
-            @click="resumeJob"
-            class="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-md text-sm font-medium transition-colors"
-            title="Resume"
-          >
-            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M8 5v14l11-7z" />
-            </svg>
-            Resume
-          </button>
-          <button
-            @click="cancelJob"
-            class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-md text-sm font-medium transition-colors"
-            title="Stop"
-          >
-            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M6 6h12v12H6z" />
-            </svg>
-            Stop
-          </button>
-        </template>
-      </template>
+      <button
+        v-if="job?.status === 'paused'"
+        @click="resumeJob"
+        class="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-md text-sm font-medium transition-colors"
+        title="Resume"
+      >
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M8 5v14l11-7z" />
+        </svg>
+        Resume
+      </button>
+      <button
+        :disabled="!machine.connected || !job || (job.status !== 'loaded' && job.status !== 'complete')"
+        @click="startJob"
+        class="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-md text-sm font-medium transition-colors"
+        :class="machine.connected && job && (job.status === 'loaded' || job.status === 'complete') ? 'hover:bg-green-500' : 'opacity-40 cursor-not-allowed'"
+        title="Cycle Start"
+      >
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M8 5v14l11-7z" />
+        </svg>
+        Cycle Start
+      </button>
+      <button
+        :disabled="!job || job.status !== 'running'"
+        @click="pauseJob"
+        class="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-md text-sm font-medium transition-colors"
+        :class="job?.status === 'running' ? 'hover:bg-amber-400' : 'opacity-40 cursor-not-allowed'"
+        title="Pause"
+      >
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+        </svg>
+        Pause
+      </button>
+      <button
+        :disabled="!machine.connected"
+        @click="() => { cancelJob(); machine.sendCommand('\x18') }"
+        class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-md text-sm font-medium transition-colors"
+        :class="machine.connected ? 'hover:bg-red-500' : 'opacity-40 cursor-not-allowed'"
+        title="Stop — cancels job and sends soft reset to flush FluidNC buffer"
+      >
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M6 6h12v12H6z" />
+        </svg>
+        Stop
+      </button>
 
       <button
         v-if="machine.connected"

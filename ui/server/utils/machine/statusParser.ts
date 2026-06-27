@@ -57,8 +57,9 @@ export function parseStatusLine(line: string): MachineStatus | null {
       spindleSpeed = fs[1] ?? 0
     } else if (p.startsWith('F:')) {
       feed = Number(p.slice(2))
-    } else if (p.startsWith('Buf:')) {
-      const b = p.slice(4).split(',').map(Number)
+    } else if (p.startsWith('Bf:') || p.startsWith('Buf:')) {
+      // FluidNC firmware emits "Bf:", simulator legacy emits "Buf:" — accept both
+      const b = p.slice(p.indexOf(':') + 1).split(',').map(Number)
       bufPlanner = b[0] ?? 0
       bufRx = b[1] ?? 0
     } else if (p.startsWith('Ov:')) {
