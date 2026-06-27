@@ -136,7 +136,7 @@
       </button>
 
       <!-- Sensor status -->
-      <div v-if="machine.connected" class="relative">
+      <div v-if="machine.connected" class="relative" data-sensor-btn>
         <button
           @click="sensorOpen = !sensorOpen"
           :class="anyTriggered ? 'text-red-400 bg-red-900/30' : 'text-gray-500 dark:text-slate-400'"
