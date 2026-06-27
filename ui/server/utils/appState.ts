@@ -7,6 +7,15 @@ import type { MachineStatus } from './machine/types'
 
 const CONFIG_DIR = process.env.NUXT_CONFIG_PATH ?? './config'
 
+export interface StockDef {
+  shape: 'rect' | 'round'
+  width?: number
+  height?: number
+  rotation?: number
+  diameter?: number
+  depth: number
+}
+
 export interface ConnectionState {
   machineId: string | null
   connected: boolean
@@ -73,7 +82,7 @@ export type PatchOp =
 interface AppConfig {
   auth?: { enabled?: boolean }
   machines?: unknown[]
-  app?: unknown
+  app?: Record<string, unknown>
 }
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -106,6 +115,30 @@ const peers = new Set<Peer>()
 
 let cachedConfig: AppConfig = structuredClone(DEFAULT_CONFIG)
 let configLoaded = false
+
+// ─── Stock definition (server-authoritative, persisted in app.yaml) ───────────
+
+let stockDef: StockDef | null = null
+
+export function getStock(): StockDef | null {
+  return stockDef
+}
+
+export async function setStock(s: StockDef): Promise<PatchOp> {
+  stockDef = s
+  const config = await getConfig()
+  config.app = { ...(config.app ?? {}), stock: s }
+  await setConfig(config)
+  return { path: 'stock', set: { stock: s } }
+}
+
+export async function clearStock(): Promise<PatchOp> {
+  stockDef = null
+  const config = await getConfig()
+  config.app = { ...(config.app ?? {}), stock: null }
+  await setConfig(config)
+  return { path: 'stock', set: { stock: null } }
+}
 
 // ─── Job state (server-authoritative, synced to all clients via patch) ────────
 
@@ -245,6 +278,7 @@ export async function getConfig(): Promise<AppConfig> {
       throw err
     }
   }
+  stockDef = (cachedConfig.app?.stock as StockDef | null | undefined) ?? null
   configLoaded = true
   return cachedConfig
 }
@@ -288,5 +322,6 @@ export function getSnapshot() {
     ui,
     job: getJobState(),
     machine: _getMachineStatus?.() ?? null,
+    stock: stockDef,
   }
 }

@@ -53,7 +53,7 @@
                 Edit
               </button>
               <button
-                @click="machine.clearStock()"
+                @click="wsSend({ t: 'ui:stock:clear', payload: {} })"
                 class="px-3 py-1.5 text-xs font-medium bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400 rounded-lg transition-colors"
               >
                 Clear
@@ -431,6 +431,7 @@
 import { useMachineStore } from '~/stores/machine'
 import { useNav } from '~/composables/useNav'
 import { useModals } from '~/composables/useModals'
+import { wsSend } from '~/composables/useWsSend'
 
 const machine = useMachineStore()
 const modals = useModals()
@@ -480,12 +481,15 @@ function openStockDialog() {
 }
 
 function applyStockDialog() {
-  machine.setStock({
-    shape: dialogStock.shape,
-    width: dialogStock.width,
-    height: dialogStock.height,
-    depth: dialogStock.depth,
-    diameter: dialogStock.diameter,
+  wsSend({
+    t: 'ui:stock:set',
+    payload: {
+      shape: dialogStock.shape,
+      width: dialogStock.width,
+      height: dialogStock.height,
+      depth: dialogStock.depth,
+      diameter: dialogStock.diameter,
+    },
   })
   measured.width = null
   measured.depth = null

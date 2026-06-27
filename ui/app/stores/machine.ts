@@ -3,10 +3,11 @@ import { useSettingsStore } from '~/stores/settings'
 import { useSyncStore } from '~/stores/sync'
 import { wsSend, wsConnected } from '~/composables/useWsSend'
 
-// Re-export the canonical MachineStatus type from the server utils so
-// the client and server share the same shape
+// Re-export canonical types from server utils so client and server share the same shapes
 export type { MachineStatus } from '~~/server/utils/machine/types'
 import type { MachineStatus } from '~~/server/utils/machine/types'
+export type { StockDef } from '~~/server/utils/appState'
+import type { StockDef } from '~~/server/utils/appState'
 
 export interface LimitSwitch {
   name: string
@@ -34,17 +35,6 @@ export interface Tool {
   lineEnd: number
 }
 
-export interface StockDef {
-  shape: 'rect' | 'round'
-  // rect
-  width?: number
-  height?: number
-  rotation?: number  // degrees
-  // round
-  diameter?: number
-  // common
-  depth: number
-}
 
 export interface ToolLibraryEntry {
   id: string

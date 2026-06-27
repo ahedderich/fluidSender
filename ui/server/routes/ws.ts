@@ -19,8 +19,11 @@ import {
   clearConsole,
   setConnection,
   registerMachineStatusProvider,
+  setStock,
+  clearStock,
   type ModalEntry,
   type Toast,
+  type StockDef,
 } from '../utils/appState'
 import { machineConnection } from '../utils/machine/connection'
 import {
@@ -259,6 +262,17 @@ export default defineWebSocketHandler({
       case 'ui:console:clear':
         broadcastPatch([clearConsole()])
         break
+
+      case 'ui:stock:set': {
+        const op = await setStock(msg.payload as StockDef)
+        broadcastPatch([op])
+        break
+      }
+      case 'ui:stock:clear': {
+        const op = await clearStock()
+        broadcastPatch([op])
+        break
+      }
 
       default:
         console.warn('[WS] unknown message type:', msg.t)

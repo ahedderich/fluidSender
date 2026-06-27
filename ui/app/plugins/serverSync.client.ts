@@ -3,7 +3,7 @@ import { useMachineStore } from '~/stores/machine'
 import { useSyncStore, type PatchOp, type UiSnapshot } from '~/stores/sync'
 import { settleModal } from '~/composables/useModals'
 import { setWsSend, wsConnected } from '~/composables/useWsSend'
-import type { ServerConnectionState, MachineStatus } from '~/stores/machine'
+import type { ServerConnectionState, MachineStatus, StockDef } from '~/stores/machine'
 import type { JobState } from '~/types/job'
 
 interface ServerMessage {
@@ -43,6 +43,13 @@ export default defineNuxtPlugin((nuxtApp) => {
       case 'job':
         if ('set' in op) syncStore.applyJobState(op.set as unknown as JobState)
         break
+      case 'stock':
+        if ('set' in op) {
+          const s = (op.set as { stock: StockDef | null }).stock
+          if (s) machineStore.setStock(s)
+          else machineStore.clearStock()
+        }
+        break
       default:
         syncStore.applyOp(op)
         if (op.path === 'modals' && 'removeId' in op) settleModal(op.removeId, op.meta?.result)
@@ -65,6 +72,7 @@ export default defineNuxtPlugin((nuxtApp) => {
           ui: UiSnapshot
           job: JobState | null
           machine: MachineStatus | null
+          stock: StockDef | null
         }
         settingsStore.applyServerState(p.config)
         machineStore.applyServerStatus(p.connection)
@@ -72,6 +80,8 @@ export default defineNuxtPlugin((nuxtApp) => {
         if (p.job) syncStore.applyJobState(p.job)
         if (p.machine) machineStore.applyMachineStatus(p.machine)
         else if (p.connection.connected) send({ t: 'machine:status:request' })
+        if (p.stock) machineStore.setStock(p.stock)
+        else machineStore.clearStock()
         break
       }
       case 'patch': {
