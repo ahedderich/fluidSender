@@ -21,6 +21,18 @@ export async function loadCachedAnalysis(fileId: string): Promise<JobAnalysis | 
   }
 }
 
+/** Read analysis.json without knowing the fileId in advance (used on server boot). */
+export async function loadRawAnalysis(): Promise<JobAnalysis | null> {
+  try {
+    const raw = await readFile(ANALYSIS_PATH, 'utf8')
+    const a = JSON.parse(raw) as JobAnalysis
+    if (a.version !== 1) return null
+    return a
+  } catch {
+    return null
+  }
+}
+
 export async function clearAnalysis(): Promise<void> {
   await Promise.allSettled([
     unlink(ANALYSIS_PATH),

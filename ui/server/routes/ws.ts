@@ -38,6 +38,18 @@ import { jobEngine } from '../utils/gcode/sendLoop'
 initPoller((msg) => broadcast(msg))
 registerMachineStatusProvider(getLastMachineStatus)
 
+// Restore persisted job state from current_job/ on server startup.
+// Runs async before any peer connects; state is included in the first snapshot.
+jobEngine.bootRestore().then((mode) => {
+  if (mode === 'crash') {
+    console.log('[ws] crash recovery mode — job state restored with recovery info')
+  } else if (mode === 'loaded') {
+    console.log('[ws] boot restore: previous job reloaded')
+  }
+}).catch((err) => {
+  console.error('[ws] bootRestore error:', err)
+})
+
 machineConnection.on('event', (ev) => {
   switch (ev.type) {
     case 'connected': {
@@ -185,6 +197,11 @@ export default defineWebSocketHandler({
         break
       case 'job:recover:confirm':
         jobEngine.confirmRecovery((msg.payload as { resumePtr: number }).resumePtr)
+        break
+      case 'job:recover:fresh':
+        jobEngine.loadJobFresh().catch((err: unknown) => {
+          console.error('[ws] loadJobFresh error:', err)
+        })
         break
 
       // ── UI state ───────────────────────────────────────────────────────────

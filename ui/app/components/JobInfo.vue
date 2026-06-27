@@ -22,6 +22,52 @@
       </button>
     </div>
 
+    <!-- Crash / checkpoint recovery banner -->
+    <div
+      v-if="job?.recovery?.available"
+      class="px-3 py-2.5 border-b border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20 shrink-0"
+    >
+      <div class="flex items-start gap-2 mb-2.5">
+        <svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+        </svg>
+        <div class="min-w-0">
+          <p class="text-xs font-semibold text-amber-800 dark:text-amber-300">Crash detected</p>
+          <p class="text-xs text-amber-700 dark:text-amber-400 mt-0.5 leading-relaxed">
+            Interrupted at line {{ job!.recovery!.checkpointPtr.toLocaleString() }}.
+            Home and position the machine before resuming.
+          </p>
+        </div>
+      </div>
+      <div class="space-y-1.5">
+        <button
+          :disabled="!machine.connected"
+          :title="!machine.connected ? 'Connect to machine before resuming' : undefined"
+          class="w-full py-1.5 rounded-md text-xs font-semibold transition-colors"
+          :class="machine.connected
+            ? 'bg-amber-600 hover:bg-amber-500 text-white'
+            : 'bg-amber-200/60 dark:bg-amber-900/40 text-amber-400 dark:text-amber-700 cursor-not-allowed'"
+          @click="doRecover()"
+        >
+          Resume from line {{ job!.recovery!.resumePtr.toLocaleString() }}
+        </button>
+        <div class="flex gap-1.5">
+          <button
+            class="flex-1 py-1.5 bg-white dark:bg-slate-700 border border-amber-200 dark:border-slate-600 hover:bg-amber-50 dark:hover:bg-slate-600 text-amber-900 dark:text-slate-200 rounded-md text-xs font-medium transition-colors"
+            @click="doLoadFresh()"
+          >
+            Restart from beginning
+          </button>
+          <button
+            class="flex-1 py-1.5 bg-white dark:bg-slate-700 border border-red-200 dark:border-slate-600 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors"
+            @click="clearJob()"
+          >
+            Clear job
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Stats -->
     <div v-if="job" class="px-3 py-2 border-b border-gray-100 dark:border-slate-700 shrink-0 flex gap-4">
       <!-- XYZ range -->
@@ -178,9 +224,20 @@
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
 import { useJobControl } from '~/composables/useJobControl'
+import { wsSend } from '~/composables/useWsSend'
 
 const machine = useMachineStore()
-const { job, startJob, pauseJob, resumeJob, cancelJob, clearJob } = useJobControl()
+const { job, startJob, pauseJob, resumeJob, cancelJob, clearJob, confirmRecovery } = useJobControl()
+
+function doRecover() {
+  const resumePtr = job.value?.recovery?.resumePtr
+  if (resumePtr != null) confirmRecovery(resumePtr)
+}
+
+function doLoadFresh() {
+  wsSend({ t: 'job:recover:fresh' })
+}
+
 const editingFeed = ref(false)
 const editingSpindle = ref(false)
 

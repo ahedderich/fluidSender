@@ -2,8 +2,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { preprocessGCode } from './preprocessor'
 import { simulateToLine } from './simulator'
-import { saveCheckpoint, loadCheckpoint, clearCheckpoint } from './checkpoint'
-import { analyzeGCodeFile, loadCachedAnalysis } from './analyzer'
+import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
+import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
 import { broadcastPatch, setJobState, pushConsole, type PatchOp } from '../appState'
 import { machineConnection } from '../machine/connection'
 import type { MachineStatus } from '../machine/types'
@@ -20,9 +20,7 @@ const COMPLETION_CONFIRM_COUNT = 2
 const DEFAULT_MAX_PLANNER_SLOTS = 15
 // Checkpoint every N lines or every M ms (whichever triggers first)
 const CHECKPOINT_LINES = 50
-const CHECKPOINT_MS = 5000
-// Recovery backs up this many estimated ms from the checkpoint pointer
-const RECOVERY_LOOKBACK_MS = 30_000
+const CHECKPOINT_MS = 1000
 // Safe Z lift applied before XY move in the resume sequence (mm above last Z)
 const RESUME_SAFE_Z_LIFT = 5
 
@@ -126,13 +124,13 @@ class JobEngine {
       })
 
       const checkpoint = await loadCheckpoint()
-      if (checkpoint && checkpoint.fileId === fileId && checkpoint.sendPtr > 0) {
-        const resumePtr = this._calcResumePtr(checkpoint.sendPtr)
+      if (checkpoint && checkpoint.fileId === fileId && checkpoint.execPtr > 0) {
+        const resumePtr = checkpoint.execPtr
         const modalStateAtResume = simulateToLine(this.lines, resumePtr)
         broadcastPatch([setJobState({
           recovery: {
             available: true,
-            checkpointPtr: checkpoint.sendPtr,
+            checkpointPtr: resumePtr,
             resumePtr,
             modalStateAtResume,
           },
@@ -267,6 +265,7 @@ class JobEngine {
     this.sendPtr = 0
     this._execPtr = 0
     this.fileId = null
+    this.filename = null
     broadcastPatch([setJobState({
       status: 'idle',
       fileId: null,
@@ -285,6 +284,76 @@ class JobEngine {
       errorMessage: null,
     })])
     this._status = 'idle'
+    clearAllJobData().catch(() => {})
+  }
+
+  /**
+   * Called once on server startup. Checks current_job/ for a persisted job and
+   * restores in-memory state without broadcasting (no peers are connected yet).
+   * Returns 'crash' if the job was interrupted mid-run, 'loaded' if it was
+   * only loaded, or 'empty' if nothing was found.
+   */
+  async bootRestore(): Promise<'empty' | 'loaded' | 'crash'> {
+    const analysis = await loadRawAnalysis()
+    if (!analysis) return 'empty'
+
+    try {
+      const filePath = join(UPLOADS_DIR, analysis.fileId)
+      const content = await readFile(filePath, 'utf8')
+      const { lines } = preprocessGCode(content)
+
+      this.lines = lines
+      this.fileId = analysis.fileId
+      this.filename = analysis.filename
+
+      const checkpoint = await loadCheckpoint()
+      const hasCrash = !!checkpoint && checkpoint.fileId === analysis.fileId && checkpoint.execPtr > 0
+
+      const baseState: Partial<JobState> = {
+        fileId: analysis.fileId,
+        filename: analysis.filename,
+        totalLines: analysis.totalLines,
+        sendPtr: 0,
+        execPtr: 0,
+        inPlanner: 0,
+        maxPlannerSlots: this.maxPlannerSlots,
+        estimatedTotalMs: analysis.estimatedTotalMs,
+        startWallClock: null,
+        axisRanges: analysis.axisRanges,
+        analyzeProgress: 100,
+        toolSections: analysis.tools,
+        errorMessage: null,
+      }
+
+      if (hasCrash) {
+        const resumePtr = checkpoint!.execPtr
+        const modalStateAtResume = simulateToLine(lines, resumePtr)
+        this._setStatus('loaded', {
+          ...baseState,
+          recovery: {
+            available: true,
+            checkpointPtr: resumePtr,
+            resumePtr,
+            modalStateAtResume,
+          },
+        })
+        return 'crash'
+      } else {
+        this._setStatus('loaded', { ...baseState, recovery: null })
+        return 'loaded'
+      }
+    } catch (err) {
+      console.error('[jobEngine] bootRestore failed:', err)
+      return 'empty'
+    }
+  }
+
+  /** Clear the crash checkpoint then reload the job from line 0. */
+  async loadJobFresh(): Promise<void> {
+    if (!this.fileId) return
+    const fileId = this.fileId
+    await clearCheckpoint()
+    await this.loadJob(fileId)
   }
 
   /** Called by ws.ts on every `ok` response from the machine. */
@@ -391,17 +460,17 @@ class JobEngine {
   /** On server startup — check for a checkpoint and prepare recovery info. */
   async checkForRecovery(): Promise<JobState['recovery']> {
     const checkpoint = await loadCheckpoint()
-    if (!checkpoint || checkpoint.sendPtr <= 0) return null
+    if (!checkpoint || checkpoint.execPtr <= 0) return null
 
     try {
       const filePath = join(UPLOADS_DIR, checkpoint.fileId)
       const content = await readFile(filePath, 'utf8')
       const { lines } = preprocessGCode(content)
-      const resumePtr = this._calcResumePtr(checkpoint.sendPtr)
+      const resumePtr = checkpoint.execPtr
       const modalStateAtResume = simulateToLine(lines, resumePtr)
       return {
         available: true,
-        checkpointPtr: checkpoint.sendPtr,
+        checkpointPtr: resumePtr,
         resumePtr,
         modalStateAtResume,
       }
@@ -410,7 +479,7 @@ class JobEngine {
     }
   }
 
-  /** User confirmed recovery — load the job from checkpoint.sendPtr and start. */
+  /** User confirmed recovery — load the job from checkpoint.execPtr and start. */
   async confirmRecovery(resumePtr: number): Promise<void> {
     const checkpoint = await loadCheckpoint()
     if (!checkpoint) return
@@ -540,17 +609,10 @@ class JobEngine {
         version: 1,
         fileId: this.fileId!,
         filename: this.filename!,
-        sendPtr: this.sendPtr,
+        execPtr: this._execPtr,
         savedAt: now,
       }).catch(() => {})
     }
-  }
-
-  private _calcResumePtr(checkpointSendPtr: number): number {
-    const targetCumul = (this.lines[checkpointSendPtr]?.cumulativeDurationMs ?? 0) - RECOVERY_LOOKBACK_MS
-    let ptr = checkpointSendPtr
-    while (ptr > 0 && (this.lines[ptr]?.cumulativeDurationMs ?? 0) > targetCumul) ptr--
-    return Math.max(0, ptr)
   }
 
   private _buildRecoverySequence(modal: GCodeModalState, safeZ: number): string[] {

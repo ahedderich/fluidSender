@@ -127,6 +127,6 @@ export interface JobCheckpoint {
   version: 1
   fileId: string
   filename: string
-  sendPtr: number
+  execPtr: number
   savedAt: number
 }

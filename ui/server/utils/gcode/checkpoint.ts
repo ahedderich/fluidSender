@@ -1,4 +1,4 @@
-import { readFile, rename, writeFile, unlink, mkdir } from 'node:fs/promises'
+import { readFile, rename, writeFile, unlink, readdir, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { JobCheckpoint } from './types'
 
@@ -36,6 +36,22 @@ export async function clearCheckpoint(): Promise<void> {
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
       console.error('[checkpoint] Failed to clear checkpoint:', err)
+    }
+  }
+}
+
+/** Delete every file in the current_job directory (analysis, vectors, checkpoint). */
+export async function clearAllJobData(): Promise<void> {
+  try {
+    const entries = await readdir(CURRENT_JOB_DIR)
+    await Promise.allSettled(
+      entries
+        .filter((f) => f !== '.gitkeep')
+        .map((f) => unlink(join(CURRENT_JOB_DIR, f))),
+    )
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('[checkpoint] Failed to clear job data:', err)
     }
   }
 }

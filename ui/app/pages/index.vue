@@ -10,9 +10,9 @@
         <GCodeViewport class="flex-1 min-h-64" />
         <!-- Position / Navigation / Macros — disabled when disconnected -->
         <div
+          v-if="machine.connected || true"
           class="grid gap-2"
           style="grid-template-columns: 18rem auto 1fr"
-          v-if="machine.connected || true"
           :class="!machine.connected ? 'opacity-40 pointer-events-none select-none' : ''"
         >
           <DROPanel />
@@ -26,7 +26,6 @@
         <JobInfo class="flex-1 min-h-0" />
         <ProbingPanel
           class="shrink-0"
-          v-if="machine.connected || true"
           :class="!machine.connected ? 'opacity-40 pointer-events-none select-none' : ''"
         />
       </div>
