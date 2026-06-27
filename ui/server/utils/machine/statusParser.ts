@@ -84,11 +84,15 @@ export function parseStatusLine(line: string): MachineStatus | null {
     ...(mpos.a !== undefined ? { a: mpos.a - cachedWco.a } : {}),
   }
 
+  const AXIS_NAMES = ['X', 'Y', 'Z', 'A', 'B', 'C'] as const
   const limitSwitches: MachineStatus['limitSwitches'] = []
-  if (pnStr.includes('X')) limitSwitches.push({ name: 'X-', triggered: true })
-  if (pnStr.includes('Y')) limitSwitches.push({ name: 'Y-', triggered: true })
-  if (pnStr.includes('Z')) limitSwitches.push({ name: 'Z-', triggered: true })
-  if (pnStr.includes('A')) limitSwitches.push({ name: 'A-', triggered: true })
+  for (const axis of AXIS_NAMES) {
+    if (pnStr.includes(axis)) limitSwitches.push({ name: axis, triggered: true })
+  }
+
+  const probe = pnStr.includes('P')
+  const toolsetter = pnStr.includes('T')
+  const door = pnStr.includes('D')
 
   const spindleOn = accStr.includes('S') || accStr.includes('C')
   const coolantMist = accStr.includes('M')
@@ -108,6 +112,9 @@ export function parseStatusLine(line: string): MachineStatus | null {
     buffer: { planner: bufPlanner, rx: bufRx },
     overrides: { feed: ovFeed, rapid: ovRapid, spindle: ovSpindle },
     limitSwitches,
+    probe,
+    toolsetter,
+    door,
     spindleOn,
     coolantMist,
     coolantFlood,

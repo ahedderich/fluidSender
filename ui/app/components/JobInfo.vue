@@ -13,7 +13,7 @@
         </span>
       </div>
       <button
-        v-if="job"
+        v-if="job && job.status !== 'idle'"
         class="text-xs px-2 py-0.5 text-gray-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 rounded transition-colors shrink-0"
         title="Clear loaded file"
         @click="clearJob"

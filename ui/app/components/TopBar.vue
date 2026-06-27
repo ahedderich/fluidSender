@@ -155,33 +155,66 @@
 
         <div
           v-if="sensorOpen"
-          class="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-60 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg shadow-2xl p-3 z-50"
+          class="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg shadow-2xl p-3 z-50 space-y-3"
         >
-          <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-2 uppercase tracking-wide">
-            Limit Switches
+          <!-- Limit switches -->
+          <div>
+            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide">
+              Limit Switches
+            </div>
+            <div class="space-y-1">
+              <div
+                v-for="axis in configuredAxes"
+                :key="axis"
+                class="flex items-center justify-between py-1 px-1.5 rounded"
+              >
+                <span class="text-sm text-gray-800 dark:text-slate-200 font-mono">{{ axis }}</span>
+                <span
+                  :class="machine.limitSwitches.some(sw => sw.name === axis && sw.triggered)
+                    ? 'bg-red-500 text-white'
+                    : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'"
+                  class="text-xs px-2 py-0.5 rounded-full font-medium"
+                >
+                  {{ machine.limitSwitches.some(sw => sw.name === axis && sw.triggered) ? 'TRIGGERED' : 'OK' }}
+                </span>
+              </div>
+            </div>
           </div>
-          <p
-            v-if="!machine.connected"
-            class="text-sm font-mono text-gray-400 dark:text-slate-500 py-1.5"
-          >
-            null
-          </p>
-          <div
-            v-for="sw in machine.limitSwitches"
-            :key="sw.name"
-            class="flex items-center justify-between py-1.5 border-b border-gray-100 dark:border-slate-700 last:border-0"
-          >
-            <span class="text-sm text-gray-800 dark:text-slate-200 font-mono">{{ sw.name }}</span>
-            <span
-              :class="
-                sw.triggered
-                  ? 'bg-red-500 text-white'
-                  : 'bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-400'
-              "
-              class="text-xs px-2 py-0.5 rounded-full font-medium"
-            >
-              {{ sw.triggered ? 'TRIGGERED' : 'OK' }}
-            </span>
+
+          <!-- Probe / Toolsetter / Door (if present in firmware config or ever triggered) -->
+          <div v-if="hasProbe || hasToolsetter || hasDoor">
+            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide border-t border-gray-100 dark:border-slate-700 pt-2.5">
+              Inputs
+            </div>
+            <div class="space-y-1">
+              <div v-if="hasProbe" class="flex items-center justify-between py-1 px-1.5 rounded">
+                <span class="text-sm text-gray-800 dark:text-slate-200">Probe</span>
+                <span
+                  :class="machine.probe ? 'bg-amber-500 text-white' : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'"
+                  class="text-xs px-2 py-0.5 rounded-full font-medium"
+                >
+                  {{ machine.probe ? 'TRIGGERED' : 'OK' }}
+                </span>
+              </div>
+              <div v-if="hasToolsetter" class="flex items-center justify-between py-1 px-1.5 rounded">
+                <span class="text-sm text-gray-800 dark:text-slate-200">Toolsetter</span>
+                <span
+                  :class="machine.toolsetter ? 'bg-amber-500 text-white' : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'"
+                  class="text-xs px-2 py-0.5 rounded-full font-medium"
+                >
+                  {{ machine.toolsetter ? 'TRIGGERED' : 'OK' }}
+                </span>
+              </div>
+              <div v-if="hasDoor" class="flex items-center justify-between py-1 px-1.5 rounded">
+                <span class="text-sm text-gray-800 dark:text-slate-200">Safety Door</span>
+                <span
+                  :class="machine.door ? 'bg-red-500 text-white' : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'"
+                  class="text-xs px-2 py-0.5 rounded-full font-medium"
+                >
+                  {{ machine.door ? 'OPEN' : 'CLOSED' }}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -274,7 +307,22 @@ onMounted(() => { isMounted.value = true })
 
 const sensorOpen = ref(false)
 
-const anyTriggered = computed(() => machine.limitSwitches.some((s) => s.triggered))
+const fluidncCfg = computed(() => s.activeMachine?.fluidncConfig ?? null)
+
+// Derive configured axes from the last known mpos (A axis present = 4-axis machine)
+const configuredAxes = computed(() => {
+  const axes = ['X', 'Y', 'Z']
+  if (machine.machinePos.a !== undefined) axes.push('A')
+  return axes
+})
+
+const hasProbe = computed(() => !!fluidncCfg.value?.probe?.pin || machine.probe)
+const hasToolsetter = computed(() => !!fluidncCfg.value?.probe?.toolsetterPin || machine.toolsetter)
+const hasDoor = computed(() => !!fluidncCfg.value?.control?.safetyDoorPin || machine.door)
+
+const anyTriggered = computed(() =>
+  machine.limitSwitches.some((s) => s.triggered) || machine.probe || machine.toolsetter || machine.door
+)
 
 const connectBtnClass = computed(() => {
   // Read all deps unconditionally so Vue tracks them regardless of which branch executes.

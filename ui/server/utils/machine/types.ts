@@ -8,6 +8,9 @@ export interface MachineStatus {
   buffer: { planner: number; rx: number }
   overrides: { feed: number; rapid: number; spindle: number }
   limitSwitches: { name: string; triggered: boolean }[]
+  probe: boolean
+  toolsetter: boolean
+  door: boolean
   spindleOn: boolean
   coolantMist: boolean
   coolantFlood: boolean

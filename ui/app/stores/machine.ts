@@ -80,6 +80,9 @@ export const useMachineStore = defineStore('machine', () => {
   const coolant = ref<'off' | 'mist' | 'flood'>('off')
 
   const limitSwitches = ref<LimitSwitch[]>([])
+  const probe = ref(false)
+  const toolsetter = ref(false)
+  const door = ref(false)
   const buffer = ref({ planner: 0, rx: 0 })
 
   // Console is server-owned; this is a read alias so existing components work unchanged
@@ -110,6 +113,9 @@ export const useMachineStore = defineStore('machine', () => {
 
     if (!state.connected) {
       limitSwitches.value = []
+      probe.value = false
+      toolsetter.value = false
+      door.value = false
       machinePos.value = { x: 0, y: 0, z: 0 }
       workPos.value = { x: 0, y: 0, z: 0 }
       machineState.value = 'Disconnected'
@@ -125,6 +131,9 @@ export const useMachineStore = defineStore('machine', () => {
     spindleOn.value = s.spindleOn
     coolant.value = s.coolantFlood ? 'flood' : s.coolantMist ? 'mist' : 'off'
     limitSwitches.value = s.limitSwitches
+    probe.value = s.probe
+    toolsetter.value = s.toolsetter
+    door.value = s.door
     feedOverride.value = s.overrides.feed
     spindleOverride.value = s.overrides.spindle
     buffer.value = s.buffer
@@ -180,6 +189,9 @@ export const useMachineStore = defineStore('machine', () => {
     spindleDir,
     coolant,
     limitSwitches,
+    probe,
+    toolsetter,
+    door,
     buffer,
     consoleLog,
     tools,
