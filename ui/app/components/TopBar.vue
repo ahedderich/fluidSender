@@ -312,7 +312,7 @@ async function restartFirmware() {
     confirmLabel: 'Restart',
     danger: true,
   })
-  if (ok) machine.sendCommand('$RS')
+  if (ok) machine.sendCommand('$bye')
 }
 
 onMounted(() => {
