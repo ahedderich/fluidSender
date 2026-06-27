@@ -108,10 +108,10 @@
         Pause
       </button>
       <button
-        :disabled="!machine.connected"
+        :disabled="machine.machineState !== 'Run'"
         @click="() => { cancelJob(); machine.sendCommand('\x18') }"
         class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-md text-sm font-medium transition-colors"
-        :class="machine.connected ? 'hover:bg-red-500' : 'opacity-40 cursor-not-allowed'"
+        :class="machine.machineState === 'Run' ? 'hover:bg-red-500' : 'opacity-40 cursor-not-allowed'"
         title="Stop — cancels job and sends soft reset to flush FluidNC buffer"
       >
         <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
