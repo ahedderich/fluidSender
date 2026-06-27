@@ -155,6 +155,17 @@ async fn execute_linear(
     }
     let _ = broadcast.send(());
 
+    // Guard: a feed rate of 0 (no F word ever set) would cause an infinite tick loop.
+    // Snap to target immediately so the job engine can advance rather than hanging.
+    if mv.feed <= 0.0 {
+        let mut state = shared.write().await;
+        for i in 0..AXIS_COUNT { state.pos[i] = mv.target[i]; }
+        state.status = MachineStatus::Idle;
+        state.feed = 0.0;
+        let _ = broadcast.send(());
+        return MoveResult::Ok;
+    }
+
     let mut ticker = time::interval(interval_dur);
 
     loop {

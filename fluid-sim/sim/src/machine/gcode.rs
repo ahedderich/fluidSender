@@ -50,9 +50,11 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
     let mut drain_needed = false;
     let mut pause_needed = false;
 
-    // Update feed rate if F present.
+    // Update feed rate if F present. modal_feed persists across moves; state.feed is
+    // the display/execution rate and may be zeroed by motion completion.
     if let Some(feed) = f {
         state.feed = feed;
+        state.modal_feed = feed;
     }
 
     // S word always updates spindle_speed (category C3 when spindle is off;
@@ -131,7 +133,7 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
                 let feed = if g == 0.0 {
                     max_rate_for_move(state, &target)
                 } else {
-                    state.feed
+                    state.modal_feed
                 };
                 state.planned_pos = target;
                 return InterpretResult::Move(PendingMove {
@@ -152,7 +154,7 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
                 let i = word_val(words, 'I').unwrap_or(0.0);
                 let j = word_val(words, 'J').unwrap_or(0.0);
                 let k = word_val(words, 'K').unwrap_or(0.0);
-                let feed = state.feed;
+                let feed = state.modal_feed;
                 state.planned_pos = target;
                 return InterpretResult::Move(PendingMove {
                     kind: MoveKind::Arc {
@@ -230,7 +232,7 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
             {
                 let axes = extract_axes(words);
                 let target = resolve_target(state, axes);
-                let feed = state.feed;
+                let feed = state.modal_feed;
                 let error_on_miss = (g - 38.2).abs() < 0.01 || (g - 38.4).abs() < 0.01;
                 let away = (g - 38.4).abs() < 0.01 || (g - 38.5).abs() < 0.01;
                 state.planned_pos = target;
@@ -292,9 +294,7 @@ pub fn resolve_target(state: &MachineState, axes: [Option<f64>; AXIS_COUNT]) -> 
 }
 
 fn max_rate_for_move(state: &MachineState, _target: &[f64; AXIS_COUNT]) -> f64 {
-    // Use a default rapid feed; in a full implementation would use per-axis max_rate
-    // For now use the feed rate already set, with a reasonable default minimum
-    if state.feed > 0.0 { state.feed } else { 3000.0 }
+    if state.modal_feed > 0.0 { state.modal_feed } else { 3000.0 }
 }
 
 /// Interpret a jog command ($J=...).
@@ -320,7 +320,7 @@ pub fn interpret_jog(words: &[Word], state: &mut MachineState) -> Option<Pending
     let target = resolve_target(state, axes);
     state.modal = saved_modal;
 
-    let feed = word_val(words, 'F').unwrap_or(state.feed).max(1.0);
+    let feed = word_val(words, 'F').unwrap_or(state.modal_feed).max(1.0);
 
     // Advance planned_pos so chained relative jogs resolve from planned end
     state.planned_pos = target;

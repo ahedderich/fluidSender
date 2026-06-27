@@ -151,6 +151,10 @@ pub struct MachineState {
     /// the command being actively executed). Reported in the Buf: status field.
     #[serde(skip)]
     pub planner_buf_used: i32,
+    /// Modal feed rate (last F word value). Persists across moves and is never zeroed
+    /// by motion completion. Used by G1/G2/G3/G38 at dispatch time.
+    #[serde(skip)]
+    pub modal_feed: f64,
 }
 
 impl MachineState {
@@ -194,6 +198,7 @@ impl MachineState {
             hold_pending: false,
             jog_cancel_pending: false,
             planner_buf_used: 0,
+            modal_feed: 0.0,
         }
     }
 
@@ -215,6 +220,7 @@ impl MachineState {
         self.jog_cancel_pending = false;
         self.planner_buf_used = 0;
         self.feed = 0.0;
+        self.modal_feed = 0.0;
         // Snap planned position to actual — queued moves are discarded on reset
         self.planned_pos = self.pos;
     }
