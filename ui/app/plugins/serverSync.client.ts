@@ -11,7 +11,7 @@ interface ServerMessage {
   payload: unknown
 }
 
-export default defineNuxtPlugin(() => {
+export default defineNuxtPlugin((nuxtApp) => {
   const settingsStore = useSettingsStore()
   const machineStore = useMachineStore()
   const syncStore = useSyncStore()
@@ -103,5 +103,8 @@ export default defineNuxtPlugin(() => {
     ws.addEventListener('error', () => ws?.close())
   }
 
-  connectWs()
+  // app:mounted fires before Suspense async hydration completes; a snapshot arriving mid-hydration causes mismatches.
+  nuxtApp.hook('app:suspense:resolve', () => {
+    connectWs()
+  })
 })
