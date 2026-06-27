@@ -20,6 +20,7 @@
       <button
         @click="machine.connected ? machine.disconnect() : machine.connect()"
         :disabled="!s.hasMachines || machine.connecting"
+        v-if="machine.connected || true"
         :class="connectBtnClass"
         class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
       >
@@ -276,12 +277,12 @@ const anyTriggered = computed(() => machine.limitSwitches.some((s) => s.triggere
 const connectBtnClass = computed(() => {
   // Read all deps unconditionally so Vue tracks them regardless of which branch executes.
   // Early-return branches would silently drop deps, leaving the computed stale when they change.
-  const hasMachines = s.hasMachines
   const isConnecting = machine.connecting
   const isConnected = machine.connected
-  if (!hasMachines) return 'bg-gray-300 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed'
+  const hasMachines = s.hasMachines
   if (isConnecting) return 'bg-blue-500 text-white opacity-75 cursor-not-allowed'
   if (isConnected) return 'bg-emerald-700 hover:bg-emerald-600 text-white'
+  if (!hasMachines) return 'bg-gray-300 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed'
   return 'bg-blue-600 hover:bg-blue-500 text-white'
 })
 

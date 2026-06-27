@@ -12,6 +12,7 @@
         <div
           class="grid gap-2"
           style="grid-template-columns: 18rem auto 1fr"
+          v-if="machine.connected || true"
           :class="!machine.connected ? 'opacity-40 pointer-events-none select-none' : ''"
         >
           <DROPanel />
@@ -25,6 +26,7 @@
         <JobInfo class="flex-1 min-h-0" />
         <ProbingPanel
           class="shrink-0"
+          v-if="machine.connected || true"
           :class="!machine.connected ? 'opacity-40 pointer-events-none select-none' : ''"
         />
       </div>
@@ -39,6 +41,7 @@
         <!-- Spindle / Coolant — disabled when disconnected -->
         <div
           class="grid grid-cols-2 gap-2 shrink-0"
+          v-if="machine.connected || true"
           :class="!machine.connected ? 'opacity-40 pointer-events-none select-none' : ''"
         >
           <SpindlePanel />
@@ -49,6 +52,7 @@
       <!-- Console + Tool Management — disabled when disconnected -->
       <div
         class="flex flex-col gap-2 min-h-0"
+        v-if="machine.connected || true"
         :class="!machine.connected ? 'opacity-40 pointer-events-none select-none' : ''"
       >
         <ConsolePanel class="h-72 shrink-0" />
