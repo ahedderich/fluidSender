@@ -4,10 +4,9 @@ import { analyzeGCode } from './analysis'
 import { getModalStateAtLine } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
 import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
-import { broadcastPatch, setJobState, pushConsole, type PatchOp } from '../appState'
-import { machineConnection } from '../machine/connection'
+import { broadcastPatch, setJobState, type PatchOp } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
-import { send, getMaxPlannerSlots } from '../machine/sender'
+import { send } from '../machine/sender'
 import type { SendHandle, SenderStatusEvent } from '../machine/types'
 import type { GCodeLine, GCodeModalState, JobState } from './types'
 
@@ -102,7 +101,6 @@ class JobRunner {
         sendPtr: 0,
         execPtr: 0,
         inPlanner: 0,
-        maxPlannerSlots: getMaxPlannerSlots(),
         estimatedTotalMs: analysis.estimatedTotalMs,
         startWallClock: null,
         axisRanges: analysis.axisRanges,
@@ -256,7 +254,6 @@ class JobRunner {
       sendPtr: 0,
       execPtr: 0,
       inPlanner: 0,
-      maxPlannerSlots: getMaxPlannerSlots(),
       estimatedTotalMs: 0,
       startWallClock: null,
       axisRanges: null,
@@ -291,7 +288,6 @@ class JobRunner {
         sendPtr: 0,
         execPtr: 0,
         inPlanner: 0,
-        maxPlannerSlots: getMaxPlannerSlots(),
         estimatedTotalMs: analysis.estimatedTotalMs,
         startWallClock: null,
         axisRanges: analysis.axisRanges,
@@ -360,7 +356,6 @@ class JobRunner {
         sendPtr: resumePtr,
         execPtr: resumePtr,
         inPlanner: 0,
-        maxPlannerSlots: getMaxPlannerSlots(),
         estimatedTotalMs: savedAnalysis?.estimatedTotalMs ?? 0,
         axisRanges: savedAnalysis?.axisRanges ?? null,
         recovery: null,
@@ -439,40 +434,31 @@ class JobRunner {
     const startPtr = this.sendPtr
     const filteredLines = this._buildFilteredLines(startPtr)
     this._filteredLines = filteredLines
-
+    console.log("xkcn");
     this._sendHandle = send(
       filteredLines.map(l => ({ raw: l.raw, isMotion: l.isMotion })),
-      (event) => this._handleSenderEvent(event, startPtr, filteredLines),
+      (event) => this._handleSenderEvent(event),
       startPtr,  // lineOffset: job lines before this chunk; sender adds it so events carry job-global counts
     )
   }
 
   private _handleSenderEvent(
-    event: SenderStatusEvent,
-    startPtr: number,
-    filteredLines: FilteredLine[],
+    event: SenderStatusEvent
   ): void {
     // If send handle was cleared (e.g. emergencyStop or disconnect), ignore stale events
     if (!this._sendHandle) return
 
     const ops: PatchOp[] = []
 
-    const newSendPtr = event.sent > 0
-      ? filteredLines[event.sent - 1]!.jobLineIdx + 1
-      : startPtr
-    const newExecPtr = event.executed > 0
-      ? filteredLines[event.executed - 1]!.jobLineIdx + 1
-      : startPtr
     const inPlanner = Math.max(0, event.sent - event.executed)
-
-    if (newSendPtr !== this.sendPtr || newExecPtr !== this._execPtr) {
-      this.sendPtr = newSendPtr
-      this._execPtr = newExecPtr
+    console.log("event", event.sent, event.executed);
+    if (event.sent !== this.sendPtr || event.executed !== this._execPtr) {
+      this.sendPtr = event.sent
+      this._execPtr = event.executed
       ops.push(setJobState({
-        sendPtr: newSendPtr,
-        execPtr: newExecPtr,
-        inPlanner,
-        maxPlannerSlots: getMaxPlannerSlots(),
+        sendPtr: this.sendPtr,
+        execPtr: this._execPtr,
+        inPlanner
       }))
       if (ops.length > 0) broadcastPatch(ops)
       this._checkpointIfDue()
