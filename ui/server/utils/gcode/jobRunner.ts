@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { preprocessGCode } from './preprocessor'
-import { simulateToLine } from './simulator'
+import { analyzeGCode } from './analysis'
+import { getModalStateAtLine } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
 import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
 import { broadcastPatch, setJobState, pushConsole, type PatchOp } from '../appState'
@@ -57,6 +57,7 @@ class JobRunner {
 
     try {
       let analysis = await loadCachedAnalysis(fileId)
+      let lines
 
       if (!analysis) {
         const ctrl = new AbortController()
@@ -72,7 +73,7 @@ class JobRunner {
         })])
         this._status = 'analyzing'
 
-        analysis = await analyzeGCodeFile(
+        const result = await analyzeGCodeFile(
           fileId,
           filename,
           (pct) => {
@@ -81,11 +82,13 @@ class JobRunner {
           },
           ctrl.signal,
         )
+        analysis = result.analysis
+        lines = result.lines
         this.analyzeAbort = null
+      } else {
+        const content = await readFile(join(UPLOADS_DIR, fileId), 'utf8')
+        lines = analyzeGCode(content).lines
       }
-
-      const content = await readFile(join(UPLOADS_DIR, fileId), 'utf8')
-      const { lines } = preprocessGCode(content)
 
       this.lines = lines
       this.fileId = fileId
@@ -115,7 +118,7 @@ class JobRunner {
       const checkpoint = await loadCheckpoint()
       if (checkpoint && checkpoint.fileId === fileId && checkpoint.execPtr > 0) {
         const resumePtr = checkpoint.execPtr
-        const modalStateAtResume = simulateToLine(this.lines, resumePtr)
+        const modalStateAtResume = await getModalStateAtLine(resumePtr)
         broadcastPatch([setJobState({
           recovery: {
             available: true,
@@ -289,9 +292,7 @@ class JobRunner {
     try {
       const filePath = join(UPLOADS_DIR, analysis.fileId)
       const content = await readFile(filePath, 'utf8')
-      const { lines } = preprocessGCode(content)
-
-      this.lines = lines
+      this.lines = analyzeGCode(content).lines
       this.fileId = analysis.fileId
       this.filename = analysis.filename
 
@@ -316,7 +317,7 @@ class JobRunner {
 
       if (hasCrash) {
         const resumePtr = checkpoint!.execPtr
-        const modalStateAtResume = simulateToLine(lines, resumePtr)
+        const modalStateAtResume = await getModalStateAtLine(resumePtr)
         this._setStatus('loaded', {
           ...baseState,
           recovery: {
@@ -351,42 +352,50 @@ class JobRunner {
     if (!checkpoint) return
 
     try {
-      const content = await readFile(join(UPLOADS_DIR, checkpoint.fileId), 'utf8')
       const filename = checkpoint.filename
-      const { lines, axisRanges } = preprocessGCode(content)
-      this.lines = lines
+
+      // Re-parse lines from disk if not already in memory (e.g. server restart mid-recovery)
+      if (!this.lines.length || this.fileId !== checkpoint.fileId) {
+        const content = await readFile(join(UPLOADS_DIR, checkpoint.fileId), 'utf8')
+        this.lines = analyzeGCode(content).lines
+      }
       this.fileId = checkpoint.fileId
       this.filename = filename
       this.sendPtr = resumePtr
       this._execPtr = resumePtr
       this._filteredLines = null
 
-      const modal = simulateToLine(lines, resumePtr)
+      const modal = await getModalStateAtLine(resumePtr)
+      const savedAnalysis = await loadRawAnalysis()
 
-      const estimatedTotalMs = lines.at(-1)?.cumulativeDurationMs ?? 0
       this._setStatus('recovering', {
         fileId: checkpoint.fileId,
         filename,
-        totalLines: lines.length,
+        totalLines: this.lines.length,
         sendPtr: resumePtr,
         execPtr: resumePtr,
         inPlanner: 0,
         maxPlannerSlots: getMaxPlannerSlots(),
-        estimatedTotalMs,
-        axisRanges,
+        estimatedTotalMs: savedAnalysis?.estimatedTotalMs ?? 0,
+        axisRanges: savedAnalysis?.axisRanges ?? null,
         recovery: null,
         errorMessage: null,
       })
 
-      const lastStatus = getLastMachineStatus()
-      const currentZ = lastStatus?.wpos.z ?? modal.position.z
-      const safeZ = Math.max(currentZ, modal.position.z + RESUME_SAFE_Z_LIFT)
-      const recoveryCommands = this._buildRecoverySequence(modal, safeZ)
-
-      this._sendHandle = send(
-        recoveryCommands.map(cmd => ({ raw: cmd, isMotion: false })),
-        (event) => this._handleRecoveryEvent(event),
-      )
+      if (modal) {
+        const lastStatus = getLastMachineStatus()
+        const currentZ = lastStatus?.wpos.z ?? modal.position.z
+        const safeZ = Math.max(currentZ, modal.position.z + RESUME_SAFE_Z_LIFT)
+        const recoveryCommands = this._buildRecoverySequence(modal, safeZ)
+        this._sendHandle = send(
+          recoveryCommands.map(cmd => ({ raw: cmd, isMotion: false })),
+          (event) => this._handleRecoveryEvent(event),
+        )
+      } else {
+        // No modal state available — resume from position without pre-flight moves
+        this._setStatus('running', { startWallClock: Date.now() })
+        this._startMainSend()
+      }
     } catch (err) {
       this._broadcastError(`Recovery failed: ${(err as Error).message}`)
     }
@@ -410,11 +419,8 @@ class JobRunner {
     if (!checkpoint || checkpoint.execPtr <= 0) return null
 
     try {
-      const filePath = join(UPLOADS_DIR, checkpoint.fileId)
-      const content = await readFile(filePath, 'utf8')
-      const { lines } = preprocessGCode(content)
       const resumePtr = checkpoint.execPtr
-      const modalStateAtResume = simulateToLine(lines, resumePtr)
+      const modalStateAtResume = await getModalStateAtLine(resumePtr)
       return {
         available: true,
         checkpointPtr: resumePtr,
@@ -530,7 +536,13 @@ class JobRunner {
 
   private _completeJob(): void {
     this._execPtr = this.lines.length
-    this._setStatus('complete', { startWallClock: null, execPtr: this.lines.length })
+    this.sendPtr = this.lines.length
+    this._setStatus('complete', {
+      startWallClock: null,
+      sendPtr: this.lines.length,
+      execPtr: this.lines.length,
+      inPlanner: 0,
+    })
     clearCheckpoint().catch(() => {})
   }
 

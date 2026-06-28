@@ -109,7 +109,7 @@
 import { useMachineStore } from '~/stores/machine'
 import { useSettingsStore } from '~/stores/settings'
 import { useJobControl } from '~/composables/useJobControl'
-import type { PathSegment } from '~/types/job'
+import type { LineVector } from '~/types/job'
 
 const machine = useMachineStore()
 const settings = useSettingsStore()
@@ -203,7 +203,7 @@ let requestRender: () => void = () => {}
 let renderFrame: () => void = () => {}
 let rebuildSpatialGeometry: (b: { x: number; y: number; z: number }) => void = () => {}
 let rebuildStock: (s: import('~/stores/machine').StockDef | null) => void = () => {}
-let loadToolpathSegments: (segs: PathSegment[]) => void = () => {}
+let loadToolpathSegments: (vectors: Array<LineVector | null>) => void = () => {}
 let clearToolpath: () => void = () => {}
 
 async function initThree() {
@@ -552,7 +552,37 @@ async function initThree() {
     }
   }
 
-  function buildToolpathGeometry(segs: PathSegment[]) {
+  function tessellateArc(
+    sx: number, sy: number, sz: number,
+    ex: number, ey: number, ez: number,
+    i: number, j: number,
+    cw: boolean,
+    numSegs = 32,
+  ): Array<[number, number, number]> {
+    const cx = sx + i
+    const cy = sy + j
+    const r = Math.sqrt(i * i + j * j)
+    const startAngle = Math.atan2(sy - cy, sx - cx)
+    const endAngle = Math.atan2(ey - cy, ex - cx)
+    let sweep: number
+    if (cw) {
+      sweep = startAngle - endAngle
+      if (sweep <= 0) sweep += 2 * Math.PI
+    } else {
+      sweep = endAngle - startAngle
+      if (sweep <= 0) sweep += 2 * Math.PI
+    }
+    if (Math.hypot(ex - sx, ey - sy) < 1e-6) sweep = 2 * Math.PI
+    const pts: Array<[number, number, number]> = []
+    for (let k = 1; k <= numSegs; k++) {
+      const t = k / numSegs
+      const angle = cw ? startAngle - t * sweep : startAngle + t * sweep
+      pts.push([cx + r * Math.cos(angle), cy + r * Math.sin(angle), sz + (ez - sz) * t])
+    }
+    return pts
+  }
+
+  function buildToolpathGeometry(vectors: Array<LineVector | null>) {
     disposeToolpathObjects()
 
     // Separate point arrays per layer
@@ -560,10 +590,21 @@ async function initThree() {
     const feedPts: number[] = []
     const zmovePts: number[] = []
 
-    for (const seg of segs) {
-      const isZOnly = seg.x0 === seg.x1 && seg.y0 === seg.y1
-      const arr = seg.t === 'R' ? rapidPts : isZOnly ? zmovePts : feedPts
-      arr.push(seg.x0, seg.y0, seg.z0, seg.x1, seg.y1, seg.z1)
+    for (const vec of vectors) {
+      if (!vec) continue
+      if (vec.t === 'A') {
+        // Tessellate arc into line segments
+        const pts = tessellateArc(vec.x0, vec.y0, vec.z0, vec.x1, vec.y1, vec.z1, vec.i, vec.j, vec.cw)
+        let px = vec.x0, py = vec.y0, pz = vec.z0
+        for (const [nx, ny, nz] of pts) {
+          feedPts.push(px, py, pz, nx, ny, nz)
+          px = nx; py = ny; pz = nz
+        }
+      } else {
+        const isZOnly = vec.x0 === vec.x1 && vec.y0 === vec.y1
+        const arr = vec.t === 'R' ? rapidPts : isZOnly ? zmovePts : feedPts
+        arr.push(vec.x0, vec.y0, vec.z0, vec.x1, vec.y1, vec.z1)
+      }
     }
 
     if (rapidPts.length > 0) {
@@ -596,7 +637,7 @@ async function initThree() {
     requestRender()
   }
 
-  loadToolpathSegments = buildToolpathGeometry
+  loadToolpathSegments = (vectors: Array<LineVector | null>) => buildToolpathGeometry(vectors)
   clearToolpath = () => { disposeToolpathObjects(); requestRender() }
 
   // Tool representation — unit CylinderGeometry (r=1, h=1), rotated so axis aligns with world Z.
@@ -776,8 +817,8 @@ let lastLoadedFileId: string | null = null
 
 async function fetchAndLoadVectors(fileId: string) {
   try {
-    const segs = await $fetch<PathSegment[]>(`/api/jobs/vectors?fileId=${encodeURIComponent(fileId)}`)
-    loadToolpathSegments(segs)
+    const vectors = await $fetch<Array<LineVector | null>>(`/api/jobs/vectors?fileId=${encodeURIComponent(fileId)}`)
+    loadToolpathSegments(vectors)
   } catch (err) {
     console.warn('[GCodeViewport] vectors not available:', err)
   }

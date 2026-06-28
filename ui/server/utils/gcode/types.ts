@@ -22,12 +22,6 @@ export interface GCodeLine {
   estimatedDurationMs: number
   /** Cumulative estimated duration from line 0 through this line. */
   cumulativeDurationMs: number
-  /** End position after this motion line (only set for rapid/feed/arc). */
-  toPos?: [number, number, number]
-  /** Arc center offsets from start position in XY plane (only for type === 'arc'). */
-  arcI?: number
-  arcJ?: number
-  arcCw?: boolean
 }
 
 /** A single tool section — all lines from startLine to endLine use toolNumber. */
@@ -40,16 +34,14 @@ export interface ToolSection {
 }
 
 /**
- * Compact path segment for 3D visualisation.
- * t: R=rapid, F=feed, A=arc (tessellated into multiple short line segments)
- * s: index into the job's toolSections array
+ * Per-line geometry entry for the 3D viewport. Stored in vectors.json as Array<LineVector | null>
+ * indexed by line number — null when a line has no geometry.
+ * Arc entries carry raw parameters (I/J/CW); tessellation is performed client-side.
+ * s: index into the job's toolSections array.
  */
-export interface PathSegment {
-  t: 'R' | 'F' | 'A'
-  x0: number; y0: number; z0: number
-  x1: number; y1: number; z1: number
-  s: number
-}
+export type LineVector =
+  | { t: 'R' | 'F'; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; s: number }
+  | { t: 'A'; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; i: number; j: number; cw: boolean; s: number }
 
 /** Persisted analysis result stored alongside the GCode file. */
 export interface JobAnalysis {

@@ -183,8 +183,10 @@ export function onBufUpdate(plannerFree: number, machineState: MachineStatus['st
     while (remaining > 0 && chunk.sentQueue.length > 0) {
       const head = chunk.sentQueue[0]!
       if (!head.isMotion) {
-        // Non-motion entries are drained by onOk; skip defensively
+        // Non-motion entries are normally drained by onOk/_drainNonMotion; count and remove defensively if one surfaces here
         chunk.sentQueue.shift()
+        chunk.executed++
+        executedChanged = true
         continue
       }
       if (!head.acked) break
