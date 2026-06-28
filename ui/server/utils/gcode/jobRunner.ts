@@ -7,7 +7,6 @@ import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyze
 import { broadcastPatch, setJobState, pushConsole, type PatchOp } from '../appState'
 import { machineConnection } from '../machine/connection'
 import { getLastMachineStatus } from '../machine/poller'
-import { parseGQueryResponse } from '../machine/statusParser'
 import { send, getMaxPlannerSlots } from '../machine/sender'
 import type { SendHandle, SenderStatusEvent } from '../machine/types'
 import type { GCodeLine, GCodeModalState, JobState } from './types'
@@ -34,8 +33,6 @@ class JobRunner {
   private lastCheckpointPtr = -1
   private lastCheckpointTime = 0
   private _status: JobState['status'] = 'idle'
-  private pauseModalState: GCodeModalState | null = null
-  private pendingGQuery = false
   private analyzeAbort: AbortController | null = null
 
   // Active send session
@@ -45,7 +42,7 @@ class JobRunner {
   get status() { return this._status }
 
   async loadJob(fileId: string): Promise<void> {
-    if (this._status === 'running' || this._status === 'pausing') {
+    if (this._status === 'running' || this._status === 'pausing' || this._status === 'stopping') {
       this._broadcastError('Cannot load a job while one is running. Pause or cancel first.')
       return
     }
@@ -153,7 +150,7 @@ class JobRunner {
   }
 
   start(): void {
-    if (this._status !== 'loaded' && this._status !== 'paused' && this._status !== 'complete') return
+    if (this._status !== 'loaded' && this._status !== 'complete') return
     if (!this.lines.length) return
 
     if (this._status === 'complete') {
@@ -165,85 +162,70 @@ class JobRunner {
     this._startMainSend()
   }
 
+  /** Feed hold pause — machine decelerates and enters Hold state. Resume with resume(). */
   pause(): void {
     if (this._status !== 'running') return
     this._setStatus('pausing')
-    this._sendHandle?.softStop()
+    this._sendHandle?.feedHold()
   }
 
-  /** Called by ws.ts when a $G response line arrives during pause. */
-  onGQueryResponse(
-    line: string,
-    lastMachineStatus: {
-      wpos: { x: number; y: number; z: number }
-      spindleSpeed: number
-      spindleOn: boolean
-      coolantMist: boolean
-      coolantFlood: boolean
-    } | null,
-  ): void {
-    if (!this.pendingGQuery) return
-    this.pendingGQuery = false
-
-    const gModal = parseGQueryResponse(line)
-    if (!gModal) return
-
-    this.pauseModalState = {
-      position: lastMachineStatus
-        ? { x: lastMachineStatus.wpos.x, y: lastMachineStatus.wpos.y, z: lastMachineStatus.wpos.z }
-        : { x: 0, y: 0, z: 0 },
-      positionMode: gModal.positionMode ?? 'G90',
-      workCoordinate: gModal.workCoordinate ?? 'G54',
-      feedRate: gModal.feedRate ?? 0,
-      spindleSpeed: lastMachineStatus?.spindleSpeed ?? gModal.spindleSpeed ?? 0,
-      spindleMode: gModal.spindleMode ?? (lastMachineStatus?.spindleOn ? 'M3' : 'M5'),
-      coolant: lastMachineStatus?.coolantFlood
-        ? 'M8'
-        : lastMachineStatus?.coolantMist
-          ? 'M7'
-          : (gModal.coolant ?? 'off'),
-      units: gModal.units ?? 'G21',
-      plane: gModal.plane ?? 'G17',
-      toolNumber: gModal.toolNumber ?? 0,
-    }
-
-    this._setStatus('paused')
-  }
-
-  resume(): void {
+  /** Resume from pause — rebuilds modal state and returns to pause position before continuing. */
+  async resume(): Promise<void> {
     if (this._status !== 'paused') return
+    const resumePtr = this._execPtr
+    this.sendPtr = resumePtr
 
-    const modal = this.pauseModalState
-    this.pauseModalState = null
+    try {
+      const modal = await getModalStateAtLine(resumePtr)
 
-    this._setStatus('recovering', { startWallClock: null })
+      this._setStatus('recovering', {
+        startWallClock: null,
+        sendPtr: resumePtr,
+        execPtr: resumePtr,
+        inPlanner: 0,
+        recovery: null,
+      })
 
-    if (!modal) {
-      // No modal state captured — go straight to running
-      this._setStatus('running', { startWallClock: Date.now() })
-      this._startMainSend()
+      if (modal) {
+        const lastStatus = getLastMachineStatus()
+        const currentZ = lastStatus?.wpos.z ?? modal.position.z
+        const safeZ = Math.max(currentZ, modal.position.z + RESUME_SAFE_Z_LIFT)
+        const recoveryCommands = this._buildRecoverySequence(modal, safeZ)
+        this._sendHandle = send(
+          recoveryCommands.map(cmd => ({ raw: cmd, isMotion: false })),
+          (event) => this._handleRecoveryEvent(event),
+        )
+      } else {
+        this._setStatus('running', { startWallClock: Date.now() })
+        this._startMainSend()
+      }
+    } catch (err) {
+      this._broadcastError(`Resume failed: ${(err as Error).message}`)
+    }
+  }
+
+  /** Feed hold stop — decelerates the machine then resets to Idle. Returns to loaded state.
+   *  Machine does NOT enter alarm. Job is preserved and can be restarted. */
+  stop(): void {
+    if (this._status === 'paused') {
+      // Machine already in Hold; go straight to hard reset (Hold→0x18 = Idle, no alarm)
+      this._doHardStopAndReturnToLoaded()
       return
     }
-
-    const lastStatus = getLastMachineStatus()
-    const currentZ = lastStatus?.wpos.z ?? modal.position.z
-    const safeZ = Math.max(currentZ, modal.position.z + RESUME_SAFE_Z_LIFT)
-    const recoveryCommands = this._buildRecoverySequence(modal, safeZ)
-
-    this._sendHandle = send(
-      recoveryCommands.map(cmd => ({ raw: cmd, isMotion: false })),
-      (event) => this._handleRecoveryEvent(event),
-    )
+    if (this._status !== 'running') return
+    this._setStatus('stopping')
+    this._sendHandle?.feedHold()
+    // _handleSenderEvent reacts to Hold:0 and calls _doHardStopAndReturnToLoaded
   }
 
-  cancel(): void {
+  /** Immediate hard reset — no deceleration, potential mid-move position loss.
+   *  Machine may enter alarm state; the alarm is NOT cleared automatically. */
+  emergencyStop(): void {
     const handle = this._sendHandle
     this._sendHandle = null
     this._filteredLines = null
-    this.pendingGQuery = false
     this._execPtr = 0
     this.sendPtr = 0
-    // Return to 'loaded' so the job can be restarted immediately without reloading the file
     this._setStatus('loaded', {
       startWallClock: null,
       sendPtr: 0,
@@ -409,9 +391,14 @@ class JobRunner {
     // Clear send state before sender fires its error event so _handleSenderEvent no-ops
     this._sendHandle = null
     this._filteredLines = null
-    this.pendingGQuery = false
 
-    if (this._status === 'running' || this._status === 'pausing' || this._status === 'recovering') {
+    if (this._status === 'stopping') {
+      // Stop was in progress — treat disconnect as completing the stop
+      this._execPtr = 0
+      this.sendPtr = 0
+      this._setStatus('loaded', { startWallClock: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null })
+      clearCheckpoint().catch(() => {})
+    } else if (this._status === 'running' || this._status === 'pausing' || this._status === 'recovering') {
       this._setStatus('paused', { errorMessage: 'Machine disconnected during job' })
     }
   }
@@ -464,7 +451,7 @@ class JobRunner {
     startPtr: number,
     filteredLines: FilteredLine[],
   ): void {
-    // If send handle was cleared (e.g. cancel or disconnect), ignore stale events
+    // If send handle was cleared (e.g. emergencyStop or disconnect), ignore stale events
     if (!this._sendHandle) return
 
     const ops: PatchOp[] = []
@@ -490,6 +477,25 @@ class JobRunner {
       this._checkpointIfDue()
     }
 
+    // Handle feed hold progress events (non-completed, but holdPhase is set)
+    if (event.holdPhase !== null) {
+      if (event.holdPhase === 0) {
+        if (this._status === 'pausing') {
+          // Reset sendPtr to execPtr: queued-but-not-executed lines are cleared by 0x18.
+          this.sendPtr = this._execPtr
+          this._setStatus('paused', { sendPtr: this._execPtr })
+          // Unlock machine: soft reset from Hold → Idle so operator can jog freely.
+          const handle = this._sendHandle
+          this._sendHandle = null
+          this._filteredLines = null
+          handle?.hardStop()
+        } else if (this._status === 'stopping') {
+          this._doHardStopAndReturnToLoaded()
+        }
+      }
+      return
+    }
+
     if (!event.completed) return
 
     this._sendHandle = null
@@ -500,10 +506,7 @@ class JobRunner {
         this._completeJob()
         break
       case 'soft':
-        if (this._status === 'pausing') {
-          this.pendingGQuery = true
-          machineConnection.sendRaw('$G')
-        }
+        // Only reachable via direct sender:softStop WS intent; no job-level action needed
         break
       case 'error':
         if (this._status !== 'paused' && this._status !== 'cancelled' && this._status !== 'error') {
@@ -511,7 +514,7 @@ class JobRunner {
         }
         break
       case 'hard':
-        // cancel() sets status before calling hardStop — nothing to do here
+        // emergencyStop() sets status before calling hardStop — nothing to do here
         break
     }
   }
@@ -532,9 +535,27 @@ class JobRunner {
         this._broadcastError(event.errorReason ?? 'Recovery failed')
         break
       case 'hard':
-        // cancel() handles status
+        // emergencyStop() handles status
         break
     }
+  }
+
+  /** Feed hold confirmed stopped (Hold:0) then hard reset. From Hold, 0x18 goes to Idle (no alarm). */
+  private _doHardStopAndReturnToLoaded(): void {
+    const handle = this._sendHandle
+    this._sendHandle = null
+    this._filteredLines = null
+    this._execPtr = 0
+    this.sendPtr = 0
+    this._setStatus('loaded', {
+      startWallClock: null,
+      sendPtr: 0,
+      execPtr: 0,
+      inPlanner: 0,
+      recovery: null,
+    })
+    clearCheckpoint().catch(() => {})
+    handle?.hardStop()
   }
 
   private _completeJob(): void {

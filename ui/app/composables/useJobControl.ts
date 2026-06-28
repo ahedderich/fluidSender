@@ -13,6 +13,8 @@ export function useJobControl() {
     startJob: () => wsSend({ t: 'job:start' }),
     pauseJob: () => wsSend({ t: 'job:pause' }),
     resumeJob: () => wsSend({ t: 'job:resume' }),
+    stopJob: () => wsSend({ t: 'job:stop' }),
+    emergencyStop: () => wsSend({ t: 'job:emergency-stop' }),
     cancelJob: () => wsSend({ t: 'job:cancel' }),
     clearJob: () => wsSend({ t: 'job:clear' }),
     confirmRecovery: (resumePtr: number) =>

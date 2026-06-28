@@ -1,4 +1,4 @@
-use crate::machine::state::{MachineState, AXIS_COUNT, MAX_PLANNER_SLOTS};
+use crate::machine::state::{MachineState, MachineStatus, AXIS_COUNT, MAX_PLANNER_SLOTS};
 
 pub const GREETING: &str = "Grbl 3.7.14 [FluidNC v3.7.14 (Simulator)] ready\r\n[MSG: Machine: Connected]\r\nok\r\n";
 
@@ -22,8 +22,15 @@ pub fn status(state: &MachineState) -> String {
 
     let planner_free = (MAX_PLANNER_SLOTS - state.planner_buf_used).max(0);
 
+    // Real FluidNC emits Hold:0 (stopped) / Hold:1 (decelerating).
+    // The simulator stops instantly on hold_pending, so always emit Hold:0.
+    let state_str = match state.status {
+        MachineStatus::Hold => "Hold:0".to_string(),
+        other => other.to_string(),
+    };
+
     let mut parts = vec![
-        state.status.to_string(),
+        state_str,
         format!("MPos:{}", mpos),
         format!("WCO:{}", wco),
         format!("FS:{},{}", f, s),

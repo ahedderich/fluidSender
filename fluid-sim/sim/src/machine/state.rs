@@ -155,6 +155,10 @@ pub struct MachineState {
     /// by motion completion. Used by G1/G2/G3/G38 at dispatch time.
     #[serde(skip)]
     pub modal_feed: f64,
+    /// Incremented on every soft_reset. Motion tasks capture this at dispatch time and
+    /// abort immediately if it has changed, preventing stale queued moves from executing.
+    #[serde(skip)]
+    pub reset_epoch: u64,
 }
 
 impl MachineState {
@@ -199,6 +203,7 @@ impl MachineState {
             jog_cancel_pending: false,
             planner_buf_used: 0,
             modal_feed: 0.0,
+            reset_epoch: 0,
         }
     }
 
@@ -223,6 +228,8 @@ impl MachineState {
         self.modal_feed = 0.0;
         // Snap planned position to actual — queued moves are discarded on reset
         self.planned_pos = self.pos;
+        // Signal motion tasks to abort — any move with an older epoch is a stale pre-reset move
+        self.reset_epoch = self.reset_epoch.wrapping_add(1);
     }
 
     pub fn is_accepting_commands(&self) -> bool {

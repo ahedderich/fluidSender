@@ -68,8 +68,11 @@ async fn motion_loop(
     let interval_dur = Duration::from_secs_f64(dt);
 
     while let Some((mv, result_tx)) = rx.recv().await {
+        // Capture epoch at dequeue time — if a soft_reset happened between when this move
+        // was queued and now, the epoch will differ and execute_move will skip it.
+        let epoch = { shared.read().await.reset_epoch };
         let is_dwell = matches!(mv.kind, MoveKind::Dwell { .. });
-        let result = execute_move(&shared, &broadcast, &mv, dt, interval_dur).await;
+        let result = execute_move(&shared, &broadcast, &mv, dt, interval_dur, epoch).await;
         // Decrement planner count — but NOT for dwell: G4 drains the planner, never fills it.
         if !is_dwell {
             let mut state = shared.write().await;
@@ -86,11 +89,13 @@ async fn execute_move(
     mv: &PendingMove,
     dt: f64,
     interval_dur: Duration,
+    epoch: u64,
 ) -> MoveResult {
     match &mv.kind {
         MoveKind::Dwell { seconds } => {
             {
                 let mut state = shared.write().await;
+                if state.reset_epoch != epoch { return MoveResult::Ok; }
                 state.status = MachineStatus::Run;
                 let _ = broadcast.send(());
             }
@@ -98,6 +103,7 @@ async fn execute_move(
             time::sleep(Duration::from_millis(millis)).await;
             {
                 let mut state = shared.write().await;
+                if state.reset_epoch != epoch { return MoveResult::Ok; }
                 // Dwell always completes to Idle — all prior planner moves are done
                 // because the motion channel is FIFO and dwell queues after them.
                 state.status = MachineStatus::Idle;
@@ -119,13 +125,13 @@ async fn execute_move(
                     feed: mv.feed,
                     probe: mv.probe.clone(),
                 };
-                let result = execute_linear(shared, broadcast, &seg_mv, dt, interval_dur).await;
+                let result = execute_linear(shared, broadcast, &seg_mv, dt, interval_dur, epoch).await;
                 if !matches!(result, MoveResult::Ok) { return result; }
             }
             return MoveResult::Ok;
         }
         MoveKind::Linear | MoveKind::Jog => {
-            return execute_linear(shared, broadcast, mv, dt, interval_dur).await;
+            return execute_linear(shared, broadcast, mv, dt, interval_dur, epoch).await;
         }
     }
 }
@@ -136,9 +142,14 @@ async fn execute_linear(
     mv: &PendingMove,
     dt: f64,
     interval_dur: Duration,
+    epoch: u64,
 ) -> MoveResult {
     {
         let mut state = shared.write().await;
+        // Abort if a soft_reset happened since this move was queued.
+        if state.reset_epoch != epoch {
+            return MoveResult::Ok;
+        }
         // Skip moves queued behind an active hold or alarm — don't overwrite the status.
         if matches!(state.status, MachineStatus::Hold | MachineStatus::Alarm) {
             return MoveResult::Ok;
@@ -180,8 +191,11 @@ async fn execute_linear(
         let tick = {
             let mut state = shared.write().await;
 
+            // Abort mid-move if a soft_reset occurred after this move started executing.
+            if state.reset_epoch != epoch {
+                TickResult::Done(MoveResult::Ok)
             // Jog cancel → return to Idle immediately (not Hold)
-            if matches!(mv.kind, MoveKind::Jog) && state.jog_cancel_pending {
+            } else if matches!(mv.kind, MoveKind::Jog) && state.jog_cancel_pending {
                 state.status = MachineStatus::Idle;
                 state.feed = 0.0;
                 let _ = broadcast.send(());

@@ -3,7 +3,8 @@ import { getMode, setMode } from './machineMode'
 import { broadcastPatch, pushConsole } from '../appState'
 import type { MachineStatus, SenderStatusEvent, SendHandle, SendableLine, SenderCompletedMode } from './types'
 
-const PLANNER_TARGET = 3
+const PLANNER_SAFETY_MARGIN = 2
+const PLANNER_TARGET_FALLBACK = 3
 const DEFAULT_MAX_PLANNER_SLOTS = 15
 const COMPLETION_CONFIRM_COUNT = 2
 const CHUNK_HISTORY_LIMIT = 100
@@ -13,6 +14,11 @@ let _maxPlannerSlots = 0
 let _inPlanner = 0
 let _completionConfirmCount = 0
 
+function _getPlannerTarget(): number {
+  return _maxPlannerSlots > 0
+    ? Math.max(PLANNER_TARGET_FALLBACK, _maxPlannerSlots - PLANNER_SAFETY_MARGIN)
+    : PLANNER_TARGET_FALLBACK
+}
 
 interface SentEntry {
   isMotion: boolean
@@ -28,6 +34,7 @@ interface ActiveChunk {
   pendingAck: boolean
   sentQueue: SentEntry[]
   softStopping: boolean
+  feedHolding: boolean
   onEvent: ((e: SenderStatusEvent) => void) | undefined
 }
 
@@ -47,6 +54,7 @@ function _makeEvent(chunk: ActiveChunk, overrides?: Partial<SenderStatusEvent>):
     completed: false,
     completedMode: null,
     errorReason: null,
+    holdPhase: null,
     ...overrides,
   }
 }
@@ -91,13 +99,14 @@ function _drainNonMotion(chunk: ActiveChunk): boolean {
 function _tryDispatch(chunk: ActiveChunk): void {
   while (chunk.dispatchPtr < chunk.lines.length) {
     if (chunk.softStopping) break
+    if (chunk.feedHolding) break
     if (chunk.pendingAck) break
 
     const line = chunk.lines[chunk.dispatchPtr]!
 
     if (line.isMotion) {
       const motionInFlight = chunk.sentQueue.filter(e => e.isMotion).length
-      if (motionInFlight >= PLANNER_TARGET) break
+      if (motionInFlight >= _getPlannerTarget()) break
     }
 
     machineConnection.sendRaw(line.raw)
@@ -118,6 +127,7 @@ function _checkCompletion(
   machineState: MachineStatus['state'],
 ): void {
   if (chunk.softStopping) return
+  if (chunk.feedHolding) return
 
   const allDispatched = chunk.dispatchPtr >= chunk.lines.length
   const allConfirmed = chunk.sentQueue.length === 0
@@ -158,7 +168,11 @@ export function onOk(): void {
 }
 
 /** Called by ws.ts on every status poll response. */
-export function onBufUpdate(plannerFree: number, machineState: MachineStatus['state']): void {
+export function onBufUpdate(
+  plannerFree: number,
+  machineState: MachineStatus['state'],
+  holdPhase: 0 | 1 | null,
+): void {
   if (!_maxPlannerSlots && machineState === 'Idle' && plannerFree > 0) {
     _maxPlannerSlots = plannerFree
   }
@@ -168,6 +182,17 @@ export function onBufUpdate(plannerFree: number, machineState: MachineStatus['st
 
   if (machineState === 'Alarm') {
     _finalize(chunk, 'error', 'Machine alarm')
+    return
+  }
+
+  // While in Hold: emit progress event for jobRunner (so it can detect Hold:0) but
+  // don't dispatch new lines or check for job completion.
+  if (machineState === 'Hold') {
+    if (chunk.feedHolding) {
+      // Real FluidNC emits Hold:1 (decelerating) then Hold:0 (stopped).
+      // Firmware that omits the substate sends holdPhase:null — treat as Hold:0 (already stopped).
+      _emit(chunk, { holdPhase: holdPhase ?? 0 })
+    }
     return
   }
 
@@ -243,6 +268,7 @@ export function send(lines: SendableLine[], onEvent?: (e: SenderStatusEvent) => 
     pendingAck: false,
     sentQueue: [],
     softStopping: false,
+    feedHolding: false,
     onEvent,
   }
 
@@ -261,7 +287,8 @@ export function send(lines: SendableLine[], onEvent?: (e: SenderStatusEvent) => 
 
   return {
     chunkId,
-    softStop: () => senderSoftStop(chunkId),
+    feedHold: () => senderFeedHold(chunkId),
+    cycleStart: () => senderCycleStart(chunkId),
     hardStop: () => senderHardStop(chunkId),
   }
 }
@@ -276,6 +303,29 @@ export function senderSoftStop(chunkId?: string): void {
   if (_activeChunk.sentQueue.length === 0) {
     _finalize(_activeChunk, 'soft')
   }
+}
+
+/** Send feed hold (`!`). Machine decelerates to stop and enters Hold state. Resume with cycleStart. */
+export function senderFeedHold(chunkId?: string): void {
+  const targetId = chunkId ?? _activeChunk?.chunkId
+  if (!targetId) return
+  if (_chunkHistory.has(targetId)) return
+  if (_activeChunk?.chunkId !== targetId) return
+
+  _activeChunk.feedHolding = true
+  machineConnection.sendByte(0x21)
+}
+
+/** Send cycle start (`~`). Resumes machine from Hold; dispatch continues from dispatchPtr. */
+export function senderCycleStart(chunkId?: string): void {
+  const targetId = chunkId ?? _activeChunk?.chunkId
+  if (!targetId) return
+  if (_chunkHistory.has(targetId)) return
+  if (_activeChunk?.chunkId !== targetId) return
+
+  _activeChunk.feedHolding = false
+  machineConnection.sendByte(0x7E)
+  _tryDispatch(_activeChunk)
 }
 
 export function senderHardStop(chunkId?: string): void {

@@ -33,13 +33,15 @@ import {
   getLastMachineStatus,
   initPoller,
 } from '../utils/machine/poller'
-import { parseGreetingVersion, parseGQueryResponse } from '../utils/machine/statusParser'
+import { parseGreetingVersion } from '../utils/machine/statusParser'
 import { initMachineMode } from '../utils/machine/machineMode'
 import {
   onOk,
   onBufUpdate,
   onMachineDisconnected as senderDisconnected,
   senderSoftStop,
+  senderFeedHold,
+  senderCycleStart,
   senderHardStop,
   getSenderStatus,
 } from '../utils/machine/sender'
@@ -89,7 +91,7 @@ machineConnection.on('event', (ev) => {
       onStatusLine(ev.line)
       const lastStatus = getLastMachineStatus()
       if (lastStatus) {
-        onBufUpdate(lastStatus.buffer.planner, lastStatus.state)
+        onBufUpdate(lastStatus.buffer.planner, lastStatus.state, lastStatus.holdPhase)
         onJogStatusUpdate(lastStatus.state)
       }
       break
@@ -99,9 +101,6 @@ machineConnection.on('event', (ev) => {
       // error:N is a rejected-command acknowledgement — counts as an ack
       if (ev.line.startsWith('error:')) {
         onOk()
-      }
-      if (ev.line.startsWith('[GC:')) {
-        jobRunner.onGQueryResponse(ev.line, getLastMachineStatus())
       }
       const ver = parseGreetingVersion(ev.line)
       if (ver) {
@@ -205,6 +204,12 @@ export default defineWebSocketHandler({
       case 'sender:softStop':
         senderSoftStop((msg.payload as { chunkId?: string } | undefined)?.chunkId)
         break
+      case 'sender:feedHold':
+        senderFeedHold((msg.payload as { chunkId?: string } | undefined)?.chunkId)
+        break
+      case 'sender:cycleStart':
+        senderCycleStart((msg.payload as { chunkId?: string } | undefined)?.chunkId)
+        break
       case 'sender:hardStop':
         senderHardStop((msg.payload as { chunkId?: string } | undefined)?.chunkId)
         break
@@ -228,8 +233,15 @@ export default defineWebSocketHandler({
       case 'job:resume':
         jobRunner.resume()
         break
+      case 'job:stop':
+        jobRunner.stop()
+        break
+      case 'job:emergency-stop':
+        jobRunner.emergencyStop()
+        break
       case 'job:cancel':
-        jobRunner.cancel()
+        // Kept as alias for emergency-stop to avoid breaking any existing callers
+        jobRunner.emergencyStop()
         break
       case 'job:clear':
         jobRunner.clear()

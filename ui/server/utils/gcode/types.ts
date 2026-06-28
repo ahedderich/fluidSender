@@ -81,6 +81,7 @@ export type JobStatus =
   | 'running'
   | 'pausing'
   | 'paused'
+  | 'stopping'
   | 'recovering'
   | 'complete'
   | 'error'

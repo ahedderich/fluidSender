@@ -48,6 +48,7 @@ export function onStatusLine(line: string) {
 function _changed(prev: MachineStatus | null, next: MachineStatus): boolean {
   if (!prev) return true
   if (prev.state !== next.state) return true
+  if (prev.holdPhase !== next.holdPhase) return true
   if (prev.spindleOn !== next.spindleOn) return true
   if (prev.coolantMist !== next.coolantMist) return true
   if (prev.coolantFlood !== next.coolantFlood) return true

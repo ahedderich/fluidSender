@@ -116,7 +116,7 @@
         @click="pauseJob"
         class="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-md text-sm font-medium transition-colors"
         :class="job?.status === 'running' ? 'hover:bg-amber-400' : 'opacity-40 cursor-not-allowed'"
-        title="Pause"
+        title="Pause — feed hold, machine decelerates and holds position"
       >
         <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
           <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
@@ -124,17 +124,35 @@
         Pause
       </button>
       <button
-        :disabled="machine.machineState !== 'Run'"
-        @click="() => { cancelJob(); machine.sendCommand('\x18') }"
-        class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-md text-sm font-medium transition-colors"
-        :class="machine.machineState === 'Run' ? 'hover:bg-red-500' : 'opacity-40 cursor-not-allowed'"
-        title="Stop — cancels job and sends soft reset to flush FluidNC buffer"
+        :disabled="!['running', 'pausing', 'paused', 'stopping', 'recovering'].includes(job?.status ?? '')"
+        @click="stopJob"
+        class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border transition-colors"
+        :class="['running', 'pausing', 'paused', 'stopping', 'recovering'].includes(job?.status ?? '')
+          ? 'border-red-400 dark:border-red-500 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20'
+          : 'border-gray-200 dark:border-slate-600 text-gray-300 dark:text-slate-600 cursor-not-allowed'"
+        title="Stop — feed hold then reset, machine returns to Idle"
       >
         <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
           <path d="M6 6h12v12H6z" />
         </svg>
         Stop
       </button>
+
+      <!-- E-Stop: separated by a large gap to prevent accidental clicks -->
+      <div class="ml-6">
+        <button
+          :disabled="!['running', 'pausing', 'paused', 'stopping', 'recovering'].includes(job?.status ?? '')"
+          @click="emergencyStop"
+          class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-md text-sm font-bold transition-colors"
+          :class="['running', 'pausing', 'paused', 'stopping', 'recovering'].includes(job?.status ?? '') ? 'hover:bg-red-500' : 'opacity-40 cursor-not-allowed'"
+          title="Emergency Stop — immediate halt, no deceleration, machine may alarm"
+        >
+          <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2zm-1 14V8h2v8h-2z" />
+          </svg>
+          E-Stop
+        </button>
+      </div>
 
       <button
         v-if="machine.connected"
@@ -315,7 +333,17 @@ const machine = useMachineStore()
 const s = useSettingsStore()
 const ui = useUiStore()
 const { confirm } = useConfirm()
-const { job, startJob, pauseJob, resumeJob, cancelJob } = useJobControl()
+const { job, startJob, pauseJob, resumeJob, stopJob: _stopJob, emergencyStop } = useJobControl()
+
+async function stopJob() {
+  const ok = await confirm({
+    title: 'Stop job?',
+    message: 'The machine will decelerate, reset to Idle, and return to the start of the job.',
+    confirmLabel: 'Stop',
+    danger: true,
+  })
+  if (ok) _stopJob()
+}
 
 const cycleStartEnabled = computed(() =>
   !!job.value && (

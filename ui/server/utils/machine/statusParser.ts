@@ -18,8 +18,13 @@ export function parseStatusLine(line: string): MachineStatus | null {
   if (parts.length < 2) return null
 
   // State can be "Hold:0", "Alarm:1", "Idle", etc. — normalise to capitalised base.
-  const rawState = parts[0].split(':')[0] ?? 'Idle'
-  const state = normaliseState(rawState)
+  const statePart = parts[0] ?? 'Idle'
+  const colonIdx = statePart.indexOf(':')
+  const rawStateName = colonIdx >= 0 ? statePart.slice(0, colonIdx) : statePart
+  const state = normaliseState(rawStateName)
+  const holdPhase: 0 | 1 | null = state === 'Hold' && colonIdx >= 0
+    ? (Number(statePart.slice(colonIdx + 1)) as 0 | 1)
+    : null
 
   let mpos = { x: 0, y: 0, z: 0, a: undefined as number | undefined }
   let newWco: { x: number; y: number; z: number; a: number } | null = null
@@ -104,6 +109,7 @@ export function parseStatusLine(line: string): MachineStatus | null {
 
   return {
     state,
+    holdPhase,
     mpos: mposOut,
     wpos,
     wco,

@@ -28,6 +28,8 @@ class MachineConnection extends EventEmitter {
   private socket: net.Socket | null = null
   private lineBuffer = ''
   private intentionalDisconnect = false
+  // Suppress the terminating `ok` in firmware greeting sequences (not a command ack)
+  private _suppressNextOk = false
 
   get isConnected(): boolean {
     return !!this.socket && !this.socket.destroyed
@@ -121,14 +123,21 @@ class MachineConnection extends EventEmitter {
     }
 
     if (line === 'ok') {
+      if (this._suppressNextOk) {
+        this._suppressNextOk = false
+        // Greeting's terminating ok — not a command ack; show in console but don't call onOk
+        this.emit('event', { type: 'responseLine', line } satisfies ConnectionEvent)
+        return
+      }
       this.emit('event', { type: 'ok' } satisfies ConnectionEvent)
       return
     }
 
     this.emit('event', { type: 'responseLine', line } satisfies ConnectionEvent)
 
-    if (line.includes('[FluidNC') || line.startsWith('Grbl')) {
-      // Version string parsed by caller via responseeLine event + parseGreetingVersion
+    // Firmware greeting banner — the ok that follows is firmware-ready, not a command ack
+    if (line.startsWith('Grbl') || line.includes('[FluidNC')) {
+      this._suppressNextOk = true
     }
     if (line.startsWith('ALARM:')) {
       const code = line.slice(6).trim()

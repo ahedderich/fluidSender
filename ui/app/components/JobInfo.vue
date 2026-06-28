@@ -227,7 +227,7 @@ import { useJobControl } from '~/composables/useJobControl'
 import { wsSend } from '~/composables/useWsSend'
 
 const machine = useMachineStore()
-const { job, startJob, pauseJob, resumeJob, cancelJob, clearJob, confirmRecovery } = useJobControl()
+const { job, clearJob, confirmRecovery } = useJobControl()
 
 function doRecover() {
   const resumePtr = job.value?.recovery?.resumePtr
