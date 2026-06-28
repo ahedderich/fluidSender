@@ -34,16 +34,25 @@ import {
   initPoller,
 } from '../utils/machine/poller'
 import { parseGreetingVersion, parseGQueryResponse } from '../utils/machine/statusParser'
-import { jobEngine } from '../utils/gcode/sendLoop'
+import { initMachineMode } from '../utils/machine/machineMode'
+import {
+  onOk,
+  onBufUpdate,
+  onMachineDisconnected as senderDisconnected,
+  senderSoftStop,
+  senderHardStop,
+  getSenderStatus,
+} from '../utils/machine/sender'
+import { sendJog, cancelJog, onJogStatusUpdate } from '../utils/machine/jogger'
+import { jobRunner } from '../utils/gcode/jobRunner'
 
-// ─── One-time bootstrap (module-level, runs once on first import) ────────────
+// ─── One-time bootstrap ──────────────────────────────────────────────────────
 
 initPoller((msg) => broadcast(msg))
+initMachineMode((msg) => broadcast(msg))
 registerMachineStatusProvider(getLastMachineStatus)
 
-// Restore persisted job state from current_job/ on server startup.
-// Runs async before any peer connects; state is included in the first snapshot.
-jobEngine.bootRestore().then((mode) => {
+jobRunner.bootRestore().then((mode) => {
   if (mode === 'crash') {
     console.log('[ws] crash recovery mode — job state restored with recovery info')
   } else if (mode === 'loaded') {
@@ -66,7 +75,9 @@ machineConnection.on('event', (ev) => {
     }
     case 'disconnected': {
       stopPoller()
-      jobEngine.onMachineDisconnected()
+      // jobRunner must update status before sender fires its terminal event
+      jobRunner.onMachineDisconnected()
+      senderDisconnected()
       const next = setConnection({ machineId: null, connected: false, status: 'DISCONNECTED', firmwareVersion: '' })
       broadcastPatch([
         { path: 'connection', set: { ...next } },
@@ -77,20 +88,21 @@ machineConnection.on('event', (ev) => {
     case 'statusLine': {
       onStatusLine(ev.line)
       const lastStatus = getLastMachineStatus()
-      if (lastStatus) jobEngine.onBufUpdate(lastStatus.buffer.planner, lastStatus.state)
+      if (lastStatus) {
+        onBufUpdate(lastStatus.buffer.planner, lastStatus.state)
+        onJogStatusUpdate(lastStatus.state)
+      }
       break
     }
     case 'responseLine': {
       broadcastPatch([pushConsole({ type: 'recv', text: ev.line, ts: Date.now() })])
-      // error:N is a rejected-command acknowledgement — unblock pendingAck just like ok
+      // error:N is a rejected-command acknowledgement — counts as an ack
       if (ev.line.startsWith('error:')) {
-        jobEngine.onAckReceived()
+        onOk()
       }
-      // Handle $G modal-state response for pause capture
       if (ev.line.startsWith('[GC:')) {
-        jobEngine.onGQueryResponse(ev.line, getLastMachineStatus())
+        jobRunner.onGQueryResponse(ev.line, getLastMachineStatus())
       }
-      // Firmware greeting
       const ver = parseGreetingVersion(ev.line)
       if (ver) {
         const next = setConnection({ firmwareVersion: ver })
@@ -116,7 +128,7 @@ machineConnection.on('event', (ev) => {
       break
     }
     case 'ok':
-      jobEngine.onAckReceived()
+      onOk()
       break
   }
 })
@@ -148,7 +160,7 @@ export default defineWebSocketHandler({
     }
 
     switch (msg.t) {
-      // ── Machine status request (new client needs current status) ─────────
+      // ── Machine status request ────────────────────────────────────────────
       case 'machine:status:request': {
         const status = getLastMachineStatus()
         if (status) {
@@ -159,7 +171,7 @@ export default defineWebSocketHandler({
         break
       }
 
-      // ── Machine connection ─────────────────────────────────────────────────
+      // ── Machine connection ────────────────────────────────────────────────
       case 'machine:connect': {
         const { machineId } = msg.payload as { machineId: string }
         const config = await getConfig()
@@ -178,45 +190,60 @@ export default defineWebSocketHandler({
         broadcastPatch([pushConsole({ type: 'sent', text: cmd.trim(), ts: Date.now() })])
         break
       }
-      // Jog commands bypass the job ack queue and console logging (too noisy at 10 Hz)
+
+      // ── Jog ───────────────────────────────────────────────────────────────
       case 'machine:jog:move': {
         const { cmd } = msg.payload as { cmd: string }
-        machineConnection.sendRaw(cmd)
+        sendJog(cmd)
         break
       }
       case 'machine:jog:cancel':
-        machineConnection.sendByte(0x85)
+        cancelJog()
         break
 
-      // ── Job control ────────────────────────────────────────────────────────
+      // ── Sender control ────────────────────────────────────────────────────
+      case 'sender:softStop':
+        senderSoftStop((msg.payload as { chunkId?: string } | undefined)?.chunkId)
+        break
+      case 'sender:hardStop':
+        senderHardStop((msg.payload as { chunkId?: string } | undefined)?.chunkId)
+        break
+      case 'sender:status': {
+        const chunkId = (msg.payload as { chunkId?: string } | undefined)?.chunkId
+        const status = getSenderStatus(chunkId)
+        peer.send(JSON.stringify({ t: 'sender:status', payload: status }))
+        break
+      }
+
+      // ── Job control ───────────────────────────────────────────────────────
       case 'job:analyze:abort':
-        jobEngine.abortAnalysis()
+        jobRunner.abortAnalysis()
         break
       case 'job:start':
-        jobEngine.start()
+        jobRunner.start()
         break
       case 'job:pause':
-        jobEngine.pause()
+        jobRunner.pause()
         break
       case 'job:resume':
-        jobEngine.resume()
+        jobRunner.resume()
         break
       case 'job:cancel':
-        jobEngine.cancel()
+        jobRunner.cancel()
         break
       case 'job:clear':
-        jobEngine.clear()
+        jobRunner.clear()
         break
       case 'job:recover:confirm':
-        jobEngine.confirmRecovery((msg.payload as { resumePtr: number }).resumePtr)
+        jobRunner.confirmRecovery((msg.payload as { resumePtr: number }).resumePtr)
         break
       case 'job:recover:fresh':
-        jobEngine.loadJobFresh().catch((err: unknown) => {
+        jobRunner.loadJobFresh().catch((err: unknown) => {
           console.error('[ws] loadJobFresh error:', err)
         })
         break
 
-      // ── UI state ───────────────────────────────────────────────────────────
+      // ── UI state ──────────────────────────────────────────────────────────
       case 'ui:nav':
         broadcastPatch([setNav(msg.payload as Parameters<typeof setNav>[0])])
         break
@@ -282,7 +309,6 @@ export default defineWebSocketHandler({
   close(peer) {
     removePeer(peer)
     if (getUiState().jogActive) {
-      // Cancel any in-flight jog moves so the machine doesn't drift after the client drops
       machineConnection.sendByte(0x85)
       broadcastPatch([setJogActive(false)])
     }

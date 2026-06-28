@@ -1,5 +1,5 @@
 import { basename } from 'node:path'
-import { jobEngine } from '../../utils/gcode/sendLoop'
+import { jobRunner } from '../../utils/gcode/jobRunner'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event) as { fileId?: string }
@@ -15,8 +15,8 @@ export default defineEventHandler(async (event) => {
   }
 
   // Kick off async — state changes are broadcast to all clients via WS patches
-  jobEngine.loadJob(safeId).catch((err: unknown) => {
-    console.error('[jobs/load] unhandled error from jobEngine.loadJob:', err)
+  jobRunner.loadJob(safeId).catch((err: unknown) => {
+    console.error('[jobs/load] unhandled error from jobRunner.loadJob:', err)
   })
 
   return { ok: true }
