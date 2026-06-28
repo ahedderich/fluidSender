@@ -6,6 +6,8 @@ import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from
 import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
 import { broadcastPatch, setJobState, pushConsole, type PatchOp } from '../appState'
 import { machineConnection } from '../machine/connection'
+import { getLastMachineStatus } from '../machine/poller'
+import { parseGQueryResponse } from '../machine/statusParser'
 import type { MachineStatus } from '../machine/types'
 import type { GCodeLine, GCodeModalState, JobState } from './types'
 
@@ -42,6 +44,11 @@ class JobEngine {
   private pauseModalState: GCodeModalState | null = null
   private pendingGQuery = false
   private analyzeAbort: AbortController | null = null
+  // Guard against false-Idle detection before recovery moves have started executing
+  private hasSeenRunDuringRecovery = false
+  // Ack-gated queue for recovery commands; one command in-flight at a time
+  private _recoveryQueue: string[] = []
+  private _pendingRecoveryAck = false
 
   // Ack + Buf send-loop state
   private maxPlannerSlots = 0   // captured from first Idle Buf response after connect
@@ -198,8 +205,6 @@ class JobEngine {
     if (!this.pendingGQuery) return
     this.pendingGQuery = false
 
-    // Import inline to avoid circular at module load time
-    const { parseGQueryResponse } = require('../machine/statusParser') as typeof import('../machine/statusParser')
     const gModal = parseGQueryResponse(line)
     if (!gModal) return
 
@@ -229,14 +234,24 @@ class JobEngine {
     if (this._status !== 'paused') return
 
     const modal = this.pauseModalState
+    this.pauseModalState = null
+
     if (modal) {
-      const seq = this._buildRecoverySequence(modal, modal.position.z + RESUME_SAFE_Z_LIFT)
-      for (const cmd of seq) machineConnection.sendRaw(cmd)
-      this.pauseModalState = null
+      const lastStatus = getLastMachineStatus()
+      const currentZ = lastStatus?.wpos.z ?? modal.position.z
+      // Never lower before the XY move: take the higher of current Z and pause Z + lift
+      const safeZ = Math.max(currentZ, modal.position.z + RESUME_SAFE_Z_LIFT)
+      this._recoveryQueue = this._buildRecoverySequence(modal, safeZ)
+    } else {
+      this._recoveryQueue = []
     }
 
-    this._setStatus('running', { startWallClock: Date.now() })
-    this._tryAdvanceSend()
+    this.hasSeenRunDuringRecovery = false
+    this._pendingRecoveryAck = false
+    this._setStatus('recovering', { startWallClock: null })
+    // Send recovery commands one at a time, gated by ok acks, to avoid DrainAndApply
+    // pending loops in the firmware/sim discarding subsequent commands from the TCP stream.
+    this._sendNextRecoveryCmd()
   }
 
   cancel(): void {
@@ -358,6 +373,15 @@ class JobEngine {
 
   /** Called by ws.ts on every `ok` response from the machine. */
   onAckReceived(): void {
+    // During recovery, advance the ack-gated command queue.
+    if (this._status === 'recovering') {
+      if (this._pendingRecoveryAck) {
+        this._pendingRecoveryAck = false
+        this._sendNextRecoveryCmd()
+      }
+      return
+    }
+
     if (this._status !== 'running' && this._status !== 'pausing') return
 
     const entry = this.sentQueue.find(e => !e.acked)
@@ -441,6 +465,16 @@ class JobEngine {
       return
     }
 
+    // Recovery: wait for machine to reach Run (confirming moves started) then return to Idle
+    if (this._status === 'recovering') {
+      if (machineState === 'Run' || machineState === 'Jog') this.hasSeenRunDuringRecovery = true
+      if (machineState === 'Idle' && this.hasSeenRunDuringRecovery) {
+        this._setStatus('running', { startWallClock: Date.now() })
+        this._tryAdvanceSend()
+      }
+      return
+    }
+
     if (this._status !== 'running') return
 
     this._tryAdvanceSend()
@@ -450,9 +484,12 @@ class JobEngine {
   /** Called by ws.ts on machine disconnect. Resets maxPlannerSlots for the next connection. */
   onMachineDisconnected(): void {
     this.maxPlannerSlots = 0
-    if (this._status === 'running' || this._status === 'pausing') {
+    if (this._status === 'running' || this._status === 'pausing' || this._status === 'recovering') {
       this.sentQueue = []
       this.pendingAck = false
+      this.hasSeenRunDuringRecovery = false
+      this._recoveryQueue = []
+      this._pendingRecoveryAck = false
       this._setStatus('paused', { errorMessage: 'Machine disconnected during job' })
     }
   }
@@ -516,12 +553,16 @@ class JobEngine {
         errorMessage: null,
       })
 
-      const seq = this._buildRecoverySequence(modal, modal.position.z + RESUME_SAFE_Z_LIFT)
-      for (const cmd of seq) machineConnection.sendRaw(cmd)
+      const lastStatus = getLastMachineStatus()
+      const currentZ = lastStatus?.wpos.z ?? modal.position.z
+      const safeZ = Math.max(currentZ, modal.position.z + RESUME_SAFE_Z_LIFT)
+      this._recoveryQueue = this._buildRecoverySequence(modal, safeZ)
       this.pauseModalState = null
 
-      this._setStatus('running', { startWallClock: Date.now() })
-      this._tryAdvanceSend()
+      this.hasSeenRunDuringRecovery = false
+      this._pendingRecoveryAck = false
+      this._sendNextRecoveryCmd()
+      // Transitions to 'running' in onBufUpdate once machine returns to Idle after recovery
     } catch (err) {
       this._broadcastError(`Recovery failed: ${(err as Error).message}`)
     }
@@ -615,10 +656,27 @@ class JobEngine {
     }
   }
 
+  private _sendNextRecoveryCmd(): void {
+    if (this._pendingRecoveryAck || !machineConnection.isConnected) return
+    if (this._recoveryQueue.length === 0) {
+      // All recovery commands sent and acked — moves are now queued in the machine.
+      // Mark hasSeenRunDuringRecovery so onBufUpdate transitions to 'running' at next Idle,
+      // even if all moves complete within a single 200 ms poll interval.
+      this.hasSeenRunDuringRecovery = true
+      return
+    }
+    const cmd = this._recoveryQueue.shift()!
+    machineConnection.sendRaw(cmd)
+    broadcastPatch([pushConsole({ type: 'sent', text: cmd.trim(), ts: Date.now() })])
+    this._pendingRecoveryAck = true
+  }
+
   private _buildRecoverySequence(modal: GCodeModalState, safeZ: number): string[] {
     const cmds: string[] = []
     if (modal.toolNumber > 0) cmds.push(`G43 H${modal.toolNumber}`)
     cmds.push(modal.workCoordinate)
+    cmds.push(modal.units)  // restore mm/inch before coordinate moves
+    cmds.push('G90')        // absolute positioning for safe travel regardless of prior mode
     if (modal.coolant !== 'off') cmds.push(modal.coolant)
     else cmds.push('M9')
     cmds.push(`G0 Z${safeZ.toFixed(4)}`)
@@ -629,6 +687,7 @@ class JobEngine {
       cmds.push('M5')
     }
     cmds.push(`G1 Z${modal.position.z.toFixed(4)} F${modal.feedRate}`)
+    if (modal.positionMode !== 'G90') cmds.push(modal.positionMode)  // restore G91 if job used it
     return cmds
   }
 

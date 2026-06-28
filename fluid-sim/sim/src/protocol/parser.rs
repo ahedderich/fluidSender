@@ -30,6 +30,8 @@ pub enum ParsedLine {
     Restart,
     /// `$$` — dump all settings
     DumpSettings,
+    /// `$G` — report active GCode modal state
+    GCodeQuery,
     /// `$Config/key` — read a single config key
     ConfigRead(String),
     /// `$key=value` — write a config/settings value
@@ -77,6 +79,7 @@ fn parse_dollar(rest: &str) -> ParsedLine {
     if rest.is_empty() || rest == "$" {
         return ParsedLine::DumpSettings;
     }
+    if rest == "G" { return ParsedLine::GCodeQuery; }
     if rest == "H" { return ParsedLine::Home; }
     if rest == "X" { return ParsedLine::Unlock; }
     if rest.starts_with("RS") { return ParsedLine::Restart; }

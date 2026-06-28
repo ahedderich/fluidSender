@@ -412,6 +412,10 @@ async fn dispatch(
             let _ = broadcast.send(());
             (GREETING.to_string(), None)
         }
+        ParsedLine::GCodeQuery => {
+            let state = shared.read().await;
+            (format!("{}{}", response::gc_state(&state), response::ok()), None)
+        }
         ParsedLine::DumpSettings => {
             let state = shared.read().await;
             let mut out = String::new();

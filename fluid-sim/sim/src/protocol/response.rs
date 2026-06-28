@@ -67,6 +67,44 @@ pub fn config_value(key: &str, value: &str) -> String {
     format!("[{}={}]\r\n", key, value)
 }
 
+/// GCode modal state response for `$G`: `[GC:G0 G54 G17 G21 G90 G94 M5 M9 T0 F0 S0]`
+pub fn gc_state(state: &MachineState) -> String {
+    use crate::machine::modal::{DistanceMode, Plane, Units};
+    use crate::machine::spindle::SpindleMode;
+    use crate::machine::coolant::CoolantState;
+
+    let wcs = format!("G{}", 53 + state.modal.wcs as u32);
+    let plane = match state.modal.plane {
+        Plane::Xy => "G17",
+        Plane::Xz => "G18",
+        Plane::Yz => "G19",
+    };
+    let units = match state.modal.units {
+        Units::Mm => "G21",
+        Units::Inch => "G20",
+    };
+    let distance = match state.modal.distance {
+        DistanceMode::Absolute => "G90",
+        DistanceMode::Relative => "G91",
+    };
+    let spindle_m = match state.spindle.mode {
+        SpindleMode::Off => "M5",
+        SpindleMode::Cw => "M3",
+        SpindleMode::Ccw => "M4",
+    };
+    let coolant_m = match state.coolant {
+        CoolantState::Off => "M9",
+        CoolantState::Mist => "M7",
+        CoolantState::Flood => "M8",
+    };
+    let feed = state.modal_feed as u64;
+    let speed = state.spindle_speed as u64;
+    format!(
+        "[GC:G0 {} {} {} {} G94 {} {} T0 F{} S{}]\r\n",
+        wcs, plane, units, distance, spindle_m, coolant_m, feed, speed
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

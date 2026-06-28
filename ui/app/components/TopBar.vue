@@ -71,29 +71,45 @@
         Unlock
       </button>
 
-      <!-- Job controls -->
-      <button
+      <!-- Pausing hint: waiting for machine to drain -->
+      <span
+        v-if="job?.status === 'pausing'"
+        class="text-xs px-2.5 py-1 rounded-md bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60 font-medium whitespace-nowrap"
+        title="Waiting for queued moves to finish before pausing."
+      >
+        Pausing…
+      </span>
+
+      <!-- Paused hint: jog controls are live -->
+      <span
         v-if="job?.status === 'paused'"
-        @click="resumeJob"
-        class="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-md text-sm font-medium transition-colors"
-        title="Resume"
+        class="text-xs px-2.5 py-1 rounded-md bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60 font-medium whitespace-nowrap"
+        title="Machine is paused. Jog freely — Resume will safely return to pause position."
       >
-        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M8 5v14l11-7z" />
-        </svg>
-        Resume
-      </button>
+        Paused · Jog enabled
+      </span>
+
+      <!-- Recovering hint: machine returning to pause position -->
+      <span
+        v-if="job?.status === 'recovering'"
+        class="text-xs px-2.5 py-1 rounded-md bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-700/60 font-medium whitespace-nowrap"
+        title="Machine is returning to the pause position before resuming the job."
+      >
+        Resuming — returning to position…
+      </span>
+
+      <!-- Job controls: single Cycle Start / Resume button -->
       <button
-        :disabled="!machine.connected || !job || (job.status !== 'loaded' && job.status !== 'complete')"
-        @click="startJob"
+        :disabled="!machine.connected || !cycleStartEnabled"
+        @click="cycleStartAction"
         class="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-md text-sm font-medium transition-colors"
-        :class="machine.connected && job && (job.status === 'loaded' || job.status === 'complete') ? 'hover:bg-green-500' : 'opacity-40 cursor-not-allowed'"
-        title="Cycle Start"
+        :class="machine.connected && cycleStartEnabled ? 'hover:bg-green-500' : 'opacity-40 cursor-not-allowed'"
+        :title="job?.status === 'paused' ? 'Resume — machine will safely return to pause position' : 'Cycle Start'"
       >
         <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
           <path d="M8 5v14l11-7z" />
         </svg>
-        Cycle Start
+        {{ job?.status === 'paused' ? 'Resume' : 'Cycle Start' }}
       </button>
       <button
         :disabled="!job || job.status !== 'running'"
@@ -300,6 +316,19 @@ const s = useSettingsStore()
 const ui = useUiStore()
 const { confirm } = useConfirm()
 const { job, startJob, pauseJob, resumeJob, cancelJob } = useJobControl()
+
+const cycleStartEnabled = computed(() =>
+  !!job.value && (
+    job.value.status === 'loaded' ||
+    job.value.status === 'complete' ||
+    job.value.status === 'paused'
+  )
+)
+
+function cycleStartAction() {
+  if (job.value?.status === 'paused') resumeJob()
+  else startJob()
+}
 const route = useRoute()
 const isSettings = computed(() => route.path === '/settings')
 const isMounted = ref(false)

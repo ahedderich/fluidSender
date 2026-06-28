@@ -262,11 +262,12 @@ const modals = useModals()
 
 // true only on the browser that is actively jogging right now
 const isJogging = ref(false)
-// block jog when another browser is jogging, or when a job is running (jog oks would corrupt job ack tracking)
+// block jog when another browser is jogging, or when job is actively sending/recovering
 const canJog = computed(() =>
   (!sync.jogActive || isJogging.value) &&
   sync.job?.status !== 'running' &&
-  sync.job?.status !== 'pausing',
+  sync.job?.status !== 'pausing' &&
+  sync.job?.status !== 'recovering',
 )
 
 const xyDirs = [
