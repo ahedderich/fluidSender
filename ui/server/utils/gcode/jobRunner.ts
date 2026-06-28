@@ -6,7 +6,7 @@ import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from
 import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
 import { broadcastPatch, setJobState, type PatchOp } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
-import { send, sendGCode } from '../machine/sender'
+import { startSend, sendGCode } from '../machine/sender'
 import type { SendHandle, SenderStatusEvent } from '../machine/types'
 import type { GCodeLine, GCodeModalState, JobState } from './types'
 
@@ -404,7 +404,7 @@ class JobRunner {
 
   private _startMainSend(): void {
     const startPtr = this.sendPtr
-    this._sendHandle = send(
+    this._sendHandle = startSend(
       this.lines.slice(startPtr).map(l => ({
         raw: l.raw,
         isMotion: l.isMotion,

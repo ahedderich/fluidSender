@@ -269,7 +269,7 @@ export function onMachineDisconnected(): void {
 
 /** Start sending a block of lines. Throws if machine is not in idle mode.
  *  @param lineOffset — number of job lines that preceded this chunk; added to sent/executed in emitted events so callers see job-global counts. */
-export function send(lines: SendableLine[], onEvent?: (e: SenderStatusEvent) => void, lineOffset = 0): SendHandle {
+export function startSend(lines: SendableLine[], onEvent?: (e: SenderStatusEvent) => void, lineOffset = 0): SendHandle {
   if (getMode() !== 'idle') {
     throw new Error(`Cannot start send: machine is in '${getMode()}' mode`)
   }
@@ -382,5 +382,5 @@ export function sendGCode(
     raw,
     isMotion: classifyLine(raw, getActiveFirmwareVersion()).isMotion,
   }))
-  return send(sendable, onEvent, lineOffset)
+  return startSend(sendable, onEvent, lineOffset)
 }
