@@ -203,7 +203,12 @@ async fn execute_linear(
             // Feed hold (non-jog moves only)
             } else if state.hold_pending || matches!(state.status, MachineStatus::Hold) {
                 state.hold_pending = false;
-                state.status = MachineStatus::Hold;
+                if matches!(mv.kind, MoveKind::Jog) {
+                    state.status = MachineStatus::Idle;
+                    state.feed = 0.0;
+                } else {
+                    state.status = MachineStatus::Hold;
+                }
                 let _ = broadcast.send(());
                 TickResult::Done(MoveResult::Ok)
             } else {

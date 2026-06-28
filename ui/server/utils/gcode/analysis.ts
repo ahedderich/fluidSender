@@ -1,4 +1,5 @@
 import { word, stripComments, dist3, rToIJ, arcLength } from './utils'
+import { classifyLine, getActiveFirmwareVersion } from './classifier'
 import type { GCodeLine, GCodeLineType, LineVector, GCodeModalState, ToolSection, AxisRanges } from './types'
 
 const DEFAULT_MAX_RAPID_MM_PER_MIN = 3000
@@ -224,8 +225,7 @@ export function analyzeGCode(
 
     if (durationMs === 0) durationMs = 1
 
-    // G4 dwell and G38.x probe are interpreter-blocking (Category B2) — no planner slot
-    const isMotion = type === 'rapid' || type === 'feed' || type === 'arc'
+    const { isMotion } = classifyLine(raw, getActiveFirmwareVersion())
 
     cumulativeMs += durationMs
     lines.push({ index: i, raw, type, isMotion, estimatedDurationMs: durationMs, cumulativeDurationMs: cumulativeMs })

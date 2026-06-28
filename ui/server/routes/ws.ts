@@ -34,6 +34,7 @@ import {
   initPoller,
 } from '../utils/machine/poller'
 import { parseGreetingVersion } from '../utils/machine/statusParser'
+import { setActiveFirmwareVersion } from '../utils/gcode/classifier'
 import { initMachineMode } from '../utils/machine/machineMode'
 import {
   onOk,
@@ -77,6 +78,7 @@ machineConnection.on('event', (ev) => {
     }
     case 'disconnected': {
       stopPoller()
+      setActiveFirmwareVersion(null)
       // jobRunner must update status before sender fires its terminal event
       jobRunner.onMachineDisconnected()
       senderDisconnected()
@@ -104,6 +106,7 @@ machineConnection.on('event', (ev) => {
       }
       const ver = parseGreetingVersion(ev.line)
       if (ver) {
+        setActiveFirmwareVersion(ver)
         const next = setConnection({ firmwareVersion: ver })
         broadcastPatch([{ path: 'connection', set: { ...next } }])
       }

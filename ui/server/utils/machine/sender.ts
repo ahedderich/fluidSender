@@ -1,7 +1,13 @@
 import { machineConnection } from './connection'
 import { getMode, setMode } from './machineMode'
 import { broadcastPatch, pushConsole } from '../appState'
+import { classifyLine, getActiveFirmwareVersion } from '../gcode/classifier'
 import type { MachineStatus, SenderStatusEvent, SendHandle, SendableLine, SenderCompletedMode } from './types'
+
+function isCommentOrEmpty(raw: string): boolean {
+  const t = raw.trim()
+  return t === '' || t.startsWith(';') || t.startsWith('(')
+}
 
 const PLANNER_SAFETY_MARGIN = 2
 const PLANNER_TARGET_FALLBACK = 3
@@ -104,6 +110,14 @@ function _tryDispatch(chunk: ActiveChunk): void {
     if (chunk.pendingAck) break
 
     const line = chunk.lines[chunk.dispatchPtr]!
+
+    if (isCommentOrEmpty(line.raw)) {
+      chunk.sent++
+      chunk.executed++
+      chunk.dispatchPtr++
+      _emit(chunk)
+      continue
+    }
 
     if (line.isMotion) {
       const motionInFlight = chunk.sentQueue.filter(e => e.isMotion).length
@@ -353,4 +367,20 @@ export function getSenderStatus(chunkId?: string): SenderStatusEvent | null {
   }
 
   return null
+}
+
+/**
+ * Send raw GCode strings. Each line is classified using the active firmware version.
+ * Use this for wizard/macro/recovery commands that skip the full job analyzer.
+ */
+export function sendGCode(
+  lines: string[],
+  onEvent?: (e: SenderStatusEvent) => void,
+  lineOffset = 0,
+): SendHandle {
+  const sendable: SendableLine[] = lines.map(raw => ({
+    raw,
+    isMotion: classifyLine(raw, getActiveFirmwareVersion()).isMotion,
+  }))
+  return send(sendable, onEvent, lineOffset)
 }

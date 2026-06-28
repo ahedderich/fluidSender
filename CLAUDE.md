@@ -38,11 +38,12 @@ git clone https://github.com/bdring/FluidNC FluidNC/
 - When updating `fluid-sim/sim/` — the sim **must match FluidNC's exact ack and planner-buffer behaviour** for all command types; divergence here will corrupt the send loop's `execPtr` tracking
 
 **Key FluidNC behaviours to keep in sync with the sim:**
-- **Planner-buffered** (reduce `Bf:` free count; `ok` sent immediately when queued): `G0`, `G1`, `G2`, `G3`, `G28`, `G30`, `G38.x` (probe)
-- **Interpreter-blocking** (do NOT reduce `Bf:`; `ok` delayed until complete): `G4` dwell — calls `protocol_buffer_synchronize()` to drain the planner, then sleeps; `ok` arrives only after the full dwell elapses
-- **Immediate-execution** (do NOT reduce `Bf:`; `ok` sent right away): `M3`/`M4`/`M5` (spindle), `M7`/`M8`/`M9` (coolant), `M6` (tool change), `G10`, `G92`, standalone `F`/`S`/`T` words, modal-only lines — note: real FluidNC calls `protocol_buffer_synchronize()` for M3/M4/M5/M6/M7/M8/M9 before applying, so `ok` is technically delayed; the sim currently applies these immediately (a known divergence)
+- **Category A — Planner-buffered** (reduce `Bf:` free count; `ok` sent immediately when queued): `G0`, `G1`, `G2`, `G3`, `G28`, `G30`, `$J=` (jog). G2/G3 arcs generate many planner blocks per command.
+- **Category B1 — Drain-only blocking** (`ok` delayed until planner drains, then hardware is applied): `M3`/`M4`/`M5` (spindle), `M7`/`M8`/`M9` (coolant), `M6` (tool change), `G10` (WCS offset), `G54`–`G59` (WCS select), `G92`/`G92.1` (G92 offset), `M2`/`M30` (program end) — all call `protocol_buffer_synchronize()` before applying due to `FORCE_BUFFER_SYNC_DURING_WCO_CHANGE`/`FORCE_BUFFER_SYNC_DURING_NVS_WRITE` flags or spindle/coolant safety; the sim currently applies these immediately (a known divergence)
+- **Category B2 — Extended-blocking** (`ok` arrives only after the full operation completes, which can take seconds to minutes): `G4 Pn` dwell — drains planner then blocks for the full dwell time; `G38.2`/`G38.3`/`G38.4`/`G38.5` probe — drains planner then blocks in a loop until machine is Idle (probe touch or end of travel); `M0` pause — drains planner then blocks until cycle-start (`~`) is issued; `$H`/`$HX`–`$HC` homing — blocks until all homing cycles complete
+- **Category C — Immediate** (do NOT touch the planner; `ok` sent right away): standalone `F` word, standalone `T` word, modal-only lines (G17/G18/G19, G20/G21, G40, G80, G90/G91, G91.1, G93/G94, G61, G43.1, G49, M1); standalone `S` word **only when spindle is OFF** — if spindle is currently ON, an `S` word calls `protocol_buffer_synchronize()` first and behaves as B1
 - **Status field name**: FluidNC firmware emits `Bf:plannerFree,rxFree` (not `Buf:`); the status parser accepts both for compatibility
-- `ok` is sent for every line that reaches the GCode parser; blank lines and comment-only lines (`;` or `(...)`) are filtered before reaching the parser and also generate an `ok` (empty-line fast path in firmware)
+- `ok` is sent for every line that reaches the GCode parser; blank lines and comment-only lines (`;` or `(...)`) hit the fast path in `execute_line()` and also generate an `ok` without touching the planner
 
 ---
 

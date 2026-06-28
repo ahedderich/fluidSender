@@ -6,7 +6,7 @@ import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from
 import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
 import { broadcastPatch, setJobState, type PatchOp } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
-import { send } from '../machine/sender'
+import { send, sendGCode } from '../machine/sender'
 import type { SendHandle, SenderStatusEvent } from '../machine/types'
 import type { GCodeLine, GCodeModalState, JobState } from './types'
 
@@ -17,11 +17,6 @@ const CHECKPOINT_LINES = 50
 const CHECKPOINT_MS = 1000
 const RESUME_SAFE_Z_LIFT = 5
 
-interface FilteredLine {
-  raw: string
-  isMotion: boolean
-  jobLineIdx: number  // index in this.lines[] — maps chunk-index back to job-line-index
-}
 
 class JobRunner {
   private lines: GCodeLine[] = []
@@ -36,7 +31,6 @@ class JobRunner {
 
   // Active send session
   private _sendHandle: SendHandle | null = null
-  private _filteredLines: FilteredLine[] | null = null
 
   get status() { return this._status }
 
@@ -92,7 +86,6 @@ class JobRunner {
       this.sendPtr = 0
       this._execPtr = 0
       this._sendHandle = null
-      this._filteredLines = null
 
       this._setStatus('loaded', {
         fileId,
@@ -189,10 +182,7 @@ class JobRunner {
         const currentZ = lastStatus?.wpos.z ?? modal.position.z
         const safeZ = Math.max(currentZ, modal.position.z + RESUME_SAFE_Z_LIFT)
         const recoveryCommands = this._buildRecoverySequence(modal, safeZ)
-        this._sendHandle = send(
-          recoveryCommands.map(cmd => ({ raw: cmd, isMotion: false })),
-          (event) => this._handleRecoveryEvent(event),
-        )
+        this._sendHandle = sendGCode(recoveryCommands, (event) => this._handleRecoveryEvent(event))
       } else {
         this._setStatus('running', { startWallClock: Date.now() })
         this._startMainSend()
@@ -221,7 +211,6 @@ class JobRunner {
   emergencyStop(): void {
     const handle = this._sendHandle
     this._sendHandle = null
-    this._filteredLines = null
     this._execPtr = 0
     this.sendPtr = 0
     this._setStatus('loaded', {
@@ -240,7 +229,6 @@ class JobRunner {
     this.analyzeAbort?.abort()
     this.analyzeAbort = null
     this._sendHandle = null
-    this._filteredLines = null
     this.lines = []
     this.sendPtr = 0
     this._execPtr = 0
@@ -344,7 +332,6 @@ class JobRunner {
       this.filename = filename
       this.sendPtr = resumePtr
       this._execPtr = resumePtr
-      this._filteredLines = null
 
       const modal = await getModalStateAtLine(resumePtr)
       const savedAnalysis = await loadRawAnalysis()
@@ -367,10 +354,7 @@ class JobRunner {
         const currentZ = lastStatus?.wpos.z ?? modal.position.z
         const safeZ = Math.max(currentZ, modal.position.z + RESUME_SAFE_Z_LIFT)
         const recoveryCommands = this._buildRecoverySequence(modal, safeZ)
-        this._sendHandle = send(
-          recoveryCommands.map(cmd => ({ raw: cmd, isMotion: false })),
-          (event) => this._handleRecoveryEvent(event),
-        )
+        this._sendHandle = sendGCode(recoveryCommands, (event) => this._handleRecoveryEvent(event))
       } else {
         // No modal state available — resume from position without pre-flight moves
         this._setStatus('running', { startWallClock: Date.now() })
@@ -385,7 +369,6 @@ class JobRunner {
   onMachineDisconnected(): void {
     // Clear send state before sender fires its error event so _handleSenderEvent no-ops
     this._sendHandle = null
-    this._filteredLines = null
 
     if (this._status === 'stopping') {
       // Stop was in progress — treat disconnect as completing the stop
@@ -419,39 +402,25 @@ class JobRunner {
 
   // ─── Private ─────────────────────────────────────────────────────────────────
 
-  private _buildFilteredLines(startPtr: number): FilteredLine[] {
-    const result: FilteredLine[] = []
-    for (let i = startPtr; i < this.lines.length; i++) {
-      const line = this.lines[i]!
-      if (line.type !== 'comment') {
-        result.push({ raw: line.raw, isMotion: line.isMotion, jobLineIdx: i })
-      }
-    }
-    return result
-  }
-
   private _startMainSend(): void {
     const startPtr = this.sendPtr
-    const filteredLines = this._buildFilteredLines(startPtr)
-    this._filteredLines = filteredLines
-    console.log("xkcn");
     this._sendHandle = send(
-      filteredLines.map(l => ({ raw: l.raw, isMotion: l.isMotion })),
+      this.lines.slice(startPtr).map(l => ({
+        raw: l.raw,
+        isMotion: l.isMotion,
+      })),
       (event) => this._handleSenderEvent(event),
-      startPtr,  // lineOffset: job lines before this chunk; sender adds it so events carry job-global counts
+      startPtr,  // lineOffset: sender adds this so events carry absolute file line indices
     )
   }
 
-  private _handleSenderEvent(
-    event: SenderStatusEvent
-  ): void {
+  private _handleSenderEvent(event: SenderStatusEvent): void {
     // If send handle was cleared (e.g. emergencyStop or disconnect), ignore stale events
     if (!this._sendHandle) return
 
     const ops: PatchOp[] = []
 
     const inPlanner = Math.max(0, event.sent - event.executed)
-    console.log("event", event.sent, event.executed);
     if (event.sent !== this.sendPtr || event.executed !== this._execPtr) {
       this.sendPtr = event.sent
       this._execPtr = event.executed
@@ -474,7 +443,6 @@ class JobRunner {
           // Unlock machine: soft reset from Hold → Idle so operator can jog freely.
           const handle = this._sendHandle
           this._sendHandle = null
-          this._filteredLines = null
           handle?.hardStop()
         } else if (this._status === 'stopping') {
           this._doHardStopAndReturnToLoaded()
@@ -486,7 +454,6 @@ class JobRunner {
     if (!event.completed) return
 
     this._sendHandle = null
-    this._filteredLines = null
 
     switch (event.completedMode) {
       case 'success':
@@ -531,7 +498,6 @@ class JobRunner {
   private _doHardStopAndReturnToLoaded(): void {
     const handle = this._sendHandle
     this._sendHandle = null
-    this._filteredLines = null
     this._execPtr = 0
     this.sendPtr = 0
     this._setStatus('loaded', {
