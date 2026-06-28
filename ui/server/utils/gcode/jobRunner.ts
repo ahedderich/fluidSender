@@ -243,9 +243,12 @@ class JobRunner {
     this.pendingGQuery = false
     this._execPtr = 0
     this.sendPtr = 0
-    this._setStatus('cancelled', {
+    // Return to 'loaded' so the job can be restarted immediately without reloading the file
+    this._setStatus('loaded', {
       startWallClock: null,
+      sendPtr: 0,
       execPtr: 0,
+      inPlanner: 0,
       recovery: null,
     })
     clearCheckpoint().catch(() => {})
