@@ -31,6 +31,7 @@ interface ActiveChunk {
   dispatchPtr: number
   sent: number
   executed: number
+  lineOffset: number
   pendingAck: boolean
   sentQueue: SentEntry[]
   softStopping: boolean
@@ -49,8 +50,8 @@ export function getMaxPlannerSlots(): number {
 function _makeEvent(chunk: ActiveChunk, overrides?: Partial<SenderStatusEvent>): SenderStatusEvent {
   return {
     chunkId: chunk.chunkId,
-    sent: chunk.sent,
-    executed: chunk.executed,
+    sent: chunk.sent + chunk.lineOffset,
+    executed: chunk.executed + chunk.lineOffset,
     completed: false,
     completedMode: null,
     errorReason: null,
@@ -252,8 +253,9 @@ export function onMachineDisconnected(): void {
   }
 }
 
-/** Start sending a block of lines. Throws if machine is not in idle mode. */
-export function send(lines: SendableLine[], onEvent?: (e: SenderStatusEvent) => void): SendHandle {
+/** Start sending a block of lines. Throws if machine is not in idle mode.
+ *  @param lineOffset — number of job lines that preceded this chunk; added to sent/executed in emitted events so callers see job-global counts. */
+export function send(lines: SendableLine[], onEvent?: (e: SenderStatusEvent) => void, lineOffset = 0): SendHandle {
   if (getMode() !== 'idle') {
     throw new Error(`Cannot start send: machine is in '${getMode()}' mode`)
   }
@@ -265,6 +267,7 @@ export function send(lines: SendableLine[], onEvent?: (e: SenderStatusEvent) => 
     dispatchPtr: 0,
     sent: 0,
     executed: 0,
+    lineOffset,
     pendingAck: false,
     sentQueue: [],
     softStopping: false,

@@ -443,6 +443,7 @@ class JobRunner {
     this._sendHandle = send(
       filteredLines.map(l => ({ raw: l.raw, isMotion: l.isMotion })),
       (event) => this._handleSenderEvent(event, startPtr, filteredLines),
+      startPtr,  // lineOffset: job lines before this chunk; sender adds it so events carry job-global counts
     )
   }
 
