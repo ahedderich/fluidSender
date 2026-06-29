@@ -12,8 +12,8 @@
   background: linear-gradient(
     to right,
     #3b82f6 0%,
-    #3b82f6 calc((var(--val, 100) - 10) / 290 * 100%),
-    #334155 calc((var(--val, 100) - 10) / 290 * 100%),
+    #3b82f6 calc((var(--val, 100) - 10) / 190 * 100%),
+    #334155 calc((var(--val, 100) - 10) / 190 * 100%),
     #334155 100%
   );
 }
@@ -22,8 +22,8 @@
   background: linear-gradient(
     to right,
     #3b82f6 0%,
-    #3b82f6 calc((var(--val, 100) - 10) / 290 * 100%),
-    #1e293b calc((var(--val, 100) - 10) / 290 * 100%),
+    #3b82f6 calc((var(--val, 100) - 10) / 190 * 100%),
+    #1e293b calc((var(--val, 100) - 10) / 190 * 100%),
     #1e293b 100%
   );
 }

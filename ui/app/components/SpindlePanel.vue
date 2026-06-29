@@ -6,15 +6,27 @@
       <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
         {{ isLaser ? 'Laser' : 'Spindle' }}
       </h2>
-      <span
-        class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
-        :class="!machine.connected
-          ? 'bg-gray-100 dark:bg-slate-700 text-gray-400 dark:text-slate-500'
-          : machine.spindleOn
-            ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
-            : 'bg-gray-100 dark:bg-slate-700 text-gray-400 dark:text-slate-500'"
-      >{{ !machine.connected ? 'null' : machine.spindleOn ? 'ON' : 'OFF' }}</span>
+      <div class="flex items-center gap-1.5">
+        <span
+          v-if="machine.connected && machine.spindleOn && !isLaser"
+          class="text-xs font-mono text-gray-600 dark:text-slate-300"
+        >{{ machine.spindleRpm.toLocaleString() }} rpm</span>
+        <span
+          class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+          :class="!machine.connected
+            ? 'bg-gray-100 dark:bg-slate-700 text-gray-400 dark:text-slate-500'
+            : machine.spindleOn
+              ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
+              : 'bg-gray-100 dark:bg-slate-700 text-gray-400 dark:text-slate-500'"
+        >{{ !machine.connected ? 'null' : machine.spindleOn ? 'ON' : 'OFF' }}</span>
+      </div>
     </div>
+
+    <!-- Controls (disabled while a job is active) -->
+    <div
+      :class="{ 'opacity-50 pointer-events-none': jobActive }"
+      :title="jobActive ? 'Spindle control is disabled while a job is running' : undefined"
+    >
 
     <!-- ── Spindle (router / plasma) ── -->
     <template v-if="!isLaser">
@@ -131,17 +143,25 @@
       </div>
     </template>
 
+    </div><!-- end controls wrapper -->
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
 import { useSettingsStore } from '~/stores/settings'
+import { useSyncStore } from '~/stores/sync'
 
 const machine = useMachineStore()
 const settings = useSettingsStore()
+const sync = useSyncStore()
 
 const isLaser = computed(() => settings.activeMachine?.type === 'laser')
+const jobActive = computed(() => {
+  const s = sync.job?.status
+  return s === 'running' || s === 'pausing' || s === 'paused' || s === 'stopping' || s === 'recovering'
+})
 
 const laserMode = ref<'dynamic' | 'constant'>('dynamic')
 const laserPower = ref(50)

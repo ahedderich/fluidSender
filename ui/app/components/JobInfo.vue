@@ -150,35 +150,43 @@
       <div class="flex items-center gap-2">
         <span class="text-xs text-gray-600 dark:text-slate-300 font-medium w-14 shrink-0">Feed</span>
         <input
-          v-model.number="machine.feedOverride"
+          v-model.number="localFeed"
           type="range"
           min="10"
-          max="300"
+          max="200"
           step="1"
-          class="override-slider flex-1"
+          :style="{ '--val': localFeed }"
+          :disabled="!machine.connected"
+          class="override-slider flex-1 disabled:opacity-40"
+          @mousedown="isDraggingFeed = true"
+          @touchstart="isDraggingFeed = true"
+          @change="applyFeed"
         />
         <div
           v-if="!editingFeed"
-          @click="editingFeed = true"
           class="w-11 text-right text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none shrink-0"
+          :class="{ 'opacity-40 pointer-events-none': !machine.connected }"
+          @click="startEditFeed"
         >
-          {{ machine.feedOverride }}%
+          {{ localFeed }}%
         </div>
         <input
           v-else
-          v-model.number="machine.feedOverride"
+          ref="feedInput"
+          v-model.number="feedEditValue"
           type="number"
           min="10"
-          max="300"
-          @blur="editingFeed = false"
-          @keydown.enter="editingFeed = false"
-          @keydown.escape="editingFeed = false"
-          class="w-11 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-right px-1 py-0.5 rounded focus:outline-none shrink-0"
+          max="200"
+          class="w-16 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-right px-1 py-0.5 rounded focus:outline-none shrink-0"
+          @blur="commitFeedEdit"
+          @keydown.enter="commitFeedEdit"
+          @keydown.escape="cancelFeedEdit"
         />
         <button
-          @click="machine.feedOverride = 100"
-          class="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none shrink-0 transition-colors"
+          :disabled="!machine.connected"
+          class="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none shrink-0 transition-colors disabled:opacity-40"
           title="Reset to 100%"
+          @click="resetFeed"
         >↺</button>
       </div>
 
@@ -186,35 +194,43 @@
       <div class="flex items-center gap-2">
         <span class="text-xs text-gray-600 dark:text-slate-300 font-medium w-14 shrink-0">Spindle</span>
         <input
-          v-model.number="machine.spindleOverride"
+          v-model.number="localSpindle"
           type="range"
           min="10"
-          max="300"
+          max="200"
           step="1"
-          class="override-slider flex-1"
+          :style="{ '--val': localSpindle }"
+          :disabled="!machine.connected"
+          class="override-slider flex-1 disabled:opacity-40"
+          @mousedown="isDraggingSpindle = true"
+          @touchstart="isDraggingSpindle = true"
+          @change="applySpindle"
         />
         <div
           v-if="!editingSpindle"
-          @click="editingSpindle = true"
           class="w-11 text-right text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none shrink-0"
+          :class="{ 'opacity-40 pointer-events-none': !machine.connected }"
+          @click="startEditSpindle"
         >
-          {{ machine.spindleOverride }}%
+          {{ localSpindle }}%
         </div>
         <input
           v-else
-          v-model.number="machine.spindleOverride"
+          ref="spindleInput"
+          v-model.number="spindleEditValue"
           type="number"
           min="10"
-          max="300"
-          @blur="editingSpindle = false"
-          @keydown.enter="editingSpindle = false"
-          @keydown.escape="editingSpindle = false"
-          class="w-11 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-right px-1 py-0.5 rounded focus:outline-none shrink-0"
+          max="200"
+          class="w-16 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-right px-1 py-0.5 rounded focus:outline-none shrink-0"
+          @blur="commitSpindleEdit"
+          @keydown.enter="commitSpindleEdit"
+          @keydown.escape="cancelSpindleEdit"
         />
         <button
-          @click="machine.spindleOverride = 100"
-          class="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none shrink-0 transition-colors"
+          :disabled="!machine.connected"
+          class="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none shrink-0 transition-colors disabled:opacity-40"
           title="Reset to 100%"
+          @click="resetSpindle"
         >↺</button>
       </div>
     </div>
@@ -238,8 +254,188 @@ function doLoadFresh() {
   wsSend({ t: 'job:recover:fresh' })
 }
 
+// FluidNC real-time override bytes
+const FEED_RESET = 0x90
+const FEED_UP10 = 0x91
+const FEED_DOWN10 = 0x92
+const FEED_UP1 = 0x93
+const FEED_DOWN1 = 0x94
+
+const SPINDLE_RESET = 0x99
+const SPINDLE_UP10 = 0x9a
+const SPINDLE_DOWN10 = 0x9b
+const SPINDLE_UP1 = 0x9c
+const SPINDLE_DOWN1 = 0x9d
+
 const editingFeed = ref(false)
 const editingSpindle = ref(false)
+
+const localFeed = ref(machine.feedOverride)
+const localSpindle = ref(machine.spindleOverride)
+
+const isDraggingFeed = ref(false)
+const isDraggingSpindle = ref(false)
+
+let lastSentFeed = machine.feedOverride
+let lastSentSpindle = machine.spindleOverride
+
+let pendingFeed: number | null = null
+let pendingFeedTimer: ReturnType<typeof setTimeout> | null = null
+let pendingSpindle: number | null = null
+let pendingSpindleTimer: ReturnType<typeof setTimeout> | null = null
+
+watch(
+  () => machine.feedOverride,
+  (v) => {
+    if (isDraggingFeed.value || editingFeed.value) return
+    if (pendingFeed !== null) {
+      if (Math.abs(v - pendingFeed) <= 1) {
+        if (pendingFeedTimer) { clearTimeout(pendingFeedTimer); pendingFeedTimer = null }
+        pendingFeed = null
+        localFeed.value = v
+        lastSentFeed = v
+      }
+      return
+    }
+    localFeed.value = v
+    lastSentFeed = v
+  },
+  { immediate: true },
+)
+
+watch(
+  () => machine.spindleOverride,
+  (v) => {
+    if (isDraggingSpindle.value || editingSpindle.value) return
+    if (pendingSpindle !== null) {
+      if (Math.abs(v - pendingSpindle) <= 1) {
+        if (pendingSpindleTimer) { clearTimeout(pendingSpindleTimer); pendingSpindleTimer = null }
+        pendingSpindle = null
+        localSpindle.value = v
+        lastSentSpindle = v
+      }
+      return
+    }
+    localSpindle.value = v
+    lastSentSpindle = v
+  },
+  { immediate: true },
+)
+
+function deltaBytes(delta: number, up10: number, down10: number, up1: number, down1: number) {
+  const bytes: number[] = []
+  const sign = Math.sign(delta)
+  let rem = Math.abs(Math.round(delta))
+  while (rem >= 10) { bytes.push(sign > 0 ? up10 : down10); rem -= 10 }
+  while (rem >= 1) { bytes.push(sign > 0 ? up1 : down1); rem -= 1 }
+  return bytes
+}
+
+function clamp(v: number) { return Math.max(10, Math.min(200, Math.round(v))) }
+
+// Feed handlers
+const feedInput = ref<HTMLInputElement>()
+const feedEditValue = ref(100)
+
+function applyFeed() {
+  isDraggingFeed.value = false
+  const target = clamp(localFeed.value)
+  localFeed.value = target
+  const bytes = deltaBytes(target - lastSentFeed, FEED_UP10, FEED_DOWN10, FEED_UP1, FEED_DOWN1)
+  if (bytes.length) {
+    machine.sendOverride(bytes)
+    lastSentFeed = target
+    pendingFeed = target
+    if (pendingFeedTimer) clearTimeout(pendingFeedTimer)
+    pendingFeedTimer = setTimeout(() => { pendingFeed = null }, 2000)
+  }
+}
+
+function resetFeed() {
+  machine.sendOverride([FEED_RESET])
+  localFeed.value = 100
+  lastSentFeed = 100
+  pendingFeed = 100
+  if (pendingFeedTimer) clearTimeout(pendingFeedTimer)
+  pendingFeedTimer = setTimeout(() => { pendingFeed = null }, 2000)
+}
+
+function startEditFeed() {
+  feedEditValue.value = localFeed.value
+  editingFeed.value = true
+  nextTick(() => feedInput.value?.select())
+}
+
+function commitFeedEdit() {
+  const target = clamp(feedEditValue.value || lastSentFeed)
+  localFeed.value = target
+  editingFeed.value = false
+  const bytes = deltaBytes(target - lastSentFeed, FEED_UP10, FEED_DOWN10, FEED_UP1, FEED_DOWN1)
+  if (bytes.length) {
+    machine.sendOverride(bytes)
+    lastSentFeed = target
+    pendingFeed = target
+    if (pendingFeedTimer) clearTimeout(pendingFeedTimer)
+    pendingFeedTimer = setTimeout(() => { pendingFeed = null }, 2000)
+  }
+}
+
+function cancelFeedEdit() {
+  editingFeed.value = false
+  localFeed.value = lastSentFeed
+}
+
+// Spindle handlers
+const spindleInput = ref<HTMLInputElement>()
+const spindleEditValue = ref(100)
+
+function applySpindle() {
+  isDraggingSpindle.value = false
+  const target = clamp(localSpindle.value)
+  localSpindle.value = target
+  const bytes = deltaBytes(target - lastSentSpindle, SPINDLE_UP10, SPINDLE_DOWN10, SPINDLE_UP1, SPINDLE_DOWN1)
+  if (bytes.length) {
+    machine.sendOverride(bytes)
+    lastSentSpindle = target
+    pendingSpindle = target
+    if (pendingSpindleTimer) clearTimeout(pendingSpindleTimer)
+    pendingSpindleTimer = setTimeout(() => { pendingSpindle = null }, 2000)
+  }
+}
+
+function resetSpindle() {
+  machine.sendOverride([SPINDLE_RESET])
+  localSpindle.value = 100
+  lastSentSpindle = 100
+  pendingSpindle = 100
+  if (pendingSpindleTimer) clearTimeout(pendingSpindleTimer)
+  pendingSpindleTimer = setTimeout(() => { pendingSpindle = null }, 2000)
+}
+
+function startEditSpindle() {
+  spindleEditValue.value = localSpindle.value
+  editingSpindle.value = true
+  nextTick(() => spindleInput.value?.select())
+}
+
+function commitSpindleEdit() {
+  const target = clamp(spindleEditValue.value || lastSentSpindle)
+  localSpindle.value = target
+  editingSpindle.value = false
+  const bytes = deltaBytes(target - lastSentSpindle, SPINDLE_UP10, SPINDLE_DOWN10, SPINDLE_UP1, SPINDLE_DOWN1)
+  if (bytes.length) {
+    machine.sendOverride(bytes)
+    lastSentSpindle = target
+    pendingSpindle = target
+    if (pendingSpindleTimer) clearTimeout(pendingSpindleTimer)
+    pendingSpindleTimer = setTimeout(() => { pendingSpindle = null }, 2000)
+  }
+}
+
+function cancelSpindleEdit() {
+  editingSpindle.value = false
+  localSpindle.value = lastSentSpindle
+}
 
 const currentTool = computed(() => {
   if (!machine.tools.length) return null

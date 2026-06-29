@@ -172,6 +172,10 @@ export const useMachineStore = defineStore('machine', () => {
     wsSend({ t: 'machine:command', payload: { cmd } })
   }
 
+  function sendOverride(bytes: number[]) {
+    wsSend({ t: 'machine:override', payload: { bytes } })
+  }
+
   return {
     connected,
     connecting,
@@ -207,6 +211,7 @@ export const useMachineStore = defineStore('machine', () => {
     addConsole,
     clearConsole,
     sendCommand,
+    sendOverride,
     setToolLibrary,
   }
 })

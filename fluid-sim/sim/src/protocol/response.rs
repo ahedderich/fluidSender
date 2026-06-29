@@ -35,6 +35,7 @@ pub fn status(state: &MachineState) -> String {
         format!("WCO:{}", wco),
         format!("FS:{},{}", f, s),
         format!("Bf:{},128", planner_free),
+        format!("Ov:{},100,{}", state.feed_override, state.spindle_override),
     ];
     if !pn.is_empty() { parts.push(format!("Pn:{}", pn)); }
 

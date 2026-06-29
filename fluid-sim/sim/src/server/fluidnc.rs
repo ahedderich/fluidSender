@@ -356,7 +356,65 @@ async fn handle_realtime(
             let _ = broadcast.send(());
             None
         }
-        _ => None,
+        RealtimeCmd::FeedOvrReset => {
+            shared.write().await.feed_override = 100;
+            let _ = broadcast.send(());
+            None
+        }
+        RealtimeCmd::FeedOvrCoarsePlus => {
+            let mut s = shared.write().await;
+            s.feed_override = s.feed_override.saturating_add(10).min(200);
+            let _ = broadcast.send(());
+            None
+        }
+        RealtimeCmd::FeedOvrCoarseMinus => {
+            let mut s = shared.write().await;
+            s.feed_override = s.feed_override.saturating_sub(10).max(10);
+            let _ = broadcast.send(());
+            None
+        }
+        RealtimeCmd::FeedOvrFinePlus => {
+            let mut s = shared.write().await;
+            s.feed_override = s.feed_override.saturating_add(1).min(200);
+            let _ = broadcast.send(());
+            None
+        }
+        RealtimeCmd::FeedOvrFineMinus => {
+            let mut s = shared.write().await;
+            s.feed_override = s.feed_override.saturating_sub(1).max(10);
+            let _ = broadcast.send(());
+            None
+        }
+        RealtimeCmd::SpindleOvrReset => {
+            shared.write().await.spindle_override = 100;
+            let _ = broadcast.send(());
+            None
+        }
+        RealtimeCmd::SpindleOvrCoarsePlus => {
+            let mut s = shared.write().await;
+            s.spindle_override = s.spindle_override.saturating_add(10).min(200);
+            let _ = broadcast.send(());
+            None
+        }
+        RealtimeCmd::SpindleOvrCoarseMinus => {
+            let mut s = shared.write().await;
+            s.spindle_override = s.spindle_override.saturating_sub(10).max(10);
+            let _ = broadcast.send(());
+            None
+        }
+        RealtimeCmd::SpindleOvrFinePlus => {
+            let mut s = shared.write().await;
+            s.spindle_override = s.spindle_override.saturating_add(1).min(200);
+            let _ = broadcast.send(());
+            None
+        }
+        RealtimeCmd::SpindleOvrFineMinus => {
+            let mut s = shared.write().await;
+            s.spindle_override = s.spindle_override.saturating_sub(1).max(10);
+            let _ = broadcast.send(());
+            None
+        }
+        RealtimeCmd::Unknown(_) => None,
     }
 }
 

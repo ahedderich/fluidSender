@@ -193,6 +193,13 @@ export default defineWebSocketHandler({
         break
       }
 
+      // ── Real-time overrides ───────────────────────────────────────────────
+      case 'machine:override': {
+        const { bytes } = msg.payload as { bytes: number[] }
+        for (const b of bytes) machineConnection.sendByte(b)
+        break
+      }
+
       // ── Jog ───────────────────────────────────────────────────────────────
       case 'machine:jog:move': {
         const { cmd } = msg.payload as { cmd: string }

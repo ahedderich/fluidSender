@@ -127,6 +127,8 @@ pub struct MachineState {
     pub limits: LimitState,
     pub probe: ProbeState,
     pub door: bool,
+    #[serde(rename = "feedOverride")] pub feed_override: u8,
+    #[serde(rename = "spindleOverride")] pub spindle_override: u8,
     #[serde(rename = "simSpeed")] pub sim_speed: u8,
     #[serde(rename = "axisCount")] pub axis_count: usize,
     pub travel: [f64; AXIS_COUNT],
@@ -192,6 +194,8 @@ impl MachineState {
             limits: LimitState::default(),
             probe: ProbeState { triggered: false, tip_diameter },
             door: false,
+            feed_override: 100,
+            spindle_override: 100,
             sim_speed,
             axis_count,
             travel,
@@ -226,6 +230,8 @@ impl MachineState {
         self.planner_buf_used = 0;
         self.feed = 0.0;
         self.modal_feed = 0.0;
+        self.feed_override = 100;
+        self.spindle_override = 100;
         // Snap planned position to actual — queued moves are discarded on reset
         self.planned_pos = self.pos;
         // Signal motion tasks to abort — any move with an older epoch is a stale pre-reset move
