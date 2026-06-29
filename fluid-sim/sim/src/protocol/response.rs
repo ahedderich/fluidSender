@@ -1,6 +1,6 @@
 use crate::machine::state::{MachineState, MachineStatus, AXIS_COUNT, MAX_PLANNER_SLOTS};
 
-pub const GREETING: &str = "Grbl 3.7.14 [FluidNC v3.7.14 (Simulator)] ready\r\n[MSG: Machine: Connected]\r\nok\r\n";
+pub const GREETING: &str = "Grbl 4.0.3 [FluidNC v4.0.3 (Simulator)] ready\r\n[MSG: Machine: Connected]\r\nok\r\n";
 
 pub fn ok() -> String { "ok\r\n".to_string() }
 
