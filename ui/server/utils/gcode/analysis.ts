@@ -4,6 +4,18 @@ import type { GCodeLine, GCodeLineType, LineVector, GCodeModalState, ToolSection
 
 const DEFAULT_MAX_RAPID_MM_PER_MIN = 3000
 
+// Fusion360 header tool definition: (T28 D=8 CR=0 - ZMIN=-4 - flat end mill)
+const HEADER_TOOL_RE = /^\(T(\d+)\s+D=([\d.]+)\s+CR=([\d.]+)\s+-\s+ZMIN=([-\d.]+)\s+-\s+(.+)\)$/i
+const MANUAL_TOOL_CHANGE_RE = /^\(MANUAL TOOL CHANGE TO T(\d+)\)/i
+
+export interface HeaderToolDef {
+  number: number
+  diameter: number
+  cornerRadius: number
+  zMin: number
+  type: string
+}
+
 export interface AnalysisResult {
   lines: GCodeLine[]
   vectors: Array<LineVector | null>
@@ -11,6 +23,8 @@ export interface AnalysisResult {
   tools: ToolSection[]
   axisRanges: AxisRanges
   estimatedTotalMs: number
+  noToolDefinitions: boolean
+  headerToolDefs: HeaderToolDef[]
 }
 
 function resolvePos(
@@ -70,10 +84,44 @@ export function analyzeGCode(
   }
 
   const tools: ToolSection[] = [
-    { toolNumber: 0, toolChangeCmd: null, startLine: 0, endLine: rawLines.length - 1 },
+    {
+      toolNumber: 0,
+      toolChangeCmd: null,
+      toolChangeType: null,
+      commentedName: null,
+      commentedDiameter: null,
+      commentedCornerRadius: null,
+      commentedZMin: null,
+      startLine: 0,
+      endLine: rawLines.length - 1,
+      lineCount: rawLines.length,
+    },
   ]
   let pendingTool = 0
+  let firstToolKnown = false
   let sIdx = 0
+
+  // Parse header tool definitions from first ≤20 non-blank lines
+  const headerToolDefs: HeaderToolDef[] = []
+  {
+    let scanned = 0
+    for (let h = 0; h < rawLines.length && scanned < 20; h++) {
+      const hLine = rawLines[h]!.trim()
+      if (!hLine) continue
+      scanned++
+      const m = hLine.match(HEADER_TOOL_RE)
+      if (m) {
+        headerToolDefs.push({
+          number: parseInt(m[1]!, 10),
+          diameter: parseFloat(m[2]!),
+          cornerRadius: parseFloat(m[3]!),
+          zMin: parseFloat(m[4]!),
+          type: m[5]!.trim(),
+        })
+      }
+    }
+  }
+  const headerToolMap = new Map<number, HeaderToolDef>(headerToolDefs.map((d) => [d.number, d]))
 
   let cumulativeMs = 0
   const lines: GCodeLine[] = []
@@ -127,16 +175,104 @@ export function analyzeGCode(
     if (/\bM0?9\b/.test(clean)) state.coolant = 'off'
 
     const tWord = word(clean, 'T')
+    const hasM6 = /\bM0?6\b/.test(clean)
+    const isM0 = clean === 'M0' || clean === 'M00'
+
     if (tWord !== undefined) {
       pendingTool = tWord
       state.toolNumber = tWord
     }
 
-    if (/\bM0?6\b/.test(clean)) {
+    // ── Tool section boundary logic ──────────────────────────────────────────
+
+    if (isM0) {
+      // Check if next non-empty line is a "MANUAL TOOL CHANGE TO T{n}" comment
+      const nextRaw = rawLines[i + 1]?.trim() ?? ''
+      const tcMatch = nextRaw.match(MANUAL_TOOL_CHANGE_RE)
+      if (tcMatch && !firstToolKnown) {
+        const tcNum = parseInt(tcMatch[1]!, 10)
+        tools[0]!.toolNumber = tcNum
+        firstToolKnown = true
+        // Merge header comment data
+        const hDef = headerToolMap.get(tcNum)
+        if (hDef) {
+          tools[0]!.commentedDiameter = hDef.diameter
+          tools[0]!.commentedCornerRadius = hDef.cornerRadius
+          tools[0]!.commentedZMin = hDef.zMin
+          tools[0]!.commentedName = hDef.type
+        }
+      }
+      // M0 is not a chunk boundary — do not create a new section
+    } else if (hasM6) {
+      if (!firstToolKnown) {
+        // First T M6 — update section 0 in-place
+        tools[0]!.toolNumber = pendingTool
+        tools[0]!.toolChangeCmd = raw.trim()
+        tools[0]!.toolChangeType = 'M6'
+        firstToolKnown = true
+        const hDef = headerToolMap.get(pendingTool)
+        if (hDef) {
+          tools[0]!.commentedDiameter = hDef.diameter
+          tools[0]!.commentedCornerRadius = hDef.cornerRadius
+          tools[0]!.commentedZMin = hDef.zMin
+          tools[0]!.commentedName = hDef.type
+        }
+      } else {
+        // Subsequent T M6 — close current section, open a new one
+        const prev = tools[tools.length - 1]!
+        prev.endLine = i - 1
+        prev.lineCount = prev.endLine - prev.startLine + 1
+        sIdx = tools.length
+        const hDef = headerToolMap.get(pendingTool)
+        tools.push({
+          toolNumber: pendingTool,
+          toolChangeCmd: raw.trim(),
+          toolChangeType: 'M6',
+          commentedDiameter: hDef?.diameter ?? null,
+          commentedCornerRadius: hDef?.cornerRadius ?? null,
+          commentedZMin: hDef?.zMin ?? null,
+          commentedName: hDef?.type ?? null,
+          startLine: i,
+          endLine: rawLines.length - 1,
+          lineCount: rawLines.length - i,
+        })
+      }
       state.toolNumber = pendingTool
-      tools[tools.length - 1].endLine = i > 0 ? i - 1 : 0
-      sIdx = tools.length
-      tools.push({ toolNumber: pendingTool, toolChangeCmd: raw.trim(), startLine: i, endLine: rawLines.length - 1 })
+    } else if (tWord !== undefined && !hasM6) {
+      // Standalone T word (no M6)
+      if (!firstToolKnown) {
+        // First standalone T — update section 0 in-place
+        tools[0]!.toolNumber = tWord
+        tools[0]!.toolChangeCmd = raw.trim()
+        tools[0]!.toolChangeType = 'T'
+        firstToolKnown = true
+        const hDef = headerToolMap.get(tWord)
+        if (hDef) {
+          tools[0]!.commentedDiameter = hDef.diameter
+          tools[0]!.commentedCornerRadius = hDef.cornerRadius
+          tools[0]!.commentedZMin = hDef.zMin
+          tools[0]!.commentedName = hDef.type
+        }
+      } else {
+        // Subsequent standalone T — close current section, open a new one
+        const prev = tools[tools.length - 1]!
+        prev.endLine = i - 1
+        prev.lineCount = prev.endLine - prev.startLine + 1
+        sIdx = tools.length
+        const hDef = headerToolMap.get(tWord)
+        tools.push({
+          toolNumber: tWord,
+          toolChangeCmd: raw.trim(),
+          toolChangeType: 'T',
+          commentedDiameter: hDef?.diameter ?? null,
+          commentedCornerRadius: hDef?.cornerRadius ?? null,
+          commentedZMin: hDef?.zMin ?? null,
+          commentedName: hDef?.type ?? null,
+          startLine: i,
+          endLine: rawLines.length - 1,
+          lineCount: rawLines.length - i,
+        })
+      }
     }
 
     // ── Line classification + geometry ───────────────────────────────────────
@@ -210,13 +346,16 @@ export function analyzeGCode(
       type = 'unsupported'
       console.warn(`[analysis] Canned cycle on line ${i + 1}: "${raw.trim()}" — duration estimated as 0`)
     }
+    else if (isM0) {
+      type = 'program_pause'
+    }
     else if (/\bM0?[345]\b/.test(clean)) {
       type = 'spindle'
     }
     else if (/\bM0?[789]\b/.test(clean)) {
       type = 'coolant'
     }
-    else if (/\bM0?6\b/.test(clean) || /\bT\d/.test(clean)) {
+    else if (hasM6 || /\bT\d/.test(clean)) {
       type = 'tool'
     }
     else if (/\bG5[4-9]\b/.test(clean) || /\bG10\b/.test(clean) || /\bG92\b/.test(clean)) {
@@ -228,12 +367,44 @@ export function analyzeGCode(
     const { isMotion } = classifyLine(raw, getActiveFirmwareVersion())
 
     cumulativeMs += durationMs
-    lines.push({ index: i, raw, type, isMotion, estimatedDurationMs: durationMs, cumulativeDurationMs: cumulativeMs })
+
+    // For M0 lines, look ahead one line for a pause comment
+    let pauseComment: string | null | undefined
+    if (type === 'program_pause') {
+      const nextRaw = rawLines[i + 1]?.trim() ?? ''
+      const commentMatch = nextRaw.match(/^\((.+)\)$/)
+      pauseComment = commentMatch?.[1] ?? null
+    }
+
+    lines.push({
+      index: i,
+      raw,
+      type,
+      isMotion,
+      estimatedDurationMs: durationMs,
+      cumulativeDurationMs: cumulativeMs,
+      ...(type === 'program_pause' ? { pauseComment } : {}),
+    })
     vectors.push(vec)
     modalStates.push(structuredClone(state))
   }
 
+  // Finalise last section's lineCount
+  const lastSection = tools[tools.length - 1]!
+  lastSection.lineCount = lastSection.endLine - lastSection.startLine + 1
+
   clampRanges(axisRanges)
 
-  return { lines, vectors, modalStates, tools, axisRanges, estimatedTotalMs: cumulativeMs }
+  const noToolDefinitions = tools.length === 1 && tools[0]!.toolNumber === 0
+
+  return {
+    lines,
+    vectors,
+    modalStates,
+    tools,
+    axisRanges,
+    estimatedTotalMs: cumulativeMs,
+    noToolDefinitions,
+    headerToolDefs,
+  }
 }

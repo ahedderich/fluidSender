@@ -62,7 +62,7 @@ export async function analyzeGCodeFile(
   if (signal.aborted) throw new Error('Aborted')
   onProgress(10)
 
-  const { lines, vectors, modalStates, tools, axisRanges, estimatedTotalMs } = analyzeGCode(content)
+  const { lines, vectors, modalStates, tools, axisRanges, estimatedTotalMs, noToolDefinitions, headerToolDefs } = analyzeGCode(content)
   if (signal.aborted) throw new Error('Aborted')
   onProgress(80)
 
@@ -75,6 +75,8 @@ export async function analyzeGCodeFile(
     estimatedTotalMs,
     axisRanges,
     tools,
+    noToolDefinitions,
+    headerToolDefs,
   }
 
   await mkdir(CURRENT_JOB_DIR, { recursive: true })

@@ -261,6 +261,20 @@
             </div>
           </SettingsCard>
 
+          <SettingsCard title="Tool Change Macro">
+            <div class="px-3 py-2 text-xs text-gray-500 dark:text-slate-400 leading-relaxed">
+              Runs automatically before each tool change (T M6 or standalone T). Leave empty to pause and wait for manual confirmation only.
+            </div>
+            <div class="px-3 pb-3">
+              <textarea
+                v-model="editingMachine.toolChangeMacro"
+                rows="5"
+                placeholder="G0 Z20&#10;G28 G91 Z0&#10;G90"
+                class="w-full px-3 py-2 text-xs font-mono bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-y"
+              />
+            </div>
+          </SettingsCard>
+
           <SettingsCard title="Probing">
             <SettingsRow label="Probe Plate Thickness">
               <div class="flex items-center gap-1.5">

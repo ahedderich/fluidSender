@@ -11,6 +11,7 @@ export type GCodeLineType =
   | 'modal'
   | 'comment'
   | 'unsupported'
+  | 'program_pause'
 
 export interface GCodeLine {
   index: number
@@ -22,15 +23,33 @@ export interface GCodeLine {
   estimatedDurationMs: number
   /** Cumulative estimated duration from line 0 through this line. */
   cumulativeDurationMs: number
+  /** Comment text following an M0 on the next line; only set when type === 'program_pause'. */
+  pauseComment?: string | null
 }
 
 /** A single tool section — all lines from startLine to endLine use toolNumber. */
 export interface ToolSection {
   toolNumber: number
-  /** Raw GCode command that triggered this tool change; null for the initial section. */
+  /**
+   * The raw GCode command that created this section boundary.
+   * null for section 0 (preamble absorbed; no preceding change command).
+   */
   toolChangeCmd: string | null
+  /**
+   * How the boundary was created:
+   *   'M6' = T{n} M6 command
+   *   'T'  = standalone T{n} command (no M6)
+   *   null = first section (preamble absorbed; no preceding change)
+   */
+  toolChangeType: 'M6' | 'T' | null
+  /** Extracted from Fusion360 header comment for this tool number. */
+  commentedName: string | null
+  commentedDiameter: number | null
+  commentedCornerRadius: number | null
+  commentedZMin: number | null
   startLine: number
   endLine: number
+  lineCount: number
 }
 
 /**
@@ -53,6 +72,14 @@ export interface JobAnalysis {
   estimatedTotalMs: number
   axisRanges: AxisRanges
   tools: ToolSection[]
+  noToolDefinitions: boolean
+  headerToolDefs: Array<{
+    number: number
+    diameter: number
+    cornerRadius: number
+    zMin: number
+    type: string
+  }>
 }
 
 export interface AxisRanges {
@@ -86,6 +113,10 @@ export type JobStatus =
   | 'complete'
   | 'error'
   | 'cancelled'
+  /** Stopped at a T{n}/M6 boundary; jogging and macros are enabled. */
+  | 'tool_change'
+  /** Machine is in Hold:0 due to M0; jogging and macros are disabled. */
+  | 'program_pause'
 
 export interface JobState {
   status: JobStatus
@@ -114,6 +145,22 @@ export interface JobState {
     modalStateAtResume: GCodeModalState | null
   } | null
   errorMessage: string | null
+
+  toolChangeRequest: {
+    sectionIndex: number
+    toolNumber: number
+    toolChangeType: 'M6' | 'T'
+    macroRunning: boolean
+    macroError: string | null
+  } | null
+
+  programPause: {
+    comment: string | null
+  } | null
+
+  /** Per-job tool library preference when a tool number exists in both scopes. */
+  toolPreferences: Record<number, 'M' | 'A'>
+  ambiguousTools: number[]
 }
 
 export interface JobCheckpoint {

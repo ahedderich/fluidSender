@@ -32,6 +32,7 @@ export interface UiSnapshot {
   modals: ModalEntry[]
   toasts: Toast[]
   console: SyncConsoleEntry[]
+  loadedToolNumber: number | null
 }
 
 export type PatchOp =

@@ -4,11 +4,14 @@ import { analyzeGCode } from './analysis'
 import { getModalStateAtLine } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
 import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
-import { broadcastPatch, setJobState, type PatchOp } from '../appState'
+import { broadcastPatch, setJobState, getConfig, type PatchOp } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
 import { startSend, sendGCode } from '../machine/sender'
+import { setMode } from '../machine/machineMode'
+import { toolStore } from '../tool/toolStore'
+import { appendRuntimeSession } from '../tool/runtimeLog'
 import type { SendHandle, SenderStatusEvent } from '../machine/types'
-import type { GCodeLine, GCodeModalState, JobState } from './types'
+import type { GCodeLine, GCodeModalState, JobState, ToolSection } from './types'
 
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
 const UPLOADS_DIR = join(DATA_DIR, 'uploads')
@@ -31,6 +34,15 @@ class JobRunner {
 
   // Active send session
   private _sendHandle: SendHandle | null = null
+
+  // Chunk-send (multi-section) state
+  private _toolSections: ToolSection[] = []
+  private _currentSectionIndex = 0
+  private _toolPreferences: Record<number, 'M' | 'A'> = {}
+  private _ambiguousTools: number[] = []
+
+  // Runtime session
+  private _runtimeSession: { toolNumber: number; scope: 'M' | 'A'; startMs: number } | null = null
 
   get status() { return this._status }
 
@@ -60,6 +72,10 @@ class JobRunner {
           analyzeProgress: 0,
           toolSections: null,
           errorMessage: null,
+          toolChangeRequest: null,
+          programPause: null,
+          toolPreferences: {},
+          ambiguousTools: [],
         })])
         this._status = 'analyzing'
 
@@ -86,6 +102,25 @@ class JobRunner {
       this.sendPtr = 0
       this._execPtr = 0
       this._sendHandle = null
+      this._toolSections = analysis.tools ?? []
+      this._currentSectionIndex = 0
+
+      // Detect ambiguous tools (same number in both scopes)
+      const activeMachineId = await this._getActiveMachineId()
+      this._ambiguousTools = []
+      this._toolPreferences = {}
+      if (this._toolSections.length > 1 && activeMachineId) {
+        const { machine, app } = toolStore.getAll(activeMachineId)
+        const machineNums = new Set(machine.map((t) => t.number))
+        const appNums = new Set(app.map((t) => t.number))
+        for (const section of this._toolSections) {
+          const n = section.toolNumber
+          if (n > 0 && machineNums.has(n) && appNums.has(n) && !this._ambiguousTools.includes(n)) {
+            this._ambiguousTools.push(n)
+            this._toolPreferences[n] = 'M'
+          }
+        }
+      }
 
       this._setStatus('loaded', {
         fileId,
@@ -101,6 +136,10 @@ class JobRunner {
         toolSections: analysis.tools,
         recovery: null,
         errorMessage: null,
+        toolChangeRequest: null,
+        programPause: null,
+        toolPreferences: this._toolPreferences,
+        ambiguousTools: this._ambiguousTools,
       })
 
       const checkpoint = await loadCheckpoint()
@@ -126,6 +165,10 @@ class JobRunner {
           analyzeProgress: 0,
           toolSections: null,
           errorMessage: null,
+          toolChangeRequest: null,
+          programPause: null,
+          toolPreferences: {},
+          ambiguousTools: [],
         })])
         this._status = 'idle'
       } else {
@@ -149,7 +192,9 @@ class JobRunner {
       this._execPtr = 0
     }
 
+    this._currentSectionIndex = 0
     this._setStatus('running', { startWallClock: Date.now(), execPtr: this._execPtr })
+    this._startRuntimeSession(this._toolSections[0] ?? null)
     this._startMainSend()
   }
 
@@ -192,23 +237,47 @@ class JobRunner {
     }
   }
 
-  /** Feed hold stop — decelerates the machine then resets to Idle. Returns to loaded state.
-   *  Machine does NOT enter alarm. Job is preserved and can be restarted. */
+  /** Resume after a tool change — continue from the next section. */
+  resumeAfterToolChange(): void {
+    if (this._status !== 'tool_change') return
+    this._startRuntimeSession(this._toolSections[this._currentSectionIndex] ?? null)
+    this._sendSection(this._currentSectionIndex)
+    this._setStatus('running', { toolChangeRequest: null })
+    setMode('sending')
+  }
+
+  /** Resume from an M0 program pause — send cycle-start to FluidNC. */
+  resumeFromProgramPause(): void {
+    if (this._status !== 'program_pause') return
+    this._setStatus('running', { programPause: null })
+    this._sendHandle?.cycleStart()
+  }
+
+  /** Update tool scope preference for an ambiguous tool number. */
+  setToolPreference(toolNumber: number, scope: 'M' | 'A'): void {
+    this._toolPreferences[toolNumber] = scope
+    broadcastPatch([setJobState({ toolPreferences: { ...this._toolPreferences } })])
+  }
+
+  /** Feed hold stop — decelerates the machine then resets to Idle. Returns to loaded state. */
   stop(): void {
     if (this._status === 'paused') {
-      // Machine already in Hold; go straight to hard reset (Hold→0x18 = Idle, no alarm)
       this._doHardStopAndReturnToLoaded()
+      return
+    }
+    if (this._status === 'tool_change') {
+      this._finalizeRuntimeSession().catch(() => {})
+      this._setStatus('loaded', { toolChangeRequest: null, startWallClock: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null })
       return
     }
     if (this._status !== 'running') return
     this._setStatus('stopping')
     this._sendHandle?.feedHold()
-    // _handleSenderEvent reacts to Hold:0 and calls _doHardStopAndReturnToLoaded
   }
 
-  /** Immediate hard reset — no deceleration, potential mid-move position loss.
-   *  Machine may enter alarm state; the alarm is NOT cleared automatically. */
+  /** Immediate hard reset — no deceleration, potential mid-move position loss. */
   emergencyStop(): void {
+    this._finalizeRuntimeSession().catch(() => {})
     const handle = this._sendHandle
     this._sendHandle = null
     this._execPtr = 0
@@ -219,6 +288,8 @@ class JobRunner {
       execPtr: 0,
       inPlanner: 0,
       recovery: null,
+      toolChangeRequest: null,
+      programPause: null,
     })
     clearCheckpoint().catch(() => {})
     handle?.hardStop()
@@ -234,6 +305,10 @@ class JobRunner {
     this._execPtr = 0
     this.fileId = null
     this.filename = null
+    this._toolSections = []
+    this._currentSectionIndex = 0
+    this._toolPreferences = {}
+    this._ambiguousTools = []
     broadcastPatch([setJobState({
       status: 'idle',
       fileId: null,
@@ -249,6 +324,10 @@ class JobRunner {
       toolSections: null,
       recovery: null,
       errorMessage: null,
+      toolChangeRequest: null,
+      programPause: null,
+      toolPreferences: {},
+      ambiguousTools: [],
     })])
     this._status = 'idle'
     clearAllJobData().catch(() => {})
@@ -265,6 +344,7 @@ class JobRunner {
       this.lines = analyzeGCode(content).lines
       this.fileId = analysis.fileId
       this.filename = analysis.filename
+      this._toolSections = analysis.tools ?? []
 
       const checkpoint = await loadCheckpoint()
       const hasCrash = !!checkpoint && checkpoint.fileId === analysis.fileId && checkpoint.execPtr > 0
@@ -282,6 +362,10 @@ class JobRunner {
         analyzeProgress: 100,
         toolSections: analysis.tools,
         errorMessage: null,
+        toolChangeRequest: null,
+        programPause: null,
+        toolPreferences: {},
+        ambiguousTools: [],
       }
 
       if (hasCrash) {
@@ -323,7 +407,6 @@ class JobRunner {
     try {
       const filename = checkpoint.filename
 
-      // Re-parse lines from disk if not already in memory (e.g. server restart mid-recovery)
       if (!this.lines.length || this.fileId !== checkpoint.fileId) {
         const content = await readFile(join(UPLOADS_DIR, checkpoint.fileId), 'utf8')
         this.lines = analyzeGCode(content).lines
@@ -347,6 +430,8 @@ class JobRunner {
         axisRanges: savedAnalysis?.axisRanges ?? null,
         recovery: null,
         errorMessage: null,
+        toolChangeRequest: null,
+        programPause: null,
       })
 
       if (modal) {
@@ -356,7 +441,6 @@ class JobRunner {
         const recoveryCommands = this._buildRecoverySequence(modal, safeZ)
         this._sendHandle = sendGCode(recoveryCommands, (event) => this._handleRecoveryEvent(event))
       } else {
-        // No modal state available — resume from position without pre-flight moves
         this._setStatus('running', { startWallClock: Date.now() })
         this._startMainSend()
       }
@@ -367,14 +451,13 @@ class JobRunner {
 
   /** Called by ws.ts on machine disconnect. */
   onMachineDisconnected(): void {
-    // Clear send state before sender fires its error event so _handleSenderEvent no-ops
+    this._finalizeRuntimeSession().catch(() => {})
     this._sendHandle = null
 
     if (this._status === 'stopping') {
-      // Stop was in progress — treat disconnect as completing the stop
       this._execPtr = 0
       this.sendPtr = 0
-      this._setStatus('loaded', { startWallClock: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null })
+      this._setStatus('loaded', { startWallClock: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null, toolChangeRequest: null, programPause: null })
       clearCheckpoint().catch(() => {})
     } else if (this._status === 'running' || this._status === 'pausing' || this._status === 'recovering') {
       this._setStatus('paused', { errorMessage: 'Machine disconnected during job' })
@@ -402,20 +485,48 @@ class JobRunner {
 
   // ─── Private ─────────────────────────────────────────────────────────────────
 
+  /** Start sending from current sendPtr as a flat chunk (single section or recovery). */
   private _startMainSend(): void {
+    if (this._toolSections.length <= 1) {
+      // Single-section file: send everything from sendPtr
+      this._startFlatSend()
+      return
+    }
+
+    // Multi-section: start sending current section's chunk
+    this._sendSection(this._currentSectionIndex)
+  }
+
+  private _startFlatSend(): void {
     const startPtr = this.sendPtr
     this._sendHandle = startSend(
-      this.lines.slice(startPtr).map(l => ({
-        raw: l.raw,
-        isMotion: l.isMotion,
-      })),
+      this.lines.slice(startPtr).map((l) => ({ raw: l.raw, isMotion: l.isMotion })),
       (event) => this._handleSenderEvent(event),
-      startPtr,  // lineOffset: sender adds this so events carry absolute file line indices
+      startPtr,
+    )
+  }
+
+  /** Send a specific tool section's lines as a chunk. */
+  private _sendSection(idx: number): void {
+    const section = this._toolSections[idx]
+    if (!section) {
+      this._completeJob()
+      return
+    }
+
+    const nextSection = this._toolSections[idx + 1]
+    const endLine = nextSection ? nextSection.startLine - 1 : this.lines.length - 1
+    const startLine = Math.max(section.startLine, this.sendPtr)
+
+    const chunk = this.lines.slice(startLine, endLine + 1)
+    this._sendHandle = startSend(
+      chunk.map((l) => ({ raw: l.raw, isMotion: l.isMotion })),
+      (event) => this._handleSenderEvent(event),
+      startLine,
     )
   }
 
   private _handleSenderEvent(event: SenderStatusEvent): void {
-    // If send handle was cleared (e.g. emergencyStop or disconnect), ignore stale events
     if (!this._sendHandle) return
 
     const ops: PatchOp[] = []
@@ -427,20 +538,26 @@ class JobRunner {
       ops.push(setJobState({
         sendPtr: this.sendPtr,
         execPtr: this._execPtr,
-        inPlanner
+        inPlanner,
       }))
       if (ops.length > 0) broadcastPatch(ops)
       this._checkpointIfDue()
     }
 
-    // Handle feed hold progress events (non-completed, but holdPhase is set)
+    // M0 program pause detection (before feed hold handling)
+    if (event.holdPhase === 0 && event.holdReason === 'program'
+      && (this._status === 'running' || this._status === 'recovering')) {
+      const pauseComment = this._findPauseComment(event.executed)
+      this._enterProgramPause(pauseComment)
+      return
+    }
+
+    // Handle feed hold progress events
     if (event.holdPhase !== null) {
       if (event.holdPhase === 0) {
         if (this._status === 'pausing') {
-          // Reset sendPtr to execPtr: queued-but-not-executed lines are cleared by 0x18.
           this.sendPtr = this._execPtr
           this._setStatus('paused', { sendPtr: this._execPtr })
-          // Unlock machine: soft reset from Hold → Idle so operator can jog freely.
           const handle = this._sendHandle
           this._sendHandle = null
           handle?.hardStop()
@@ -457,10 +574,31 @@ class JobRunner {
 
     switch (event.completedMode) {
       case 'success':
-        this._completeJob()
+        if (this._toolSections.length > 1) {
+          this._finalizeRuntimeSession().then(() => {
+            const nextIdx = this._currentSectionIndex + 1
+            if (nextIdx < this._toolSections.length) {
+              this._currentSectionIndex = nextIdx
+              this._enterToolChangeMode(nextIdx)
+            } else {
+              this._completeJob()
+            }
+          }).catch((err) => {
+            console.error('[jobRunner] runtime finalize error:', err)
+            const nextIdx = this._currentSectionIndex + 1
+            if (nextIdx < this._toolSections.length) {
+              this._currentSectionIndex = nextIdx
+              this._enterToolChangeMode(nextIdx)
+            } else {
+              this._completeJob()
+            }
+          })
+        } else {
+          this._finalizeRuntimeSession().catch(() => {})
+          this._completeJob()
+        }
         break
       case 'soft':
-        // Only reachable via direct sender:softStop WS intent; no job-level action needed
         break
       case 'error':
         if (this._status !== 'paused' && this._status !== 'cancelled' && this._status !== 'error') {
@@ -468,14 +606,12 @@ class JobRunner {
         }
         break
       case 'hard':
-        // emergencyStop() sets status before calling hardStop — nothing to do here
         break
     }
   }
 
   private _handleRecoveryEvent(event: SenderStatusEvent): void {
     if (!this._sendHandle) return
-
     if (!event.completed) return
 
     this._sendHandle = null
@@ -489,12 +625,110 @@ class JobRunner {
         this._broadcastError(event.errorReason ?? 'Recovery failed')
         break
       case 'hard':
-        // emergencyStop() handles status
         break
     }
   }
 
-  /** Feed hold confirmed stopped (Hold:0) then hard reset. From Hold, 0x18 goes to Idle (no alarm). */
+  private async _enterToolChangeMode(sectionIndex: number): Promise<void> {
+    const section = this._toolSections[sectionIndex]!
+    const toolChangeType = section.toolChangeType ?? 'T'
+
+    this._status = 'tool_change'
+    setMode('idle')
+
+    const toolChangeRequest: JobState['toolChangeRequest'] = {
+      sectionIndex,
+      toolNumber: section.toolNumber,
+      toolChangeType,
+      macroRunning: false,
+      macroError: null,
+    }
+
+    broadcastPatch([setJobState({ status: 'tool_change', toolChangeRequest })])
+
+    const macro = await this._getToolChangeMacro()
+    if (macro && macro.trim()) {
+      const macroLines = macro.split('\n').map((l) => l.trim()).filter(Boolean)
+      broadcastPatch([setJobState({ toolChangeRequest: { ...toolChangeRequest, macroRunning: true } })])
+      this._sendHandle = sendGCode(macroLines, (event) => this._handleMacroEvent(event, toolChangeRequest))
+    }
+  }
+
+  private _handleMacroEvent(
+    event: SenderStatusEvent,
+    baseRequest: NonNullable<JobState['toolChangeRequest']>,
+  ): void {
+    if (!event.completed) return
+    this._sendHandle = null
+
+    if (event.completedMode === 'success') {
+      broadcastPatch([setJobState({ toolChangeRequest: { ...baseRequest, macroRunning: false, macroError: null } })])
+    } else {
+      const errMsg = event.errorReason ?? 'Macro failed'
+      broadcastPatch([setJobState({ toolChangeRequest: { ...baseRequest, macroRunning: false, macroError: errMsg } })])
+    }
+  }
+
+  private _enterProgramPause(comment: string | null): void {
+    this._status = 'program_pause'
+    broadcastPatch([setJobState({ status: 'program_pause', programPause: { comment } })])
+  }
+
+  private _findPauseComment(execPtr: number): string | null {
+    for (const offset of [0, -1, 1]) {
+      const line = this.lines[execPtr + offset]
+      if (line?.type === 'program_pause') return line.pauseComment ?? null
+    }
+    return null
+  }
+
+  private _startRuntimeSession(section: ToolSection | null): void {
+    if (!section || section.toolNumber === 0) {
+      this._runtimeSession = null
+      return
+    }
+    const scope = this._toolPreferences[section.toolNumber] ?? 'M'
+    this._runtimeSession = { toolNumber: section.toolNumber, scope, startMs: Date.now() }
+  }
+
+  private async _finalizeRuntimeSession(): Promise<void> {
+    if (!this._runtimeSession) return
+    const s = this._runtimeSession
+    this._runtimeSession = null
+    const endMs = Date.now()
+    const durationMin = Math.floor((endMs - s.startMs) / 60_000)
+    const machineId = await this._getActiveMachineId()
+
+    const session = {
+      ...s,
+      machineId: machineId ?? 'unknown',
+      jobFile: this.filename ?? '',
+      endMs,
+    }
+    await appendRuntimeSession(session)
+    if (durationMin > 0 && machineId) {
+      await toolStore.incrementRuntime(s.toolNumber, s.scope, machineId, durationMin)
+    }
+  }
+
+  private async _getActiveMachineId(): Promise<string | null> {
+    try {
+      const config = await getConfig() as { machines?: Array<{ id: string }> }
+      return (config.machines?.[0]?.id) ?? null
+    } catch {
+      return null
+    }
+  }
+
+  private async _getToolChangeMacro(): Promise<string | null> {
+    try {
+      const config = await getConfig() as { machines?: Array<{ toolChangeMacro?: string }> }
+      return config.machines?.[0]?.toolChangeMacro ?? null
+    } catch {
+      return null
+    }
+  }
+
   private _doHardStopAndReturnToLoaded(): void {
     const handle = this._sendHandle
     this._sendHandle = null
@@ -506,6 +740,8 @@ class JobRunner {
       execPtr: 0,
       inPlanner: 0,
       recovery: null,
+      toolChangeRequest: null,
+      programPause: null,
     })
     clearCheckpoint().catch(() => {})
     handle?.hardStop()
@@ -519,6 +755,8 @@ class JobRunner {
       sendPtr: this.lines.length,
       execPtr: this.lines.length,
       inPlanner: 0,
+      toolChangeRequest: null,
+      programPause: null,
     })
     clearCheckpoint().catch(() => {})
   }

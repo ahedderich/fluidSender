@@ -148,6 +148,8 @@ export interface MachineProfile {
   magazine: MagazineConfig
   /** null until first firmware connect — loaded fresh on each connect */
   fluidncConfig: FluidNCConfig | null
+  /** GCode to run automatically before each tool change. Empty string = no automatic macro. */
+  toolChangeMacro: string
 }
 
 // ─── App-level settings types ─────────────────────────────────────────────────
@@ -221,6 +223,7 @@ export const useSettingsStore = defineStore('settings', () => {
       macros: [],
       magazine: { enabled: false, size: 0 },
       fluidncConfig: null,
+      toolChangeMacro: '',
     })
     activeMachineId.value = id
   }
@@ -272,7 +275,7 @@ export const useSettingsStore = defineStore('settings', () => {
   })
 
   function applyServerState(data: PersistedConfig) {
-    machines.value = data.machines ?? []
+    machines.value = (data.machines ?? []).map((m) => ({ toolChangeMacro: '', ...m }))
     // Keep current selection if still valid; otherwise fall back to first machine
     if (!machines.value.find((m) => m.id === activeMachineId.value)) {
       activeMachineId.value = machines.value[0]?.id ?? ''

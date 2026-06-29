@@ -3,7 +3,7 @@ import { useMachineStore } from '~/stores/machine'
 import { useSyncStore, type PatchOp, type UiSnapshot } from '~/stores/sync'
 import { settleModal } from '~/composables/useModals'
 import { setWsSend, wsConnected } from '~/composables/useWsSend'
-import type { ServerConnectionState, MachineStatus, StockDef } from '~/stores/machine'
+import type { ServerConnectionState, MachineStatus, StockDef, ToolLibraryEntry } from '~/stores/machine'
 import type { JobState } from '~/types/job'
 
 interface ServerMessage {
@@ -50,6 +50,20 @@ export default defineNuxtPlugin((nuxtApp) => {
           else machineStore.clearStock()
         }
         break
+      case 'toolLibrary':
+        if ('set' in op) {
+          const lib = op.set as { machine: ToolLibraryEntry[]; app: ToolLibraryEntry[] }
+          machineStore.setToolLibrary(lib)
+        }
+        break
+      case 'ui':
+        if ('set' in op) {
+          const uiPatch = op.set as Record<string, unknown>
+          if ('loadedToolNumber' in uiPatch) {
+            machineStore.setLoadedToolNumber(uiPatch.loadedToolNumber as number | null)
+          }
+        }
+        break
       default:
         syncStore.applyOp(op)
         if (op.path === 'modals' && 'removeId' in op) settleModal(op.removeId, op.meta?.result)
@@ -73,6 +87,7 @@ export default defineNuxtPlugin((nuxtApp) => {
           job: JobState | null
           machine: MachineStatus | null
           stock: StockDef | null
+          toolLibrary: { machine: ToolLibraryEntry[]; app: ToolLibraryEntry[] } | null
         }
         settingsStore.applyServerState(p.config)
         machineStore.applyServerStatus(p.connection)
@@ -82,6 +97,8 @@ export default defineNuxtPlugin((nuxtApp) => {
         else if (p.connection.connected) send({ t: 'machine:status:request' })
         if (p.stock) machineStore.setStock(p.stock)
         else machineStore.clearStock()
+        if (p.toolLibrary) machineStore.setToolLibrary(p.toolLibrary)
+        machineStore.setLoadedToolNumber(p.ui?.loadedToolNumber ?? null)
         break
       }
       case 'patch': {

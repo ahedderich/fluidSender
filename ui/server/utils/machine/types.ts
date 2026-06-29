@@ -11,6 +11,13 @@ export interface SenderStatusEvent {
   errorReason: string | null
   /** Non-null while machine is in Hold state after a feed hold; 1 = decelerating, 0 = fully stopped. */
   holdPhase: 0 | 1 | null
+  /**
+   * Reason for the hold when holdPhase becomes 0:
+   *   'feed_hold' = operator-initiated feed hold (!); machine was already feedHolding
+   *   'program'   = firmware-initiated hold (M0 or door); machine was not feedHolding
+   *   null        = not in a hold
+   */
+  holdReason: 'feed_hold' | 'program' | null
 }
 
 export interface SendHandle {

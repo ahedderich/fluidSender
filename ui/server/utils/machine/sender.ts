@@ -62,6 +62,7 @@ function _makeEvent(chunk: ActiveChunk, overrides?: Partial<SenderStatusEvent>):
     completedMode: null,
     errorReason: null,
     holdPhase: null,
+    holdReason: null,
     ...overrides,
   }
 }
@@ -203,11 +204,12 @@ export function onBufUpdate(
   // While in Hold: emit progress event for jobRunner (so it can detect Hold:0) but
   // don't dispatch new lines or check for job completion.
   if (machineState === 'Hold') {
-    if (chunk.feedHolding) {
-      // Real FluidNC emits Hold:1 (decelerating) then Hold:0 (stopped).
-      // Firmware that omits the substate sends holdPhase:null — treat as Hold:0 (already stopped).
-      _emit(chunk, { holdPhase: holdPhase ?? 0 })
-    }
+    // Real FluidNC emits Hold:1 (decelerating) then Hold:0 (stopped).
+    // Firmware that omits the substate sends holdPhase:null — treat as Hold:0 (already stopped).
+    const resolvedPhase = holdPhase ?? 0
+    // holdReason distinguishes operator feed-hold (!), from firmware-initiated hold (M0/door).
+    const holdReason: 'feed_hold' | 'program' = chunk.feedHolding ? 'feed_hold' : 'program'
+    _emit(chunk, { holdPhase: resolvedPhase, holdReason })
     return
   }
 

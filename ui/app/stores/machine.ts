@@ -36,21 +36,8 @@ export interface Tool {
 }
 
 
-export interface ToolLibraryEntry {
-  id: string
-  number?: number
-  name: string
-  type: string
-  diameter: number
-  fluteCount?: number
-  fluteLength?: number
-  overallLength?: number
-  material?: string
-  usageMinutes: number
-  lastUsed?: number
-  /** M = machine-specific tool, A = app-level shared tool */
-  source: 'M' | 'A'
-}
+export type { ToolLibraryEntry } from '~~/server/utils/tool/types'
+import type { ToolLibraryEntry } from '~~/server/utils/tool/types'
 
 export interface ServerConnectionState {
   machineId: string | null
@@ -90,12 +77,18 @@ export const useMachineStore = defineStore('machine', () => {
   const consoleLog = computed(() => sync.consoleLog)
 
   const tools = ref<Tool[]>([])
-  const toolLibrary = ref<ToolLibraryEntry[]>([])
+  const toolLibrary = reactive<{ machine: ToolLibraryEntry[]; app: ToolLibraryEntry[] }>({ machine: [], app: [] })
   const magazineSlots = ref<(number | null)[]>([])
   const stock = ref<StockDef | null>(null)
+  const loadedToolNumber = ref<number | null>(null)
 
-  function setToolLibrary(entries: ToolLibraryEntry[]) {
-    toolLibrary.value = entries
+  function setToolLibrary(library: { machine: ToolLibraryEntry[]; app: ToolLibraryEntry[] }) {
+    toolLibrary.machine.splice(0, toolLibrary.machine.length, ...library.machine)
+    toolLibrary.app.splice(0, toolLibrary.app.length, ...library.app)
+  }
+
+  function setLoadedToolNumber(n: number | null) {
+    loadedToolNumber.value = n
   }
 
   function setStock(s: StockDef) { stock.value = s }
@@ -202,8 +195,10 @@ export const useMachineStore = defineStore('machine', () => {
     toolLibrary,
     magazineSlots,
     stock,
+    loadedToolNumber,
     setStock,
     clearStock,
+    setLoadedToolNumber,
     applyServerStatus,
     applyMachineStatus,
     connect,

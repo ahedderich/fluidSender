@@ -57,6 +57,7 @@ export interface UiState {
   modals: ModalEntry[]
   toasts: Toast[]
   console: UiConsoleEntry[]
+  loadedToolNumber: number | null
 }
 
 const CONSOLE_LIMIT = 300
@@ -68,6 +69,7 @@ const ui: UiState = {
   modals: [],
   toasts: [],
   console: [],
+  loadedToolNumber: null,
 }
 
 // A patch op targets a top-level UiState slice by `path`. Scalars use `set`;
@@ -158,6 +160,10 @@ const job: JobState = {
   toolSections: null,
   recovery: null,
   errorMessage: null,
+  toolChangeRequest: null,
+  programPause: null,
+  toolPreferences: {},
+  ambiguousTools: [],
 }
 
 export function getJobState(): JobState {
@@ -257,6 +263,31 @@ export function clearConsole(): PatchOp {
   return { path: 'console', clear: true }
 }
 
+export async function setLoadedTool(machineId: string, toolNumber: number | null): Promise<PatchOp> {
+  ui.loadedToolNumber = toolNumber
+  const config = await getConfig()
+  const loadedTools = (config.app?.loadedTools as Record<string, number> | undefined) ?? {}
+  if (toolNumber === null) {
+    delete loadedTools[machineId]
+  } else {
+    loadedTools[machineId] = toolNumber
+  }
+  config.app = { ...(config.app ?? {}), loadedTools }
+  await setConfig(config)
+  return { path: 'ui', set: { loadedToolNumber: toolNumber } }
+}
+
+export function clearLoadedToolDisplay(): PatchOp {
+  ui.loadedToolNumber = null
+  return { path: 'ui', set: { loadedToolNumber: null } }
+}
+
+export async function getLoadedToolForMachine(machineId: string): Promise<number | null> {
+  const config = await getConfig()
+  const loadedTools = config.app?.loadedTools as Record<string, number> | undefined
+  return loadedTools?.[machineId] ?? null
+}
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 export async function getConfig(): Promise<AppConfig> {
@@ -310,12 +341,18 @@ export function getFullState() {
 
 // getMachineStatus is injected at startup to avoid a circular dependency with the poller
 let _getMachineStatus: (() => MachineStatus | null) | null = null
+let _getToolLibrary: ((machineId: string) => { machine: unknown[]; app: unknown[] }) | null = null
 
 export function registerMachineStatusProvider(fn: () => MachineStatus | null) {
   _getMachineStatus = fn
 }
 
+export function registerToolLibraryProvider(fn: (machineId: string) => { machine: unknown[]; app: unknown[] }) {
+  _getToolLibrary = fn
+}
+
 export function getSnapshot() {
+  const machineId = ui.selection.activeMachineId
   return {
     config: cachedConfig,
     connection: getConnection(),
@@ -323,5 +360,6 @@ export function getSnapshot() {
     job: getJobState(),
     machine: _getMachineStatus?.() ?? null,
     stock: stockDef,
+    toolLibrary: _getToolLibrary ? _getToolLibrary(machineId) : { machine: [], app: [] },
   }
 }
