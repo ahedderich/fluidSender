@@ -19,12 +19,17 @@ import {
   clearConsole,
   setConnection,
   registerMachineStatusProvider,
+  registerToolLibraryProvider,
+  setLoadedTool,
+  clearLoadedToolDisplay,
+  getLoadedToolForMachine,
   setStock,
   clearStock,
   type ModalEntry,
   type Toast,
   type StockDef,
 } from '../utils/appState'
+import { toolStore } from '../utils/tool/toolStore'
 import { machineConnection } from '../utils/machine/connection'
 import {
   startPoller,
@@ -48,12 +53,16 @@ import {
 } from '../utils/machine/sender'
 import { sendJog, cancelJog, onJogStatusUpdate } from '../utils/machine/jogger'
 import { jobRunner } from '../utils/gcode/jobRunner'
+import { loadRuntimeLog } from '../utils/tool/runtimeLog'
 
 // ─── One-time bootstrap ──────────────────────────────────────────────────────
 
+loadRuntimeLog().catch((err) => console.error('[ws] loadRuntimeLog error:', err))
+toolStore.loadAppLibrary().catch((err) => console.error('[ws] loadAppLibrary error:', err))
 initPoller((msg) => broadcast(msg))
 initMachineMode((msg) => broadcast(msg))
 registerMachineStatusProvider(getLastMachineStatus)
+registerToolLibraryProvider((machineId) => toolStore.getAll(machineId) as { machine: unknown[]; app: unknown[] })
 
 jobRunner.bootRestore().then((mode) => {
   if (mode === 'crash') {
@@ -74,6 +83,17 @@ machineConnection.on('event', (ev) => {
         pushConsole({ type: 'info', text: `TCP connected to ${ev.host}:${ev.port}`, ts: Date.now() }),
       ])
       startPoller()
+      const connMachineId = getConnection().machineId ?? ''
+      // Load machine-specific tool library from disk then restore persisted loaded tool
+      toolStore.loadMachineLibrary(connMachineId).then(() => {
+        const { machine: mTools, app: aTools } = toolStore.getAll(connMachineId)
+        broadcastPatch([{ path: 'toolLibrary', set: { machine: mTools, app: aTools } }])
+      }).catch(() => {})
+      getLoadedToolForMachine(connMachineId).then((toolNumber) => {
+        const uiState = getUiState()
+        uiState.loadedToolNumber = toolNumber
+        broadcastPatch([{ path: 'ui', set: { loadedToolNumber: toolNumber } }])
+      }).catch(() => {})
       break
     }
     case 'disconnected': {
@@ -85,6 +105,7 @@ machineConnection.on('event', (ev) => {
       const next = setConnection({ machineId: null, connected: false, status: 'DISCONNECTED', firmwareVersion: '' })
       broadcastPatch([
         { path: 'connection', set: { ...next } },
+        clearLoadedToolDisplay(),
         pushConsole({ type: 'info', text: ev.intentional ? 'Disconnected' : 'Connection closed by remote', ts: Date.now() }),
       ])
       break
@@ -264,6 +285,76 @@ export default defineWebSocketHandler({
           console.error('[ws] loadJobFresh error:', err)
         })
         break
+      case 'job:resumeToolChange':
+        jobRunner.resumeAfterToolChange()
+        break
+      case 'job:resumeProgramPause':
+        jobRunner.resumeFromProgramPause()
+        break
+      case 'job:setToolPreference': {
+        const { toolNumber, scope } = msg.payload as { toolNumber: number; scope: 'M' | 'A' }
+        jobRunner.setToolPreference(toolNumber, scope)
+        break
+      }
+
+      // ── Tool library ──────────────────────────────────────────────────────
+      case 'tool:load': {
+        const conn = getConnection()
+        if (!conn.connected) break
+        const { toolNumber } = msg.payload as { toolNumber: number }
+        const machineId = conn.machineId ?? ''
+        setLoadedTool(machineId, toolNumber).then((op) => {
+          broadcastPatch([op])
+        }).catch((e: unknown) => {
+          console.error('[ws] tool:load persist error:', e)
+        })
+        machineConnection.sendRaw(`T${toolNumber}`)
+        break
+      }
+      case 'tool:unload': {
+        const machineId = getConnection().machineId ?? ''
+        setLoadedTool(machineId, null).then((op) => {
+          broadcastPatch([op])
+        }).catch((e: unknown) => {
+          console.error('[ws] tool:unload persist error:', e)
+        })
+        break
+      }
+      case 'tool:upsert': {
+        const { machineId: mId, ...entry } = msg.payload as { machineId: string; [key: string]: unknown }
+        toolStore.upsert(entry as unknown as Parameters<typeof toolStore.upsert>[0], mId).catch((e: unknown) => {
+          console.error('[ws] tool:upsert error:', e)
+        })
+        break
+      }
+      case 'tool:delete': {
+        const { id: tId, scope: tScope, machineId: tMachineId } = msg.payload as { id: string; scope: 'M' | 'A'; machineId: string }
+        toolStore.delete(tId, tScope, tMachineId).catch((e: unknown) => {
+          console.error('[ws] tool:delete error:', e)
+        })
+        break
+      }
+      case 'tool:import': {
+        const { data: importData, scope: importScope, machineId: importMachineId } = msg.payload as { data: unknown; scope: 'M' | 'A'; machineId: string }
+        toolStore.importFusion360(importData, importScope, importMachineId).then((result) => {
+          broadcastPatch([pushToast({
+            id: `tool-import-${Date.now()}`,
+            type: 'success',
+            message: `Imported ${result.added} new tools, updated ${result.updated}`,
+            timeout: 5000,
+          })])
+        }).catch((e: unknown) => {
+          console.error('[ws] tool:import error:', e)
+        })
+        break
+      }
+      case 'tool:clearRuntime': {
+        const { id: crId, scope: crScope, machineId: crMachineId } = msg.payload as { id: string; scope: 'M' | 'A'; machineId: string }
+        toolStore.clearRuntime(crId, crScope, crMachineId).catch((e: unknown) => {
+          console.error('[ws] tool:clearRuntime error:', e)
+        })
+        break
+      }
 
       // ── UI state ──────────────────────────────────────────────────────────
       case 'ui:nav':

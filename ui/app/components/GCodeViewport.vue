@@ -76,13 +76,23 @@
       </button>
     </div>
 
-    <!-- Active tool (bottom-left, above progress bar) -->
-    <div
-      v-if="currentTool"
-      class="absolute bottom-14 left-2.5 z-10 flex items-center gap-2 px-2.5 py-1.5 bg-slate-800/80 backdrop-blur-sm border border-slate-600/50 rounded-md text-xs"
-    >
-      <span class="font-bold text-amber-400">T{{ currentTool.number }}</span>
-      <span class="text-slate-300">{{ currentTool.description }}</span>
+    <!-- Loaded tool (bottom-left, above progress bar) -->
+    <div v-if="machine.connected" class="absolute bottom-14 left-2.5 z-10 flex items-center gap-2 px-2.5 py-1.5 bg-slate-800/80 backdrop-blur-sm border border-slate-600/50 rounded-md text-xs">
+      <template v-if="loadedLibTool">
+        <span class="w-4 h-4 rounded-full bg-amber-500 flex items-center justify-center text-[9px] font-bold text-white shrink-0">{{ loadedLibTool.number }}</span>
+        <span class="text-slate-300 max-w-36 truncate">{{ loadedLibTool.name }}</span>
+        <span class="text-slate-500">⌀{{ loadedLibTool.diameter }}</span>
+      </template>
+      <template v-else-if="machine.loadedToolNumber !== null">
+        <span class="w-4 h-4 rounded-full bg-amber-500 flex items-center justify-center text-[9px] font-bold text-white shrink-0">{{ machine.loadedToolNumber }}</span>
+        <span class="text-slate-500 italic">T{{ machine.loadedToolNumber }} (not in library)</span>
+      </template>
+      <template v-else>
+        <svg class="w-3 h-3 text-slate-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4" />
+        </svg>
+        <span class="text-slate-500 italic">No tool loaded</span>
+      </template>
     </div>
 
     <!-- Progress bar (bottom) -->
@@ -157,21 +167,18 @@ const etaLabel = computed(() => {
   return `ETA: ${new Date(eta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
 })
 
-const currentTool = computed(() => {
-  if (!machine.tools.length) return null
-  const line = job.value?.sendPtr ?? 0
-  return (
-    machine.tools.find((t) => line >= t.lineStart && line <= t.lineEnd) ??
-    machine.tools[0]
-  )
-})
+const allToolLibrary = computed(() => [
+  ...machine.toolLibrary.machine,
+  ...machine.toolLibrary.app,
+])
 
-const toolDiameter = computed(() => {
-  const t = currentTool.value
-  if (!t) return 8
-  const lib = machine.toolLibrary.find(e => e.number === t.number)
-  return lib?.diameter ?? 8
-})
+const loadedLibTool = computed(() =>
+  machine.loadedToolNumber !== null
+    ? (allToolLibrary.value.find(e => e.number === machine.loadedToolNumber) ?? null)
+    : null,
+)
+
+const toolDiameter = computed(() => loadedLibTool.value?.diameter ?? 8)
 
 const machineBounds = computed(() => {
   const axes = settings.activeMachine?.fluidncConfig?.axes

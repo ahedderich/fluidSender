@@ -100,30 +100,154 @@
       </table>
     </div>
 
+    <!-- M0 Program Pause banner -->
+    <div
+      v-if="job?.status === 'program_pause'"
+      class="px-3 py-2.5 border-b border-blue-200 dark:border-blue-800/50 bg-blue-50 dark:bg-blue-900/20 shrink-0"
+    >
+      <div class="flex items-start gap-2 mb-2.5">
+        <svg class="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div class="min-w-0">
+          <p class="text-xs font-semibold text-blue-800 dark:text-blue-300">Program Pause (M0)</p>
+          <p v-if="job?.programPause?.comment" class="text-xs text-blue-700 dark:text-blue-400 mt-0.5 font-medium">{{ job?.programPause?.comment }}</p>
+        </div>
+      </div>
+      <div class="flex gap-1.5">
+        <button
+          class="flex-1 py-1.5 bg-white dark:bg-slate-700 border border-blue-200 dark:border-slate-600 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors"
+          @click="wsSend({ t: 'job:stop' })"
+        >
+          Cancel Job
+        </button>
+        <button
+          class="flex-1 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-xs font-semibold transition-colors"
+          @click="wsSend({ t: 'job:resumeProgramPause' })"
+        >
+          Continue →
+        </button>
+      </div>
+    </div>
+
+    <!-- Tool Change banner -->
+    <div
+      v-if="job?.status === 'tool_change' && job?.toolChangeRequest"
+      class="px-3 py-2.5 border-b border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20 shrink-0"
+    >
+      <div class="flex items-start gap-2 mb-2">
+        <svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l5.654-4.654m5.292-5.293.97-.97a3.75 3.75 0 115.304 5.304l-.97.97" />
+        </svg>
+        <div class="min-w-0">
+          <p class="text-xs font-semibold text-amber-800 dark:text-amber-300">
+            {{ job?.toolChangeRequest?.toolChangeType === 'M6' ? 'Tool Change Required' : 'Tool Selection Required' }}
+          </p>
+          <p class="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+            Load: T{{ job?.toolChangeRequest?.toolNumber }}
+            <span v-if="toolChangeLibEntry"> — {{ toolChangeLibEntry.name }} ⌀{{ toolChangeLibEntry.diameter }}mm</span>
+          </p>
+        </div>
+      </div>
+      <!-- Macro status -->
+      <div v-if="job?.toolChangeRequest?.macroRunning" class="mb-2 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+        <span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+        Macro running…
+      </div>
+      <div v-else-if="job?.toolChangeRequest?.macroError" class="mb-2 text-xs text-red-600 dark:text-red-400">
+        ✗ Macro error: {{ job?.toolChangeRequest?.macroError }}
+      </div>
+      <div v-else-if="job?.toolChangeRequest?.macroError === null && !job?.toolChangeRequest?.macroRunning" class="mb-2 text-xs text-green-600 dark:text-green-400"></div>
+      <div class="flex gap-1.5">
+        <button
+          class="flex-1 py-1.5 bg-white dark:bg-slate-700 border border-amber-200 dark:border-slate-600 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors"
+          @click="wsSend({ t: 'job:stop' })"
+        >
+          Cancel Job
+        </button>
+        <button
+          :disabled="job?.toolChangeRequest?.macroRunning ?? false"
+          class="flex-1 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-md text-xs font-semibold transition-colors"
+          @click="wsSend({ t: 'job:resumeToolChange' })"
+        >
+          Resume →
+        </button>
+      </div>
+    </div>
+
     <!-- Tool list -->
     <div class="flex-1 overflow-y-auto min-h-0">
       <template v-if="job">
         <div class="px-3 pt-2 pb-1 shrink-0">
-          <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Tools ({{ machine.tools.length }})</p>
+          <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+            Tools ({{ toolSections.length }})
+          </p>
         </div>
-        <div class="px-3 pb-3 space-y-1.5">
+        <!-- No tool definitions state -->
+        <div v-if="!toolSections.length" class="px-3 pb-3">
+          <p class="text-xs text-gray-400 dark:text-slate-500 italic">No tool definitions found in this file</p>
+        </div>
+        <div v-else class="px-3 pb-3 space-y-1.5">
           <div
-            v-for="tool in machine.tools"
-            :key="tool.number"
-            :class="tool.number === currentTool?.number
+            v-for="(section, idx) in toolSections"
+            :key="idx"
+            :class="sectionState(section) === 'active'
               ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700/60'
-              : 'bg-gray-50 dark:bg-slate-900 border-gray-200 dark:border-slate-700'"
-            class="flex items-center gap-2.5 border rounded-lg px-2.5 py-2"
+              : sectionState(section) === 'complete'
+                ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800/50'
+                : 'bg-gray-50 dark:bg-slate-900 border-gray-200 dark:border-slate-700'"
+            class="group border rounded-lg px-2.5 py-2"
           >
-            <div
-              :class="tool.number === currentTool?.number ? 'bg-amber-500' : 'bg-blue-700'"
-              class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
-            >
-              {{ tool.number }}
-            </div>
-            <div class="min-w-0 flex-1">
-              <p class="text-xs font-medium text-gray-800 dark:text-slate-200 truncate">{{ tool.description }}</p>
-              <p class="text-xs text-gray-400 dark:text-slate-500">{{ (tool.lineEnd - tool.lineStart + 1).toLocaleString() }} lines</p>
+            <div class="flex items-center gap-2">
+              <div
+                :class="sectionState(section) === 'active' ? 'bg-amber-500'
+                  : sectionState(section) === 'complete' ? 'bg-green-600'
+                  : 'bg-blue-700'"
+                class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+              >
+                {{ section.toolNumber }}
+              </div>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs font-medium text-gray-800 dark:text-slate-200 truncate">
+                  {{ libraryEntry(section)?.name ?? section.commentedName ?? `T${section.toolNumber}` }}
+                </p>
+                <p class="text-xs text-gray-400 dark:text-slate-500">{{ section.lineCount.toLocaleString() }} lines</p>
+              </div>
+              <!-- Not in library indicator -->
+              <span
+                v-if="!libraryEntry(section)"
+                class="text-[10px] text-gray-400 dark:text-slate-500 border border-gray-300 dark:border-slate-600 rounded px-1 leading-tight shrink-0 cursor-default"
+                title="Tool could not be found in library"
+              >?</span>
+              <!-- Diameter mismatch warning -->
+              <span
+                v-if="diameterMismatch(section)"
+                class="text-[10px] text-amber-600 dark:text-amber-400 shrink-0"
+                :title="`Header ⌀${section.commentedDiameter}mm, library ⌀${libraryEntry(section)?.diameter}mm`"
+              >⚠</span>
+              <!-- Load / Unload buttons (hover only) -->
+              <div class="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity">
+                <button
+                  :disabled="machine.loadedToolNumber === section.toolNumber"
+                  class="p-1 rounded hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-400 dark:text-slate-500 hover:text-green-600 dark:hover:text-green-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="Load tool into spindle"
+                  @click="wsSend({ t: 'tool:load', payload: { toolNumber: section.toolNumber } })"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                </button>
+                <button
+                  :disabled="machine.loadedToolNumber !== section.toolNumber"
+                  class="p-1 rounded hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="Unload tool from spindle"
+                  @click="wsSend({ t: 'tool:unload', payload: {} })"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -134,10 +258,7 @@
           <svg class="w-8 h-8 text-gray-300 dark:text-slate-600 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
-          <p class="text-gray-400 dark:text-slate-500 text-sm mb-3">No file loaded</p>
-          <button class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors font-medium">
-            Upload GCode File
-          </button>
+          <p class="text-gray-400 dark:text-slate-500 text-sm">No file loaded</p>
         </div>
       </template>
     </div>
@@ -241,6 +362,7 @@
 import { useMachineStore } from '~/stores/machine'
 import { useJobControl } from '~/composables/useJobControl'
 import { wsSend } from '~/composables/useWsSend'
+import type { ToolSection } from '~/types/job'
 
 const machine = useMachineStore()
 const { job, clearJob, confirmRecovery } = useJobControl()
@@ -253,6 +375,43 @@ function doRecover() {
 function doLoadFresh() {
   wsSend({ t: 'job:recover:fresh' })
 }
+
+const toolSections = computed<ToolSection[]>(() => job.value?.toolSections ?? [])
+
+function sectionState(section: ToolSection): 'active' | 'complete' | 'queued' {
+  const status = job.value?.status
+  if (!status || status === 'idle' || status === 'analyzing') return 'queued'
+  const ptr = job.value?.sendPtr ?? 0
+  if (ptr > section.endLine) return 'complete'
+  if (ptr >= section.startLine) return 'active'
+  return 'queued'
+}
+
+const allTools = computed(() => [
+  ...machine.toolLibrary.machine,
+  ...machine.toolLibrary.app,
+])
+
+function libraryEntry(section: ToolSection) {
+  const scope = job.value?.toolPreferences?.[section.toolNumber] ?? 'M'
+  const scopeLib = scope === 'M' ? machine.toolLibrary.machine : machine.toolLibrary.app
+  return scopeLib.find((t) => t.number === section.toolNumber)
+    ?? allTools.value.find((t) => t.number === section.toolNumber)
+    ?? null
+}
+
+function diameterMismatch(section: ToolSection): boolean {
+  if (section.commentedDiameter == null) return false
+  const entry = libraryEntry(section)
+  if (!entry) return false
+  return Math.abs(section.commentedDiameter - entry.diameter) > 0.05
+}
+
+const toolChangeLibEntry = computed(() => {
+  const req = job.value?.toolChangeRequest
+  if (!req) return null
+  return allTools.value.find((t) => t.number === req.toolNumber) ?? null
+})
 
 // FluidNC real-time override bytes
 const FEED_RESET = 0x90
@@ -438,12 +597,10 @@ function cancelSpindleEdit() {
 }
 
 const currentTool = computed(() => {
-  if (!machine.tools.length) return null
+  const sections = toolSections.value
+  if (!sections.length) return null
   const line = job.value?.sendPtr ?? 0
-  return (
-    machine.tools.find((t) => line >= t.lineStart && line <= t.lineEnd) ??
-    machine.tools[0]
-  )
+  return sections.find((s) => line >= s.startLine && line <= s.endLine) ?? sections[0] ?? null
 })
 
 const axisRanges = computed(() => {
