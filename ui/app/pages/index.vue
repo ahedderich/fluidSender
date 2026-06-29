@@ -55,7 +55,7 @@
         :class="!machine.connected ? 'opacity-40 pointer-events-none select-none' : ''"
       >
         <ConsolePanel class="h-72 shrink-0" />
-        <ToolManagementPanel class="flex-1 min-h-0" />
+        <ToolManagementPanel id="tool-management-panel" class="flex-1 min-h-0" />
       </div>
     </div>
   </main>

@@ -213,9 +213,11 @@
               </div>
               <div class="min-w-0 flex-1">
                 <p class="text-xs font-medium text-gray-800 dark:text-slate-200 truncate">
-                  {{ libraryEntry(section)?.name ?? section.commentedName ?? `T${section.toolNumber}` }}
+                  {{ section.commentedName ?? libraryEntry(section)?.name ?? `T${section.toolNumber}` }}
                 </p>
-                <p class="text-xs text-gray-400 dark:text-slate-500">{{ section.lineCount.toLocaleString() }} lines</p>
+                <p class="text-xs text-gray-400 dark:text-slate-500">
+                  {{ gcodeToolSubline(section) }}
+                </p>
               </div>
               <!-- Not in library tag -->
               <span
@@ -223,12 +225,14 @@
                 class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-300 shrink-0 whitespace-nowrap"
                 title="Tool not found in library"
               >not in library</span>
-              <!-- Diameter mismatch tag -->
-              <span
-                v-if="diameterMismatch(section)"
-                class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 shrink-0 whitespace-nowrap"
-                :title="`Header ⌀${section.commentedDiameter}mm, library ⌀${libraryEntry(section)?.diameter}mm`"
-              >⌀ mismatch</span>
+              <!-- Mismatch tag (name or diameter differs from library) -->
+              <button
+                v-if="hasMismatch(section)"
+                type="button"
+                class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 shrink-0 whitespace-nowrap hover:bg-amber-200 dark:hover:bg-amber-800/60 transition-colors cursor-pointer"
+                :title="mismatchTitle(section)"
+                @click.stop="scrollToToolPanel"
+              >mismatch</button>
               <!-- Load / Unload text button -->
               <button
                 type="button"
@@ -394,11 +398,25 @@ function libraryEntry(section: ToolSection) {
     ?? null
 }
 
-function diameterMismatch(section: ToolSection): boolean {
-  if (section.commentedDiameter == null) return false
+function hasMismatch(section: ToolSection): boolean {
   const entry = libraryEntry(section)
   if (!entry) return false
-  return Math.abs(section.commentedDiameter - entry.diameter) > 0.05
+  if (section.commentedName && section.commentedName.toLowerCase() !== entry.type.toLowerCase()) return true
+  if (section.commentedDiameter != null && Math.abs(section.commentedDiameter - entry.diameter) > 0.05) return true
+  return false
+}
+
+function mismatchTitle(section: ToolSection): string {
+  const entry = libraryEntry(section)
+  if (!entry) return ''
+  const parts: string[] = []
+  if (section.commentedName && section.commentedName.toLowerCase() !== entry.type.toLowerCase()) {
+    parts.push(`Type: "${section.commentedName}" vs "${entry.type}"`)
+  }
+  if (section.commentedDiameter != null && Math.abs(section.commentedDiameter - entry.diameter) > 0.05) {
+    parts.push(`⌀ ${section.commentedDiameter}mm vs ${entry.diameter}mm`)
+  }
+  return parts.join('; ')
 }
 
 const toolChangeLibEntry = computed(() => {
@@ -607,6 +625,22 @@ const nextRequiredToolNumber = computed(() => {
   }
   return sections.find(s => sendPtr <= s.endLine)?.toolNumber ?? null
 })
+
+function scrollToToolPanel() {
+  document.getElementById('tool-management-panel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+}
+
+function gcodeToolSubline(section: ToolSection): string {
+  const parts: string[] = []
+  if (section.commentedDiameter != null) {
+    parts.push(`⌀${section.commentedDiameter} mm`)
+  } else {
+    const lib = libraryEntry(section)
+    if (lib) parts.push(`⌀${lib.diameter} mm`)
+  }
+  parts.push(`${section.lineCount.toLocaleString()} lines`)
+  return parts.join(' · ')
+}
 
 function toolBadgeClass(section: ToolSection): string {
   const isLoaded = machine.loadedToolNumber === section.toolNumber

@@ -3,8 +3,18 @@
     class="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 flex flex-col min-h-0"
   >
     <!-- Header -->
-    <div class="flex items-center px-3 pt-2.5 pb-2 border-b border-gray-100 dark:border-slate-700 shrink-0">
+    <div class="flex items-center gap-1.5 px-3 pt-2.5 pb-2 border-b border-gray-100 dark:border-slate-700 shrink-0">
       <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">Tool Management</h2>
+      <div class="relative group/legend">
+        <button type="button" class="w-4 h-4 rounded-full bg-gray-200 dark:bg-slate-600 text-gray-500 dark:text-slate-300 text-[9px] font-bold flex items-center justify-center leading-none cursor-default">?</button>
+        <div class="hidden group-hover/legend:block absolute left-0 top-5 z-30 w-52 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-xl p-2.5 space-y-1.5">
+          <p class="text-[10px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Color Legend</p>
+          <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-amber-500 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Next required for job start</span></div>
+          <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-green-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Loaded & matches next required</span></div>
+          <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-purple-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Currently loaded tool</span></div>
+          <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-blue-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Other tools in this job</span></div>
+        </div>
+      </div>
     </div>
 
     <!-- Active tool -->
@@ -59,6 +69,29 @@
               </div>
             </div>
           </div>
+        </div>
+        <!-- GCode vs library comparison (only when a job is loaded and values differ) -->
+        <div
+          v-if="gcodeLibraryDiffs.length"
+          class="mt-2 rounded border border-amber-200 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-2"
+        >
+          <p class="text-[10px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wide mb-1.5">GCode / Library mismatch</p>
+          <table class="w-full text-xs">
+            <thead>
+              <tr>
+                <th class="text-left text-[10px] font-normal text-gray-400 dark:text-slate-500 pb-1 w-10"></th>
+                <th class="text-left text-[10px] font-normal text-gray-400 dark:text-slate-500 pb-1">GCode</th>
+                <th class="text-left text-[10px] font-normal text-gray-400 dark:text-slate-500 pb-1 pl-3">Library</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="diff in gcodeLibraryDiffs" :key="diff.field" class="align-top">
+                <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2">{{ diff.field }}</td>
+                <td class="text-amber-700 dark:text-amber-300 font-mono py-0.5 truncate max-w-0">{{ diff.gcode }}</td>
+                <td class="text-gray-500 dark:text-slate-400 font-mono py-0.5 pl-3 truncate max-w-0">{{ diff.library }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </template>
 
@@ -731,6 +764,30 @@ const loadedTool = computed(() =>
     : null,
 )
 
+const loadedGCodeSection = computed(() => {
+  if (machine.loadedToolNumber === null) return null
+  return job.value?.toolSections?.find(s => s.toolNumber === machine.loadedToolNumber) ?? null
+})
+
+type DiffRow = { field: string; gcode: string; library: string }
+
+const gcodeLibraryDiffs = computed<DiffRow[]>(() => {
+  const section = loadedGCodeSection.value
+  const lib = loadedTool.value
+  if (!section || !lib) return []
+  const diffs: DiffRow[] = []
+  if (section.commentedName && section.commentedName.toLowerCase() !== lib.type.toLowerCase()) {
+    diffs.push({ field: 'Type', gcode: section.commentedName, library: lib.type })
+  }
+  if (section.commentedDiameter !== null && Math.abs(section.commentedDiameter - lib.diameter) > 0.05) {
+    diffs.push({ field: '⌀', gcode: `${section.commentedDiameter} mm`, library: `${lib.diameter} mm` })
+  }
+  if (section.commentedCornerRadius !== null && lib.cornerRadius != null && Math.abs(section.commentedCornerRadius - lib.cornerRadius) > 0.01) {
+    diffs.push({ field: 'R', gcode: `${section.commentedCornerRadius} mm`, library: `${lib.cornerRadius} mm` })
+  }
+  return diffs
+})
+
 // Modal open/close synced across browsers; the edit form contents stay local.
 const toolModal = modals.active('tool')
 const showToolModal = computed<boolean>({
@@ -1023,9 +1080,14 @@ const sortedTools = computed(() => {
       return list.sort((a, b) => (a.number ?? 9999) - (b.number ?? 9999))
     default:
       return list.sort((a, b) => {
-        const aj = isInJob(a) ? 0 : 1
-        const bj = isInJob(b) ? 0 : 1
-        if (aj !== bj) return aj - bj
+        const priority = (e: ToolLibraryEntry) => {
+          if (isInJob(e)) return 0
+          if (e.number === machine.loadedToolNumber) return 1
+          return 2
+        }
+        const pa = priority(a)
+        const pb = priority(b)
+        if (pa !== pb) return pa - pb
         return (a.number ?? 9999) - (b.number ?? 9999)
       })
   }
