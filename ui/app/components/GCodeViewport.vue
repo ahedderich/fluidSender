@@ -79,12 +79,12 @@
     <!-- Loaded tool (bottom-left, above progress bar) -->
     <div v-if="machine.connected" class="absolute bottom-14 left-2.5 z-10 flex items-center gap-2 px-2.5 py-1.5 bg-slate-800/80 backdrop-blur-sm border border-slate-600/50 rounded-md text-xs">
       <template v-if="loadedLibTool">
-        <span class="w-4 h-4 rounded-full bg-amber-500 flex items-center justify-center text-[9px] font-bold text-white shrink-0">{{ loadedLibTool.number }}</span>
+        <span :class="loadedBadgeClass" class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0">{{ loadedLibTool.number }}</span>
         <span class="text-slate-300 max-w-36 truncate">{{ loadedLibTool.name }}</span>
         <span class="text-slate-500">⌀{{ loadedLibTool.diameter }}</span>
       </template>
       <template v-else-if="machine.loadedToolNumber !== null">
-        <span class="w-4 h-4 rounded-full bg-amber-500 flex items-center justify-center text-[9px] font-bold text-white shrink-0">{{ machine.loadedToolNumber }}</span>
+        <span :class="loadedBadgeClass" class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0">{{ machine.loadedToolNumber }}</span>
         <span class="text-slate-500 italic">T{{ machine.loadedToolNumber }} (not in library)</span>
       </template>
       <template v-else>
@@ -177,6 +177,22 @@ const loadedLibTool = computed(() =>
     ? (allToolLibrary.value.find(e => e.number === machine.loadedToolNumber) ?? null)
     : null,
 )
+
+const nextRequiredToolNumber = computed(() => {
+  const sections = job.value?.toolSections ?? []
+  if (!sections.length) return null
+  const sendPtr = job.value?.sendPtr ?? 0
+  const status = job.value?.status
+  if (!status || status === 'idle' || status === 'analyzing') {
+    return sections[0]?.toolNumber ?? null
+  }
+  return sections.find(s => sendPtr <= s.endLine)?.toolNumber ?? null
+})
+
+const loadedBadgeClass = computed(() => {
+  if (machine.loadedToolNumber === null) return ''
+  return machine.loadedToolNumber === nextRequiredToolNumber.value ? 'bg-green-600' : 'bg-purple-600'
+})
 
 const toolDiameter = computed(() => loadedLibTool.value?.diameter ?? 8)
 

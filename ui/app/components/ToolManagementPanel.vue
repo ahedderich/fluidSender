@@ -10,12 +10,12 @@
     <!-- Active tool -->
     <div class="px-3 py-2.5 border-b border-gray-100 dark:border-slate-700 shrink-0">
       <div class="flex items-center justify-between mb-2">
-        <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Active Tool</p>
+        <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Loaded Tool</p>
         <button
-          v-if="activeTool && !toolIsUnloaded"
+          v-if="loadedTool && machine.connected"
           @click="handleUnload"
           class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-red-600 hover:text-white text-gray-600 dark:text-slate-300 rounded transition-colors"
-          title="Remove tool from spindle without loading a replacement"
+          title="Remove tool from spindle"
         >
           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -24,54 +24,38 @@
         </button>
       </div>
 
-      <template v-if="toolIsUnloaded">
-        <div class="flex items-center gap-2.5 py-0.5">
-          <div class="w-8 h-8 rounded-full bg-slate-400 dark:bg-slate-600 flex items-center justify-center shrink-0">
-            <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4" />
-            </svg>
-          </div>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-semibold text-gray-700 dark:text-slate-300">Spindle empty</p>
-            <p class="text-xs text-gray-400 dark:text-slate-500">Tool removed — ready for inspection or manual change</p>
-          </div>
-          <button
-            @click="toolIsUnloaded = false"
-            class="shrink-0 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-500 dark:text-slate-400 rounded transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
+      <template v-if="!machine.connected">
+        <p class="text-xs text-gray-400 dark:text-slate-500 italic">No machine connected — connect to load tools</p>
       </template>
 
-      <template v-else-if="activeTool">
+      <template v-else-if="loadedTool">
         <div class="flex items-start gap-2.5">
           <div class="w-8 h-8 rounded-full bg-amber-500 flex items-center justify-center text-sm font-bold text-white shrink-0">
-            {{ activeJobTool?.number }}
+            {{ loadedTool.number }}
           </div>
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2">
-              <p class="text-sm font-semibold text-gray-900 dark:text-slate-100 leading-tight truncate">{{ activeTool.name }}</p>
-              <SourceBadge :source="activeTool.source" />
+              <p class="text-sm font-semibold text-gray-900 dark:text-slate-100 leading-tight truncate">{{ loadedTool.name }}</p>
+              <SourceBadge :source="loadedTool.source" />
             </div>
             <div class="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-              <span class="text-xs text-gray-500 dark:text-slate-400">⌀ {{ activeTool.diameter }} mm</span>
-              <span v-if="activeTool.material" class="text-xs text-gray-500 dark:text-slate-400 capitalize">{{ activeTool.material }}</span>
-              <span v-if="activeTool.fluteCount" class="text-xs text-gray-500 dark:text-slate-400">{{ activeTool.fluteCount }} fl.</span>
-              <span v-if="activeTool.fluteLength" class="text-xs text-gray-500 dark:text-slate-400">FL {{ activeTool.fluteLength }} mm</span>
+              <span class="text-xs text-gray-500 dark:text-slate-400">⌀ {{ loadedTool.diameter }} mm</span>
+              <span v-if="loadedTool.material" class="text-xs text-gray-500 dark:text-slate-400 capitalize">{{ loadedTool.material }}</span>
+              <span v-if="loadedTool.fluteCount" class="text-xs text-gray-500 dark:text-slate-400">{{ loadedTool.fluteCount }} fl.</span>
+              <span v-if="loadedTool.fluteLength" class="text-xs text-gray-500 dark:text-slate-400">FL {{ loadedTool.fluteLength }} mm</span>
             </div>
             <div class="flex gap-5 mt-1.5">
               <div>
                 <p class="text-xs text-gray-400 dark:text-slate-500">Use Time</p>
-                <p class="text-sm font-mono font-semibold text-gray-800 dark:text-slate-200">{{ formatUsage(activeTool.usageMinutes) }}</p>
+                <p class="text-sm font-mono font-semibold text-gray-800 dark:text-slate-200">{{ formatUsage(loadedTool.totalRuntimeMinutes) }}</p>
               </div>
-              <div v-if="activeTool.lastUsed">
+              <div v-if="loadedTool.lastUsed">
                 <p class="text-xs text-gray-400 dark:text-slate-500">Last Used</p>
-                <p class="text-sm font-mono font-semibold text-gray-800 dark:text-slate-200">{{ formatRelativeDate(activeTool.lastUsed) }}</p>
+                <p class="text-sm font-mono font-semibold text-gray-800 dark:text-slate-200">{{ formatRelativeDate(loadedTool.lastUsed) }}</p>
               </div>
-              <div v-if="activeTool.overallLength">
+              <div v-if="loadedTool.overallLength">
                 <p class="text-xs text-gray-400 dark:text-slate-500">OAL</p>
-                <p class="text-sm font-mono font-semibold text-gray-800 dark:text-slate-200">{{ activeTool.overallLength }} mm</p>
+                <p class="text-sm font-mono font-semibold text-gray-800 dark:text-slate-200">{{ loadedTool.overallLength }} mm</p>
               </div>
             </div>
           </div>
@@ -79,7 +63,7 @@
       </template>
 
       <template v-else>
-        <p class="text-xs text-gray-400 dark:text-slate-500 italic">No tool active — load a job to see active tool info</p>
+        <p class="text-xs text-gray-400 dark:text-slate-500 italic">No tool loaded — select a tool from the library below</p>
       </template>
     </div>
 
@@ -97,7 +81,7 @@
             :class="[
               dragOverSlot === slot
                 ? 'border-blue-500 bg-blue-100 dark:bg-blue-800/40 scale-105'
-                : slotTool(slot)?.number === activeJobTool?.number && !toolIsUnloaded
+                : slotTool(slot)?.number === machine.loadedToolNumber
                   ? 'border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20'
                   : machine.magazineSlots[slot - 1] !== null && machine.magazineSlots[slot - 1] !== undefined
                     ? 'border-blue-300 dark:border-blue-700/60 bg-blue-50/60 dark:bg-blue-900/10'
@@ -114,7 +98,7 @@
             <span class="text-[10px] text-gray-400 dark:text-slate-500 font-medium leading-tight">S{{ slot }}</span>
             <template v-if="slotTool(slot)">
               <div
-                :class="slotTool(slot)!.number === activeJobTool?.number && !toolIsUnloaded
+                :class="slotTool(slot)!.number === machine.loadedToolNumber
                   ? 'bg-amber-500' : 'bg-blue-600'"
                 class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white mt-0.5"
               >
@@ -153,7 +137,19 @@
 
     <!-- Library toolbar -->
     <div class="px-3 pt-2.5 pb-2 flex items-center justify-between gap-2 shrink-0">
-      <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Tool Library</p>
+      <div class="flex items-center gap-1.5">
+        <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Tool Library</p>
+        <div class="relative group/legend">
+          <button type="button" class="w-4 h-4 rounded-full bg-gray-200 dark:bg-slate-600 text-gray-500 dark:text-slate-300 text-[9px] font-bold flex items-center justify-center leading-none cursor-default">?</button>
+          <div class="hidden group-hover/legend:block absolute left-0 top-5 z-30 w-52 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-xl p-2.5 space-y-1.5">
+            <p class="text-[10px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Color Legend</p>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-amber-500 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Next required for job start</span></div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-green-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Loaded & matches next required</span></div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-purple-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Currently loaded tool</span></div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-blue-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Other tools in this job</span></div>
+          </div>
+        </div>
+      </div>
       <div class="flex items-center gap-1.5">
         <button
           @click="triggerImport"
@@ -191,7 +187,8 @@
           <option value="default">Job first</option>
           <option value="name">Name A–Z</option>
           <option value="diameter">Size ⌀</option>
-          <option value="usetime">Use time</option>
+          <option value="runtime">Runtime</option>
+          <option value="jobs">Jobs</option>
           <option value="number">Tool #</option>
         </select>
         <input ref="fileInput" type="file" accept=".json" class="hidden" @change="onFileChange" />
@@ -234,11 +231,7 @@
           :key="entry.id"
           draggable="true"
           :class="[
-            entry.id === activeTool?.id
-              ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700/60'
-              : isInJob(entry)
-                ? 'bg-blue-50/60 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800/50'
-                : 'bg-gray-50 dark:bg-slate-900 border-gray-200 dark:border-slate-700',
+            toolRowClassLib(entry),
             'cursor-grab active:cursor-grabbing',
             draggingToolId === entry.id ? 'opacity-50' : '',
           ]"
@@ -258,10 +251,8 @@
           </div>
           <!-- Tool number badge -->
           <div
-            :class="entry.id === activeTool?.id
-              ? 'bg-amber-500'
-              : isInJob(entry) ? 'bg-blue-600' : 'bg-slate-400 dark:bg-slate-600'"
-            class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+            :class="toolBadgeClassLib(entry)"
+            class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
           >
             {{ entry.number ?? '·' }}
           </div>
@@ -273,20 +264,34 @@
             </div>
             <p class="text-xs text-gray-400 dark:text-slate-500 leading-tight"><span class="capitalize">{{ entry.type }}</span> · ⌀{{ entry.diameter }} mm</p>
           </div>
-          <!-- Use time -->
+          <!-- Runtime -->
           <div class="shrink-0 text-right">
-            <p class="text-xs font-mono text-gray-500 dark:text-slate-400">{{ formatUsage(entry.usageMinutes) }}</p>
+            <p class="text-xs font-mono text-gray-500 dark:text-slate-400">{{ formatUsage(entry.totalRuntimeMinutes) }} · {{ entry.jobCount }}j</p>
           </div>
-          <!-- Edit button (on hover) -->
-          <button
-            @click.stop="openEditModal(entry)"
-            class="opacity-0 group-hover:opacity-100 shrink-0 p-1 rounded hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 transition-all"
-            title="Edit tool"
-          >
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
-            </svg>
-          </button>
+          <!-- Load/Unload text button + hover-only Edit -->
+          <div class="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              @click.stop="machine.loadedToolNumber === entry.number ? wsSend({ t: 'tool:unload', payload: {} }) : wsSend({ t: 'tool:load', payload: { toolNumber: entry.number } })"
+              :disabled="!machine.connected"
+              :class="machine.loadedToolNumber === entry.number
+                ? 'hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-700 dark:hover:text-red-400'
+                : 'hover:bg-green-100 dark:hover:bg-green-900/30 hover:text-green-700 dark:hover:text-green-400'"
+              class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              :title="machine.loadedToolNumber === entry.number ? 'Unload tool from spindle' : 'Load tool into spindle'"
+            >
+              {{ machine.loadedToolNumber === entry.number ? 'Unload' : 'Load' }}
+            </button>
+            <button
+              @click.stop="openEditModal(entry)"
+              class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 transition-all"
+              title="Edit tool"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -298,7 +303,8 @@
         class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
         @click.self="showToolModal = false"
       >
-        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-sm">
+        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-md">
+          <!-- Header -->
           <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-slate-700">
             <h3 class="text-base font-semibold text-gray-900 dark:text-slate-100">
               {{ editingTool ? 'Edit Tool' : 'Add Tool' }}
@@ -310,137 +316,200 @@
             </button>
           </div>
 
-          <div class="p-5 space-y-3 overflow-y-auto max-h-[65vh]">
-            <!-- Name -->
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 dark:border-slate-700 px-5">
+            <button
+              v-for="tab in (['basic', 'geometry', 'presets', 'lifecycle'] as const)"
+              :key="tab"
+              @click="modalTab = tab"
+              :class="modalTab === tab
+                ? 'border-b-2 border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'"
+              class="px-3 py-2.5 text-xs font-medium capitalize transition-colors"
+            >{{ tab }}</button>
+          </div>
+
+          <!-- Basic tab -->
+          <div v-if="modalTab === 'basic'" class="p-5 space-y-3 overflow-y-auto max-h-[55vh]">
             <div>
               <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Name <span class="text-red-500">*</span></label>
-              <input
-                v-model="modalForm.name"
-                type="text"
-                placeholder="e.g. 6mm Flat End Mill"
-                class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
+              <input v-model="modalForm.name" type="text" placeholder="e.g. 6mm Flat End Mill"
+                class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
             </div>
-
-            <!-- Type + T# -->
             <div class="grid grid-cols-2 gap-2">
               <div>
                 <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Type <span class="text-red-500">*</span></label>
-                <input
-                  v-model="modalForm.type"
-                  list="tool-type-suggestions"
-                  placeholder="flat end mill"
-                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+                <input v-model="modalForm.type" list="tool-type-suggestions" placeholder="flat end mill"
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500" />
                 <datalist id="tool-type-suggestions">
                   <option v-for="t in TOOL_TYPES" :key="t" :value="t" />
                 </datalist>
               </div>
               <div>
                 <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Tool # <span class="text-red-500">*</span></label>
-                <input
-                  v-model.number="modalForm.number"
-                  type="number"
-                  min="1"
-                  max="9999"
-                  placeholder="e.g. 4"
+                <input v-model.number="modalForm.number" type="number" min="1" max="9999" placeholder="e.g. 4"
                   :class="numberConflict ? 'border-red-400 dark:border-red-600 focus:ring-red-500' : 'border-gray-300 dark:border-slate-600 focus:ring-blue-500'"
-                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1"
-                />
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1" />
                 <p v-if="numberConflict" class="text-[10px] text-red-500 mt-0.5">T{{ modalForm.number }} is already used</p>
               </div>
             </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Classification</label>
+              <div class="flex gap-2">
+                <button type="button" @click="modalForm.source = 'M'"
+                  :class="modalForm.source === 'M' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-gray-50 dark:bg-slate-900 border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-400'"
+                  class="flex-1 py-2 border rounded-lg text-xs font-bold transition-colors" title="Machine-specific tool">Machine (M)</button>
+                <button type="button" @click="modalForm.source = 'A'"
+                  :class="modalForm.source === 'A' ? 'bg-slate-600 border-slate-600 text-white' : 'bg-gray-50 dark:bg-slate-900 border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-400'"
+                  class="flex-1 py-2 border rounded-lg text-xs font-bold transition-colors" title="App-level shared tool">App (A)</button>
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Vendor</label>
+              <input v-model="modalForm.vendor" type="text" placeholder="Sorotec, Datron…"
+                class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Comment</label>
+              <input v-model="modalForm.comment" type="text" placeholder="Optional notes…"
+                class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Product Link</label>
+              <input v-model="modalForm.productLink" type="url" placeholder="https://…"
+                class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            </div>
+          </div>
 
-            <!-- Diameter + Flutes -->
+          <!-- Geometry tab -->
+          <div v-else-if="modalTab === 'geometry'" class="p-5 space-y-3 overflow-y-auto max-h-[55vh]">
             <div class="grid grid-cols-2 gap-2">
               <div>
-                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Diameter (mm) <span class="text-red-500">*</span></label>
-                <input
-                  v-model.number="modalForm.diameter"
-                  type="number"
-                  min="0.1"
-                  step="0.5"
-                  placeholder="6"
-                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Cutting ⌀ (mm) <span class="text-red-500">*</span></label>
+                <input v-model.number="modalForm.diameter" type="number" min="0.1" step="0.5" placeholder="6"
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Shank ⌀ (mm)</label>
+                <input v-model.number="modalForm.shankDiameter" type="number" min="0" step="0.5" placeholder="6"
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Corner Radius (mm)</label>
+                <input v-model.number="modalForm.cornerRadius" type="number" min="0" step="0.1" placeholder="0"
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500" />
               </div>
               <div>
                 <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Flutes</label>
-                <input
-                  v-model.number="modalForm.fluteCount"
-                  type="number"
-                  min="1"
-                  max="16"
-                  placeholder="4"
-                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+                <input v-model.number="modalForm.fluteCount" type="number" min="1" max="16" placeholder="4"
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500" />
               </div>
             </div>
-
-            <!-- Flute length + OAL -->
             <div class="grid grid-cols-2 gap-2">
               <div>
                 <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Flute Length (mm)</label>
-                <input
-                  v-model.number="modalForm.fluteLength"
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  placeholder="19"
-                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+                <input v-model.number="modalForm.fluteLength" type="number" min="0" step="0.5" placeholder="19"
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500" />
               </div>
               <div>
-                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Overall Length (mm)</label>
-                <input
-                  v-model.number="modalForm.overallLength"
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  placeholder="63"
-                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Shoulder Length (mm)</label>
+                <input v-model.number="modalForm.shoulderLength" type="number" min="0" step="0.5" placeholder="25"
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500" />
               </div>
             </div>
-
-            <!-- Material + Source -->
             <div class="grid grid-cols-2 gap-2">
               <div>
-                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Material</label>
-                <input
-                  v-model="modalForm.material"
-                  type="text"
-                  placeholder="carbide, hss…"
-                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Overall Length (mm)</label>
+                <input v-model.number="modalForm.overallLength" type="number" min="0" step="0.5" placeholder="63"
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500" />
               </div>
               <div>
-                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Classification</label>
-                <div class="flex gap-2 mt-1">
-                  <button
-                    type="button"
-                    @click="modalForm.source = 'M'"
-                    :class="modalForm.source === 'M'
-                      ? 'bg-blue-600 border-blue-600 text-white'
-                      : 'bg-gray-50 dark:bg-slate-900 border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-400'"
-                    class="flex-1 py-2 border rounded-lg text-xs font-bold transition-colors"
-                    title="Machine-specific tool"
-                  >M</button>
-                  <button
-                    type="button"
-                    @click="modalForm.source = 'A'"
-                    :class="modalForm.source === 'A'
-                      ? 'bg-slate-600 border-slate-600 text-white'
-                      : 'bg-gray-50 dark:bg-slate-900 border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-400'"
-                    class="flex-1 py-2 border rounded-lg text-xs font-bold transition-colors"
-                    title="App-level shared tool"
-                  >A</button>
-                </div>
-                <p class="text-[10px] text-gray-400 dark:text-slate-500 mt-1">
-                  {{ modalForm.source === 'M' ? 'Machine-specific' : 'App library (shared)' }}
-                </p>
+                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Body Material</label>
+                <input v-model="modalForm.material" type="text" placeholder="carbide, hss…"
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
               </div>
             </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Length Offset</label>
+                <input v-model.number="modalForm.lengthOffset" type="number" step="1" placeholder="1"
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Diameter Offset</label>
+                <input v-model.number="modalForm.diameterOffset" type="number" step="1" placeholder="1"
+                  class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+              </div>
+            </div>
+            <div class="flex gap-4 pt-1">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input v-model="modalForm.coolantThrough" type="checkbox" class="rounded accent-blue-600" />
+                <span class="text-xs text-gray-600 dark:text-slate-300">Coolant through</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input v-model="modalForm.rightHanded" type="checkbox" class="rounded accent-blue-600" />
+                <span class="text-xs text-gray-600 dark:text-slate-300">Right-handed</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Presets tab (read-only) -->
+          <div v-else-if="modalTab === 'presets'" class="p-5 overflow-y-auto max-h-[55vh]">
+            <template v-if="editingTool?.cuttingPresets?.length">
+              <div class="space-y-2">
+                <div v-for="preset in editingTool.cuttingPresets" :key="preset.guid"
+                  class="border border-gray-200 dark:border-slate-700 rounded-lg p-3 space-y-1.5">
+                  <p class="text-xs font-semibold text-gray-800 dark:text-slate-200">{{ preset.name }}</p>
+                  <p class="text-[10px] text-gray-400 dark:text-slate-500">{{ preset.material?.category }} — {{ preset.material?.query }}</p>
+                  <div class="grid grid-cols-3 gap-x-4 gap-y-1 text-xs text-gray-600 dark:text-slate-300">
+                    <div><span class="text-gray-400 dark:text-slate-500">RPM </span>{{ preset.spindleRpm }}</div>
+                    <div><span class="text-gray-400 dark:text-slate-500">Feed </span>{{ preset.feedRate }} mm/min</div>
+                    <div><span class="text-gray-400 dark:text-slate-500">Plunge </span>{{ preset.plungeFeed }} mm/min</div>
+                    <div><span class="text-gray-400 dark:text-slate-500">Ramp </span>{{ preset.rampFeed }} mm/min</div>
+                    <div><span class="text-gray-400 dark:text-slate-500">Coolant </span>{{ preset.coolant }}</div>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div class="text-center py-8">
+                <p class="text-xs text-gray-400 dark:text-slate-500 italic">No cutting presets — presets are imported from Fusion 360 tool libraries.</p>
+              </div>
+            </template>
+          </div>
+
+          <!-- Lifecycle tab -->
+          <div v-else-if="modalTab === 'lifecycle'" class="p-5 space-y-4 overflow-y-auto max-h-[55vh]">
+            <template v-if="editingTool">
+              <div class="grid grid-cols-2 gap-4">
+                <div class="bg-gray-50 dark:bg-slate-900 rounded-lg p-3">
+                  <p class="text-[10px] text-gray-400 dark:text-slate-500 uppercase tracking-wide mb-1">Total Runtime</p>
+                  <p class="text-lg font-mono font-semibold text-gray-800 dark:text-slate-200">{{ formatUsage(editingTool.totalRuntimeMinutes) }}</p>
+                </div>
+                <div class="bg-gray-50 dark:bg-slate-900 rounded-lg p-3">
+                  <p class="text-[10px] text-gray-400 dark:text-slate-500 uppercase tracking-wide mb-1">Job Count</p>
+                  <p class="text-lg font-mono font-semibold text-gray-800 dark:text-slate-200">{{ editingTool.jobCount }}</p>
+                </div>
+              </div>
+              <div class="bg-gray-50 dark:bg-slate-900 rounded-lg p-3">
+                <p class="text-[10px] text-gray-400 dark:text-slate-500 uppercase tracking-wide mb-1">Last Used</p>
+                <p class="text-sm font-mono text-gray-700 dark:text-slate-300">
+                  {{ editingTool.lastUsed ? formatRelativeDate(editingTool.lastUsed) : '—' }}
+                </p>
+              </div>
+              <button
+                @click="clearRuntime"
+                :disabled="editingTool.totalRuntimeMinutes === 0 && editingTool.jobCount === 0"
+                class="w-full py-2.5 text-sm border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+              >
+                Clear Runtime Data
+              </button>
+            </template>
+            <template v-else>
+              <p class="text-xs text-gray-400 dark:text-slate-500 italic text-center py-8">Lifecycle data is available after the tool is saved.</p>
+            </template>
           </div>
 
           <div class="px-5 py-4 border-t border-gray-200 dark:border-slate-700 flex items-center gap-2">
@@ -462,6 +531,7 @@
               Cancel
             </button>
             <button
+              v-if="modalTab !== 'presets' && modalTab !== 'lifecycle'"
               @click="saveModal"
               :disabled="!modalForm.name.trim() || !modalForm.diameter || !modalForm.type.trim() || !modalForm.number || numberConflict"
               class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
@@ -562,6 +632,57 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- ── Import scope selection modal ── -->
+    <Teleport to="body">
+      <div
+        v-if="showImportModal"
+        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
+        @click.self="showImportModal = false"
+      >
+        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-sm">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-slate-700">
+            <h3 class="text-base font-semibold text-gray-900 dark:text-slate-100">Import Tool Library</h3>
+            <button @click="showImportModal = false" class="p-1 text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 rounded-md transition-colors">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="p-5 space-y-4">
+            <p class="text-sm text-gray-600 dark:text-slate-400">Select where to import tools:</p>
+            <div class="space-y-2">
+              <label class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors"
+                :class="importScope === 'M' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50'"
+              >
+                <input type="radio" v-model="importScope" value="M" class="mt-0.5" />
+                <div>
+                  <p class="text-sm font-medium text-gray-800 dark:text-slate-200">Machine library</p>
+                  <p class="text-xs text-gray-400 dark:text-slate-500">Specific to "{{ settings.activeMachine?.name ?? 'this machine' }}"</p>
+                </div>
+              </label>
+              <label class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors"
+                :class="importScope === 'A' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50'"
+              >
+                <input type="radio" v-model="importScope" value="A" class="mt-0.5" />
+                <div>
+                  <p class="text-sm font-medium text-gray-800 dark:text-slate-200">App library</p>
+                  <p class="text-xs text-gray-400 dark:text-slate-500">Shared across all machines</p>
+                </div>
+              </label>
+            </div>
+          </div>
+          <div class="flex gap-3 px-5 pb-5">
+            <button @click="showImportModal = false" class="flex-1 py-2.5 text-sm bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg transition-colors font-medium">
+              Cancel
+            </button>
+            <button @click="confirmImport" class="flex-1 py-2.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors font-medium">
+              Import
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -587,16 +708,28 @@ import { useMachineStore, type ToolLibraryEntry } from '~/stores/machine'
 import { useJobControl } from '~/composables/useJobControl'
 import { useSettingsStore } from '~/stores/settings'
 import { useModals } from '~/composables/useModals'
+import { wsSend } from '~/composables/useWsSend'
 
 const machine = useMachineStore()
 const { job } = useJobControl()
 const settings = useSettingsStore()
 const modals = useModals()
 
+// Flat combined library for list display
+const allTools = computed<ToolLibraryEntry[]>(() => [
+  ...machine.toolLibrary.machine,
+  ...machine.toolLibrary.app,
+])
+
 const filterText = ref('')
-const sortKey = ref<'default' | 'name' | 'diameter' | 'usetime' | 'number'>('default')
+const sortKey = ref<'default' | 'name' | 'diameter' | 'runtime' | 'jobs' | 'number'>('default')
 const fileInput = ref<HTMLInputElement | null>(null)
-const toolIsUnloaded = ref(false)
+
+const loadedTool = computed(() =>
+  machine.loadedToolNumber !== null
+    ? (allTools.value.find(e => e.number === machine.loadedToolNumber) ?? null)
+    : null,
+)
 
 // Modal open/close synced across browsers; the edit form contents stay local.
 const toolModal = modals.active('tool')
@@ -634,7 +767,7 @@ function onDragEnd() {
 
 function dropOnSlot(slot: number) {
   if (!draggingToolId.value) return
-  const entry = machine.toolLibrary.find(e => e.id === draggingToolId.value)
+  const entry = allTools.value.find(e => e.id === draggingToolId.value)
   if (!entry) return
   machine.magazineSlots.splice(slot - 1, 1, entry.number!)
   draggingToolId.value = null
@@ -653,16 +786,30 @@ const TOOL_TYPES = [
   'drill', 'face mill', 'tap', 'other',
 ]
 
+const modalTab = ref<'basic' | 'geometry' | 'presets' | 'lifecycle'>('basic')
+
 const modalForm = reactive({
+  // Basic
   number: undefined as number | undefined,
   name: '',
   type: 'flat end mill',
+  source: 'A' as 'M' | 'A',
+  vendor: '',
+  comment: '',
+  productLink: '',
+  // Geometry
   diameter: undefined as number | undefined,
+  shankDiameter: undefined as number | undefined,
+  cornerRadius: undefined as number | undefined,
   fluteCount: undefined as number | undefined,
   fluteLength: undefined as number | undefined,
+  shoulderLength: undefined as number | undefined,
   overallLength: undefined as number | undefined,
   material: '',
-  source: 'A' as 'M' | 'A',
+  coolantThrough: false,
+  rightHanded: true,
+  lengthOffset: undefined as number | undefined,
+  diameterOffset: undefined as number | undefined,
 })
 
 const exportForm = reactive({
@@ -674,35 +821,48 @@ const exportForm = reactive({
 const numberConflict = computed(() => {
   const n = modalForm.number
   if (!n) return false
-  return machine.toolLibrary.some(e => e.number === n && e.id !== editingTool.value?.id)
+  return allTools.value.some(e => e.number === n && e.id !== editingTool.value?.id && e.source === modalForm.source)
 })
 
-const machineToolCount = computed(() => machine.toolLibrary.filter(e => e.source === 'M').length)
-const appToolCount = computed(() => machine.toolLibrary.filter(e => e.source === 'A').length)
+const machineToolCount = computed(() => machine.toolLibrary.machine.length)
+const appToolCount = computed(() => machine.toolLibrary.app.length)
 const exportToolCount = computed(() =>
-  machine.toolLibrary.filter(e =>
-    (exportForm.includeMachine && e.source === 'M') ||
-    (exportForm.includeApp && e.source === 'A'),
-  ).length,
+  (exportForm.includeMachine ? machineToolCount.value : 0) +
+  (exportForm.includeApp ? appToolCount.value : 0),
 )
 
 function slotTool(slot: number) {
   const num = machine.magazineSlots[slot - 1]
   if (num == null) return null
-  return machine.toolLibrary.find(e => e.number === num) ?? null
+  return allTools.value.find(e => e.number === num) ?? null
+}
+
+function resetModalForm() {
+  modalForm.number = undefined
+  modalForm.name = ''
+  modalForm.type = 'flat end mill'
+  modalForm.source = 'A'
+  modalForm.vendor = ''
+  modalForm.comment = ''
+  modalForm.productLink = ''
+  modalForm.diameter = undefined
+  modalForm.shankDiameter = undefined
+  modalForm.cornerRadius = undefined
+  modalForm.fluteCount = undefined
+  modalForm.fluteLength = undefined
+  modalForm.shoulderLength = undefined
+  modalForm.overallLength = undefined
+  modalForm.material = ''
+  modalForm.coolantThrough = false
+  modalForm.rightHanded = true
+  modalForm.lengthOffset = undefined
+  modalForm.diameterOffset = undefined
 }
 
 function openAddModal() {
   editingTool.value = null
-  modalForm.number = undefined
-  modalForm.name = ''
-  modalForm.type = 'flat end mill'
-  modalForm.diameter = undefined
-  modalForm.fluteCount = undefined
-  modalForm.fluteLength = undefined
-  modalForm.overallLength = undefined
-  modalForm.material = ''
-  modalForm.source = 'A'
+  resetModalForm()
+  modalTab.value = 'basic'
   showToolModal.value = true
 }
 
@@ -711,127 +871,134 @@ function openEditModal(entry: ToolLibraryEntry) {
   modalForm.number = entry.number
   modalForm.name = entry.name
   modalForm.type = entry.type
+  modalForm.source = entry.source
+  modalForm.vendor = entry.vendor ?? ''
+  modalForm.comment = entry.comment ?? ''
+  modalForm.productLink = entry.productLink ?? ''
   modalForm.diameter = entry.diameter
+  modalForm.shankDiameter = entry.shankDiameter
+  modalForm.cornerRadius = entry.cornerRadius
   modalForm.fluteCount = entry.fluteCount
   modalForm.fluteLength = entry.fluteLength
+  modalForm.shoulderLength = entry.shoulderLength
   modalForm.overallLength = entry.overallLength
   modalForm.material = entry.material ?? ''
-  modalForm.source = entry.source
+  modalForm.coolantThrough = entry.coolantThrough ?? false
+  modalForm.rightHanded = entry.rightHanded ?? true
+  modalForm.lengthOffset = entry.lengthOffset
+  modalForm.diameterOffset = entry.diameterOffset
+  modalTab.value = 'basic'
   showToolModal.value = true
 }
 
 function saveModal() {
   if (!modalForm.name.trim() || !modalForm.diameter || !modalForm.type.trim() || !modalForm.number || numberConflict.value) return
-  const payload: Partial<ToolLibraryEntry> = {
+  const machineId = settings.activeMachineId
+  const entry: ToolLibraryEntry = {
+    id: editingTool.value?.id ?? `user-${Date.now()}`,
     number: Number(modalForm.number),
     name: modalForm.name.trim(),
     type: modalForm.type.trim(),
+    source: modalForm.source,
+    vendor: modalForm.vendor.trim() || undefined,
+    comment: modalForm.comment.trim() || undefined,
+    productLink: modalForm.productLink.trim() || undefined,
     diameter: Number(modalForm.diameter),
+    shankDiameter: modalForm.shankDiameter ? Number(modalForm.shankDiameter) : undefined,
+    cornerRadius: modalForm.cornerRadius !== undefined ? Number(modalForm.cornerRadius) : undefined,
     fluteCount: modalForm.fluteCount ? Number(modalForm.fluteCount) : undefined,
     fluteLength: modalForm.fluteLength ? Number(modalForm.fluteLength) : undefined,
+    shoulderLength: modalForm.shoulderLength ? Number(modalForm.shoulderLength) : undefined,
     overallLength: modalForm.overallLength ? Number(modalForm.overallLength) : undefined,
     material: modalForm.material.trim() || undefined,
-    source: modalForm.source,
+    coolantThrough: modalForm.coolantThrough || undefined,
+    rightHanded: modalForm.rightHanded !== false ? undefined : false,
+    lengthOffset: modalForm.lengthOffset !== undefined ? Number(modalForm.lengthOffset) : undefined,
+    diameterOffset: modalForm.diameterOffset !== undefined ? Number(modalForm.diameterOffset) : undefined,
+    cuttingPresets: editingTool.value?.cuttingPresets,
+    holder: editingTool.value?.holder,
+    totalRuntimeMinutes: editingTool.value?.totalRuntimeMinutes ?? 0,
+    jobCount: editingTool.value?.jobCount ?? 0,
+    lastUsed: editingTool.value?.lastUsed,
   }
-  if (editingTool.value) {
-    const idx = machine.toolLibrary.findIndex(e => e.id === editingTool.value!.id)
-    if (idx !== -1) machine.toolLibrary.splice(idx, 1, { ...machine.toolLibrary[idx], ...payload })
-  } else {
-    machine.toolLibrary.push({ id: `user-${Date.now()}`, usageMinutes: 0, ...payload } as ToolLibraryEntry)
-  }
+  wsSend({ t: 'tool:upsert', payload: { ...entry, machineId } })
   showToolModal.value = false
 }
 
 function deleteFromModal() {
   if (!editingTool.value) return
-  const idx = machine.toolLibrary.findIndex(e => e.id === editingTool.value!.id)
-  if (idx !== -1) machine.toolLibrary.splice(idx, 1)
+  const machineId = settings.activeMachineId
+  wsSend({ t: 'tool:delete', payload: { id: editingTool.value.id, scope: editingTool.value.source, machineId } })
   showToolModal.value = false
 }
 
 function handleUnload() {
-  machine.sendCommand('T0')
-  machine.sendCommand('M6')
-  toolIsUnloaded.value = true
+  wsSend({ t: 'tool:unload', payload: {} })
 }
 
-function doExport() {
-  const tools = machine.toolLibrary.filter(e =>
-    (exportForm.includeMachine && e.source === 'M') ||
-    (exportForm.includeApp && e.source === 'A'),
-  )
-  const payload = {
-    version: 1,
-    manufacturer: 'FluidSender',
-    data: tools.map((t, i) => ({
-      BMC: t.material ?? '',
-      description: t.name,
-      geometry: {
-        CSP: false,
-        DC: t.diameter,
-        FUSP: 0,
-        LB: 0,
-        LCF: t.fluteLength ?? 0,
-        LF: t.fluteLength ?? 0,
-        LCAH: 0,
-        OH: t.overallLength ?? 0,
-        SFDM: t.diameter,
-        TP: 0,
-        NFP: t.fluteCount ?? 0,
-      },
-      guid: t.id,
-      number: t.number ?? (i + 1),
-      'post-process': {
-        'break-control': false,
-        comment: '',
-        'diameter-offset': t.number ?? (i + 1),
-        'length-offset': t.number ?? (i + 1),
-        live: false,
-        'manual-tool-change': true,
-        number: t.number ?? (i + 1),
-        spindle: 'tool_spindle',
-        'tool-coolant': 'disabled',
-      },
-      'product-id': t.id,
-      'product-link': '',
-      'start-values': { presets: [] },
-      type: t.type,
-      unit: 'millimeters',
-      vendor: 'FluidSender',
-    })),
-  }
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
+function clearRuntime() {
+  if (!editingTool.value) return
+  const machineId = settings.activeMachineId
+  wsSend({ t: 'tool:clearRuntime', payload: { id: editingTool.value.id, scope: editingTool.value.source, machineId } })
+}
+
+async function doExport() {
+  const scopes: string[] = []
+  if (exportForm.includeMachine) scopes.push('M')
+  if (exportForm.includeApp) scopes.push('A')
+  const machineId = settings.activeMachineId
+  const url = `/api/tools/export?scope=${scopes.join(',')}&machineId=${encodeURIComponent(machineId)}`
   const a = document.createElement('a')
   a.href = url
   a.download = exportForm.filename.endsWith('.json') ? exportForm.filename : `${exportForm.filename}.json`
   a.click()
-  URL.revokeObjectURL(url)
   showExportModal.value = false
 }
 
-const jobToolNumbers = computed(() => new Set(machine.tools.map(t => t.number)))
-
-const activeJobTool = computed(() => {
-  if (!job.value || !machine.tools.length) return null
-  const line = job.value.sendPtr
-  return machine.tools.find((t) => line >= t.lineStart && line <= t.lineEnd) ?? machine.tools[0]
+const jobToolNumbers = computed(() => {
+  const sections = job.value?.toolSections ?? []
+  return new Set(sections.map((s) => s.toolNumber).filter(Boolean))
 })
-
-const activeTool = computed(() =>
-  activeJobTool.value
-    ? (machine.toolLibrary.find(e => e.number === activeJobTool.value!.number) ?? null)
-    : null,
-)
 
 function isInJob(entry: ToolLibraryEntry): boolean {
   return entry.number !== undefined && jobToolNumbers.value.has(entry.number)
 }
 
+const nextJobToolNumber = computed(() => {
+  const sections = job.value?.toolSections ?? []
+  if (!sections.length) return null
+  const sendPtr = job.value?.sendPtr ?? 0
+  const status = job.value?.status
+  if (!status || status === 'idle' || status === 'analyzing') {
+    return sections[0]?.toolNumber ?? null
+  }
+  return sections.find(s => sendPtr <= s.endLine)?.toolNumber ?? null
+})
+
+function toolBadgeClassLib(entry: ToolLibraryEntry): string {
+  const isLoaded = entry.number === machine.loadedToolNumber
+  const isNext = entry.number !== undefined && entry.number === nextJobToolNumber.value
+  if (isLoaded && isNext) return 'bg-green-600'
+  if (isNext) return 'bg-amber-500'
+  if (isLoaded) return 'bg-purple-600'
+  if (isInJob(entry)) return 'bg-blue-600'
+  return 'bg-slate-400 dark:bg-slate-600'
+}
+
+function toolRowClassLib(entry: ToolLibraryEntry): string {
+  const isLoaded = entry.number === machine.loadedToolNumber
+  const isNext = entry.number !== undefined && entry.number === nextJobToolNumber.value
+  if (isLoaded && isNext) return 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700/60'
+  if (isNext) return 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700/60'
+  if (isLoaded) return 'bg-purple-50 dark:bg-purple-900/20 border-purple-300 dark:border-purple-700/60'
+  if (isInJob(entry)) return 'bg-blue-50/60 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800/50'
+  return 'bg-gray-50 dark:bg-slate-900 border-gray-200 dark:border-slate-700'
+}
+
 const filteredTools = computed(() => {
   const q = filterText.value.toLowerCase()
-  if (!q) return machine.toolLibrary
-  return machine.toolLibrary.filter(
+  if (!q) return allTools.value
+  return allTools.value.filter(
     e =>
       e.name.toLowerCase().includes(q) ||
       e.type.toLowerCase().includes(q) ||
@@ -848,8 +1015,10 @@ const sortedTools = computed(() => {
       return list.sort((a, b) => a.name.localeCompare(b.name))
     case 'diameter':
       return list.sort((a, b) => a.diameter - b.diameter)
-    case 'usetime':
-      return list.sort((a, b) => b.usageMinutes - a.usageMinutes)
+    case 'runtime':
+      return list.sort((a, b) => b.totalRuntimeMinutes - a.totalRuntimeMinutes)
+    case 'jobs':
+      return list.sort((a, b) => b.jobCount - a.jobCount)
     case 'number':
       return list.sort((a, b) => (a.number ?? 9999) - (b.number ?? 9999))
     default:
@@ -881,6 +1050,10 @@ function triggerImport() {
   fileInput.value?.click()
 }
 
+const importScope = ref<'M' | 'A'>('M')
+const pendingImportData = ref<unknown>(null)
+const showImportModal = ref(false)
+
 function onFileChange(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -888,28 +1061,22 @@ function onFileChange(event: Event) {
   const reader = new FileReader()
   reader.onload = (e) => {
     try {
-      const json = JSON.parse(e.target?.result as string)
-      const data: any[] = Array.isArray(json) ? json : (json.data ?? [])
-      const imported: ToolLibraryEntry[] = data.map((item: any, i: number) => ({
-        id: item.guid ?? `imported-${i}`,
-        number: item.number,
-        name: item.description || `${item.type ?? 'tool'} ⌀${item.geometry?.DC ?? '?'} mm`,
-        type: item.type ?? 'unknown',
-        diameter: item.geometry?.DC ?? 0,
-        fluteCount: item.geometry?.NFP,
-        fluteLength: item.geometry?.LCF ? Math.round(item.geometry.LCF) : undefined,
-        overallLength: item.geometry?.OH ? Math.round(item.geometry.OH) : undefined,
-        material: item.BMC,
-        usageMinutes: 0,
-        lastUsed: undefined,
-        source: 'A' as const,
-      }))
-      machine.setToolLibrary(imported)
+      pendingImportData.value = JSON.parse(e.target?.result as string)
+      importScope.value = 'M'
+      showImportModal.value = true
     } catch {
       // silently ignore malformed JSON
     }
     input.value = ''
   }
   reader.readAsText(file)
+}
+
+async function confirmImport() {
+  if (!pendingImportData.value) return
+  const machineId = settings.activeMachineId
+  wsSend({ t: 'tool:import', payload: { data: pendingImportData.value, scope: importScope.value, machineId } })
+  pendingImportData.value = null
+  showImportModal.value = false
 }
 </script>
