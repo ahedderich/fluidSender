@@ -8,6 +8,7 @@ import {
   getSnapshot,
   getUiState,
   getConnection,
+  getJobState,
   setNav,
   setSelection,
   setJogActive,
@@ -18,6 +19,8 @@ import {
   pushConsole,
   clearConsole,
   setConnection,
+  setMacroRunState,
+  isToolChangeModeActive,
   registerMachineStatusProvider,
   registerToolLibraryProvider,
   setLoadedTool,
@@ -29,6 +32,7 @@ import {
   type Toast,
   type StockDef,
 } from '../utils/appState'
+import { macroRunner, buildTcContext, type Macro } from '../utils/macro/macroRunner'
 import { toolStore } from '../utils/tool/toolStore'
 import { machineConnection } from '../utils/machine/connection'
 import {
@@ -413,6 +417,47 @@ export default defineWebSocketHandler({
         broadcastPatch([op])
         break
       }
+
+      // ── Macros ────────────────────────────────────────────────────────────
+      case 'macro:run': {
+        const { macroId, formValues } = msg.payload as { macroId: string; formValues: Record<string, string> }
+        const config = await getConfig()
+        const activeMachineId = getUiState().selection.activeMachineId
+        const machineMacros = (() => {
+          const m = (config.machines ?? []).find(
+            (mc: unknown) => (mc as { id?: string }).id === activeMachineId,
+          )
+          return ((m as { macros?: Macro[] })?.macros ?? []) as Macro[]
+        })()
+        const allMacros: Macro[] = [
+          ...((config.app?.macros ?? []) as Macro[]),
+          ...machineMacros,
+        ]
+        const macro = allMacros.find((m) => m.id === macroId)
+        if (!macro) {
+          broadcastPatch([pushConsole({ type: 'error', text: `Macro not found: ${macroId}`, ts: Date.now() })])
+          break
+        }
+        const conn = getConnection()
+        if (!conn.connected) {
+          broadcastPatch([pushToast({ id: `macro-noconn-${Date.now()}`, type: 'error', message: 'Not connected to machine', timeout: 4000 })])
+          break
+        }
+        if (macro.requiresToolChange && !isToolChangeModeActive()) {
+          broadcastPatch([pushToast({ id: `macro-notc-${Date.now()}`, type: 'warning', message: 'This macro requires active tool change mode', timeout: 5000 })])
+          break
+        }
+        broadcastPatch([setMacroRunState({ status: 'running', macroId, macroName: macro.name, errorMessage: null })])
+        const tcCtx = isToolChangeModeActive()
+          ? await buildTcContext(getJobState(), conn.machineId ?? '')
+          : null
+        macroRunner.run(macro, formValues ?? {}, tcCtx).catch(() => {})
+        break
+      }
+
+      case 'macro:abort':
+        macroRunner.abort()
+        break
 
       default:
         console.warn('[WS] unknown message type:', msg.t)

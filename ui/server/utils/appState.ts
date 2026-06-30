@@ -46,6 +46,13 @@ export interface UiConsoleEntry {
   ts: number
 }
 
+export interface MacroRunState {
+  status: 'running' | 'done' | 'error'
+  macroId: string
+  macroName: string
+  errorMessage: string | null
+}
+
 export interface UiState {
   nav: {
     probingTab: string
@@ -58,6 +65,7 @@ export interface UiState {
   toasts: Toast[]
   console: UiConsoleEntry[]
   loadedToolNumber: number | null
+  macroRun: MacroRunState | null
 }
 
 const CONSOLE_LIMIT = 300
@@ -70,6 +78,18 @@ const ui: UiState = {
   toasts: [],
   console: [],
   loadedToolNumber: null,
+  macroRun: null,
+}
+
+// ─── Tool change mode flag (runtime-only, not synced to clients) ──────────────
+let _toolChangeModeActive = false
+
+export function setToolChangeModeActive(active: boolean): void {
+  _toolChangeModeActive = active
+}
+
+export function isToolChangeModeActive(): boolean {
+  return _toolChangeModeActive
 }
 
 // A patch op targets a top-level UiState slice by `path`. Scalars use `set`;
@@ -263,6 +283,11 @@ export function clearConsole(): PatchOp {
   return { path: 'console', clear: true }
 }
 
+export function setMacroRunState(state: MacroRunState | null): PatchOp {
+  ui.macroRun = state
+  return { path: 'macroRun', set: { macroRun: state } }
+}
+
 export async function setLoadedTool(machineId: string, toolNumber: number | null): Promise<PatchOp> {
   ui.loadedToolNumber = toolNumber
   const config = await getConfig()
@@ -361,5 +386,6 @@ export function getSnapshot() {
     machine: _getMachineStatus?.() ?? null,
     stock: stockDef,
     toolLibrary: _getToolLibrary ? _getToolLibrary(machineId) : { machine: [], app: [] },
+    macroRun: ui.macroRun,
   }
 }

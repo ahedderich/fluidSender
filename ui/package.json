@@ -17,6 +17,7 @@
     "@pinia/nuxt": "^0.11.3",
     "@types/three": "^0.184.1",
     "@vueuse/core": "^14.3.0",
+    "expr-eval": "^2.0.2",
     "nuxt": "^4.4.8",
     "three": "^0.184.0"
   },

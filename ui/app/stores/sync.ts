@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import type { JobState } from '~/types/job'
+import type { MacroRunState } from '~/types/macro'
 
 export interface ModalEntry {
   id: string
@@ -33,6 +34,7 @@ export interface UiSnapshot {
   toasts: Toast[]
   console: SyncConsoleEntry[]
   loadedToolNumber: number | null
+  macroRun?: MacroRunState | null
 }
 
 export type PatchOp =
@@ -59,6 +61,7 @@ export const useSyncStore = defineStore('sync', () => {
   const toasts = ref<Toast[]>([])
   const consoleLog = ref<SyncConsoleEntry[]>([])
   const job = ref<JobState | null>(null)
+  const macroRun = ref<MacroRunState | null>(null)
 
   // Always mutate the array refs in place (never reassign), so references held by
   // useModals()/useToast() stay valid across snapshots and patches.
@@ -69,6 +72,7 @@ export const useSyncStore = defineStore('sync', () => {
     modals.value.splice(0, modals.value.length, ...ui.modals)
     toasts.value.splice(0, toasts.value.length, ...ui.toasts)
     consoleLog.value.splice(0, consoleLog.value.length, ...ui.console)
+    macroRun.value = ui.macroRun ?? null
   }
 
   // Apply a single patch op to the precise reactive slice it targets, so only
@@ -108,6 +112,9 @@ export const useSyncStore = defineStore('sync', () => {
           consoleLog.value.splice(0)
         }
         break
+      case 'macroRun':
+        if ('set' in op) macroRun.value = (op.set as { macroRun: MacroRunState | null }).macroRun
+        break
     }
   }
 
@@ -115,5 +122,5 @@ export const useSyncStore = defineStore('sync', () => {
     job.value = { ...state }
   }
 
-  return { nav, selection, jogActive, modals, toasts, consoleLog, job, applySnapshot, applyOp, applyJobState }
+  return { nav, selection, jogActive, modals, toasts, consoleLog, job, macroRun, applySnapshot, applyOp, applyJobState }
 })

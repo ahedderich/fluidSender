@@ -4,7 +4,7 @@ import { analyzeGCode } from './analysis'
 import { getModalStateAtLine } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
 import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
-import { broadcastPatch, setJobState, getConfig, type PatchOp } from '../appState'
+import { broadcastPatch, setJobState, getConfig, setToolChangeModeActive, type PatchOp } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
 import { startSend, sendGCode } from '../machine/sender'
 import { setMode } from '../machine/machineMode'
@@ -240,6 +240,7 @@ class JobRunner {
   /** Resume after a tool change — continue from the next section. */
   resumeAfterToolChange(): void {
     if (this._status !== 'tool_change') return
+    setToolChangeModeActive(false)
     this._startRuntimeSession(this._toolSections[this._currentSectionIndex] ?? null)
     this._sendSection(this._currentSectionIndex)
     this._setStatus('running', { toolChangeRequest: null })
@@ -266,6 +267,7 @@ class JobRunner {
       return
     }
     if (this._status === 'tool_change') {
+      setToolChangeModeActive(false)
       this._finalizeRuntimeSession().catch(() => {})
       this._setStatus('loaded', { toolChangeRequest: null, startWallClock: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null })
       return
@@ -277,6 +279,7 @@ class JobRunner {
 
   /** Immediate hard reset — no deceleration, potential mid-move position loss. */
   emergencyStop(): void {
+    setToolChangeModeActive(false)
     this._finalizeRuntimeSession().catch(() => {})
     const handle = this._sendHandle
     this._sendHandle = null
@@ -451,6 +454,7 @@ class JobRunner {
 
   /** Called by ws.ts on machine disconnect. */
   onMachineDisconnected(): void {
+    setToolChangeModeActive(false)
     this._finalizeRuntimeSession().catch(() => {})
     this._sendHandle = null
 
@@ -634,6 +638,7 @@ class JobRunner {
     const toolChangeType = section.toolChangeType ?? 'T'
 
     this._status = 'tool_change'
+    setToolChangeModeActive(true)
     setMode('idle')
 
     const toolChangeRequest: JobState['toolChangeRequest'] = {

@@ -209,20 +209,33 @@
             </template>
           </SettingsCard>
 
-          <SettingsCard title="Quick Macros">
+          <SettingsCard title="Machine Macros">
             <div class="divide-y divide-gray-100 dark:divide-slate-700/60">
               <div
                 v-for="macro in editingMachine.macros"
                 :key="macro.id"
                 class="flex items-center gap-3 px-3 py-2.5"
               >
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{{ macro.label }}</p>
-                  <p class="text-xs font-mono text-gray-400 dark:text-slate-500 truncate">{{ macro.command }}</p>
+                <div class="flex-1 min-w-0 flex items-center gap-2">
+                  <p class="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{{ macro.name }}</p>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400 shrink-0">{{ macro.trigger.kind }}</span>
+                  <svg v-if="macro.requiresToolChange" class="w-3 h-3 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" title="Requires tool change mode">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z" />
+                  </svg>
                 </div>
                 <button
                   type="button"
-                  @click="s.removeMachineMacro(editingMachine.id, macro.id)"
+                  @click="openMacroEditor(macro, 'machine', editingMachine.id)"
+                  class="p-1 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 rounded transition-colors shrink-0"
+                  title="Edit macro"
+                >
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  @click="s.removeMachineMacro(editingMachine.id, macro.id); s.save()"
                   class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-colors shrink-0"
                   title="Remove macro"
                 >
@@ -235,29 +248,14 @@
                 No machine macros configured
               </div>
             </div>
-            <div class="px-3 pb-3 pt-2 border-t border-gray-100 dark:border-slate-700/60 space-y-2">
-              <div class="flex gap-2">
-                <input
-                  v-model="newMachineMacro.label"
-                  type="text"
-                  class="settings-input flex-1 min-w-0"
-                  placeholder="Label"
-                />
-                <input
-                  v-model="newMachineMacro.command"
-                  type="text"
-                  class="settings-input flex-1 min-w-0 font-mono"
-                  placeholder="G-code command"
-                />
-                <button
-                  type="button"
-                  @click="submitNewMachineMacro"
-                  class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-sm font-medium transition-colors shrink-0"
-                >
-                  Add
-                </button>
-              </div>
-              <p v-if="newMachineMacroError" class="text-xs text-red-500 dark:text-red-400">{{ newMachineMacroError }}</p>
+            <div class="px-3 pb-3 pt-2 border-t border-gray-100 dark:border-slate-700/60">
+              <button
+                type="button"
+                @click="openMacroEditor(null, 'machine', editingMachine.id)"
+                class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-sm font-medium transition-colors"
+              >
+                Add Macro
+              </button>
             </div>
           </SettingsCard>
 
@@ -774,13 +772,26 @@
                 :key="macro.id"
                 class="flex items-center gap-3 px-3 py-2.5"
               >
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{{ macro.label }}</p>
-                  <p class="text-xs font-mono text-gray-400 dark:text-slate-500 truncate">{{ macro.command }}</p>
+                <div class="flex-1 min-w-0 flex items-center gap-2">
+                  <p class="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{{ macro.name }}</p>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400 shrink-0">{{ macro.trigger.kind }}</span>
+                  <svg v-if="macro.requiresToolChange" class="w-3 h-3 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" title="Requires tool change mode">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z" />
+                  </svg>
                 </div>
                 <button
                   type="button"
-                  @click="s.removeAppMacro(macro.id)"
+                  @click="openMacroEditor(macro, 'app')"
+                  class="p-1 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 rounded transition-colors shrink-0"
+                  title="Edit macro"
+                >
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  @click="s.removeAppMacro(macro.id); s.save()"
                   class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-colors shrink-0"
                   title="Remove macro"
                 >
@@ -793,21 +804,11 @@
                 No app macros configured
               </div>
             </div>
-          </SettingsCard>
-
-          <SettingsCard title="Add App Macro">
-            <SettingsRow label="Label">
-              <input v-model="newAppMacro.label" type="text" class="settings-input w-48" placeholder="Spindle On" />
-            </SettingsRow>
-            <SettingsRow label="Command">
-              <input v-model="newAppMacro.command" type="text" class="settings-input w-56 font-mono" placeholder="M3 S8000" />
-            </SettingsRow>
-            <div class="px-3 pb-3 pt-1">
-              <p v-if="newAppMacroError" class="text-xs text-red-500 dark:text-red-400 mb-2">{{ newAppMacroError }}</p>
+            <div class="px-3 pb-3 pt-2 border-t border-gray-100 dark:border-slate-700/60">
               <button
                 type="button"
-                @click="submitNewAppMacro"
-                class="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-sm font-medium transition-colors"
+                @click="openMacroEditor(null, 'app')"
+                class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-sm font-medium transition-colors"
               >
                 Add Macro
               </button>
@@ -976,6 +977,15 @@
 
     </section>
   </main>
+
+  <!-- Macro editor modal -->
+  <MacroEditorModal
+    v-if="macroEditorOpen"
+    :macro="macroEditorMacro"
+    :scope="macroEditorScope"
+    :machine-id="macroEditorMachineId"
+    @close="macroEditorOpen = false"
+  />
 </template>
 
 <script setup lang="ts">
@@ -984,6 +994,7 @@ import { useUiStore } from '~/stores/ui'
 import { useMachineStore } from '~/stores/machine'
 import { useConfirm } from '~/composables/useConfirm'
 import type { UserRole } from '~/stores/settings'
+import type { Macro } from '~/types/macro'
 
 const s = useSettingsStore()
 const ui = useUiStore()
@@ -1103,29 +1114,16 @@ const appTab = ref<'interface' | 'jog' | 'macros' | 'auth' | 'shortcuts'>('inter
 
 // ─── Macro management ─────────────────────────────────────────────────────────
 
-const newAppMacro = reactive({ label: '', command: '' })
-const newAppMacroError = ref('')
+const macroEditorOpen = ref(false)
+const macroEditorMacro = ref<Macro | null>(null)
+const macroEditorScope = ref<'app' | 'machine'>('app')
+const macroEditorMachineId = ref<string | undefined>(undefined)
 
-function submitNewAppMacro() {
-  newAppMacroError.value = ''
-  if (!newAppMacro.label.trim()) { newAppMacroError.value = 'Label is required.'; return }
-  if (!newAppMacro.command.trim()) { newAppMacroError.value = 'Command is required.'; return }
-  s.addAppMacro(newAppMacro.label.trim(), newAppMacro.command.trim())
-  newAppMacro.label = ''
-  newAppMacro.command = ''
-}
-
-const newMachineMacro = reactive({ label: '', command: '' })
-const newMachineMacroError = ref('')
-
-function submitNewMachineMacro() {
-  if (!editingMachine.value) return
-  newMachineMacroError.value = ''
-  if (!newMachineMacro.label.trim()) { newMachineMacroError.value = 'Label is required.'; return }
-  if (!newMachineMacro.command.trim()) { newMachineMacroError.value = 'Command is required.'; return }
-  s.addMachineMacro(editingMachine.value.id, newMachineMacro.label.trim(), newMachineMacro.command.trim())
-  newMachineMacro.label = ''
-  newMachineMacro.command = ''
+function openMacroEditor(macro: Macro | null, scope: 'app' | 'machine', machineId?: string) {
+  macroEditorMacro.value = macro
+  macroEditorScope.value = scope
+  macroEditorMachineId.value = machineId
+  macroEditorOpen.value = true
 }
 
 // ─── User management ──────────────────────────────────────────────────────────
@@ -1249,13 +1247,3 @@ onUnmounted(() => {
 })
 </script>
 
-<style scoped>
-@reference "~/assets/css/tailwind.css";
-
-.settings-input {
-  @apply bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 text-gray-900 dark:text-slate-100 text-sm px-2 py-1.5 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500;
-}
-.settings-input-sm {
-  @apply bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 text-gray-900 dark:text-slate-100 text-xs px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 w-full;
-}
-</style>

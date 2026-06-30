@@ -1,4 +1,8 @@
 import { defineStore } from 'pinia'
+import type { Macro, MacroTrigger, MacroVariable } from '~/types/macro'
+import { wsSend } from '~/composables/useWsSend'
+
+export type { Macro, MacroTrigger, MacroVariable }
 
 export type ConnectionType = 'usb' | 'tcp'
 export type MachineType = 'router' | 'laser' | 'plasma'
@@ -144,7 +148,7 @@ export interface MachineProfile {
   type: MachineType
   connection: ConnectionConfig
   probe: ProbeConfig
-  macros: MacroButton[]
+  macros: Macro[]
   magazine: MagazineConfig
   /** null until first firmware connect — loaded fresh on each connect */
   fluidncConfig: FluidNCConfig | null
@@ -189,7 +193,7 @@ interface PersistedConfig {
   machines?: MachineProfile[]
   app?: {
     units?: UnitSystem
-    macros?: MacroButton[]
+    macros?: Macro[]
     viewport?: { defaultView?: ViewKey; showGrid?: boolean; showAxes?: boolean }
     jog?: Partial<JogSettings>
     shortcuts?: Partial<KeyboardShortcuts>
@@ -240,7 +244,7 @@ export const useSettingsStore = defineStore('settings', () => {
   // FluidSender app-level settings — authoritative on Bun server, pushed to all clients
   const app = reactive({
     units: 'mm' as UnitSystem,
-    macros: [] as MacroButton[],
+    macros: [] as Macro[],
     viewport: {
       defaultView: 'iso' as ViewKey,
       showGrid: true,
@@ -274,8 +278,33 @@ export const useSettingsStore = defineStore('settings', () => {
     },
   })
 
+  function _migrateMacros(raw: unknown[]): Macro[] {
+    return raw.map((m) => {
+      const macro = m as Record<string, unknown>
+      // Backward compat: old MacroButton shape { id, label, command }
+      if ('command' in macro && !('gcode' in macro)) {
+        return {
+          id: macro['id'] as string,
+          name: (macro['label'] as string) ?? '',
+          trigger: { kind: 'direct' } as MacroTrigger,
+          gcode: (macro['command'] as string) ?? '',
+          requiresToolChange: false,
+        } satisfies Macro
+      }
+      // New shape — fill in missing trigger with default
+      return {
+        ...macro,
+        trigger: (macro['trigger'] as MacroTrigger) ?? { kind: 'direct' },
+      } as Macro
+    })
+  }
+
   function applyServerState(data: PersistedConfig) {
-    machines.value = (data.machines ?? []).map((m) => ({ toolChangeMacro: '', ...m }))
+    machines.value = (data.machines ?? []).map((m) => ({
+      toolChangeMacro: '',
+      ...m,
+      macros: _migrateMacros(m.macros ?? []),
+    }))
     // Keep current selection if still valid; otherwise fall back to first machine
     if (!machines.value.find((m) => m.id === activeMachineId.value)) {
       activeMachineId.value = machines.value[0]?.id ?? ''
@@ -285,7 +314,7 @@ export const useSettingsStore = defineStore('settings', () => {
     }
     if (data.app) {
       if (data.app.units) app.units = data.app.units
-      if (data.app.macros) app.macros = data.app.macros
+      if (data.app.macros) app.macros = _migrateMacros(data.app.macros as unknown[])
       if (data.app.viewport) Object.assign(app.viewport, data.app.viewport)
       if (data.app.jog) Object.assign(app.jog, data.app.jog)
       if (data.app.shortcuts) Object.assign(app.shortcuts, data.app.shortcuts)
@@ -324,23 +353,36 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  function addAppMacro(label: string, command: string) {
-    app.macros.push({ id: `macro-${Date.now()}`, label, command })
+  function addAppMacro(macro: Macro) {
+    app.macros.push(macro)
+  }
+  function updateAppMacro(macro: Macro) {
+    const idx = app.macros.findIndex((m) => m.id === macro.id)
+    if (idx !== -1) app.macros.splice(idx, 1, macro)
   }
   function removeAppMacro(id: string) {
     const idx = app.macros.findIndex((m) => m.id === id)
     if (idx !== -1) app.macros.splice(idx, 1)
   }
-  function addMachineMacro(machineId: string, label: string, command: string) {
+  function addMachineMacro(machineId: string, macro: Macro) {
     const m = machines.value.find((mc) => mc.id === machineId)
     if (!m) return
-    m.macros.push({ id: `macro-${Date.now()}`, label, command })
+    m.macros.push(macro)
+  }
+  function updateMachineMacro(machineId: string, macro: Macro) {
+    const m = machines.value.find((mc) => mc.id === machineId)
+    if (!m) return
+    const idx = m.macros.findIndex((mc) => mc.id === macro.id)
+    if (idx !== -1) m.macros.splice(idx, 1, macro)
   }
   function removeMachineMacro(machineId: string, macroId: string) {
     const m = machines.value.find((mc) => mc.id === machineId)
     if (!m) return
     const idx = m.macros.findIndex((mc) => mc.id === macroId)
     if (idx !== -1) m.macros.splice(idx, 1)
+  }
+  function runMacro(macroId: string, formValues: Record<string, string> = {}) {
+    wsSend({ t: 'macro:run', payload: { macroId, formValues } })
   }
 
   function addUser(username: string, role: UserRole) {
@@ -366,9 +408,12 @@ export const useSettingsStore = defineStore('settings', () => {
     applyServerState,
     save,
     addAppMacro,
+    updateAppMacro,
     removeAppMacro,
     addMachineMacro,
+    updateMachineMacro,
     removeMachineMacro,
+    runMacro,
     addUser,
     removeUser,
     app,
