@@ -99,16 +99,22 @@
     <div class="absolute bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-sm border-t border-slate-700/50 px-4 py-2 z-10">
       <div class="flex items-center justify-between text-xs text-slate-400 mb-1.5">
         <span>{{ startLabel }}</span>
-        <span class="font-medium text-slate-200">
-          {{ job?.totalLines ? Math.round((job.sendPtr / job.totalLines) * 100) : 0 }}%
+        <span class="font-medium">
+          <span class="text-blue-400">{{ execPct }}%</span>
           <span v-if="job?.filename" class="text-slate-400 ml-1">({{ job!.filename }})</span>
         </span>
         <span>{{ etaLabel }}</span>
       </div>
-      <div class="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+      <div class="relative h-1.5 bg-slate-700 rounded-full overflow-hidden">
+        <!-- Sent: light blue/grey, wider -->
         <div
-          class="h-full bg-blue-500 rounded-full transition-all duration-500"
-          :style="{ width: (job?.totalLines ? Math.round((job.sendPtr / job.totalLines) * 100) : 0) + '%' }"
+          class="absolute inset-y-0 left-0 bg-blue-900 transition-all duration-500"
+          :style="{ width: sendPct + '%' }"
+        />
+        <!-- Executed: blue, narrower, on top -->
+        <div
+          class="absolute inset-y-0 left-0 bg-blue-500 transition-all duration-500"
+          :style="{ width: execPct + '%' }"
         />
       </div>
     </div>
@@ -155,6 +161,9 @@ const layers = reactive([
   { key: 'origin', label: 'Origin', color: '', visible: true },
   { key: 'machineBounds', label: 'Machine', color: '#475569', visible: true },
 ])
+
+const sendPct = computed(() => job.value?.totalLines ? Math.round((job.value.sendPtr / job.value.totalLines) * 100) : 0)
+const execPct = computed(() => job.value?.totalLines ? Math.round((job.value.execPtr / job.value.totalLines) * 100) : 0)
 
 const startLabel = computed(() => {
   if (!job.value?.startWallClock) return 'Start: --:--'
