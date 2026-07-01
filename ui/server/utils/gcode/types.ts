@@ -1,3 +1,5 @@
+import type { CommandCategory } from './classifier'
+
 export type GCodeLineType =
   | 'rapid'
   | 'feed'
@@ -19,6 +21,7 @@ export interface GCodeLine {
   type: GCodeLineType
   /** True for motion commands that queue into the FluidNC planner (rapid/feed/arc). */
   isMotion: boolean
+  category: CommandCategory
   /** Estimated execution time in ms. 0 for non-motion lines. */
   estimatedDurationMs: number
   /** Cumulative estimated duration from line 0 through this line. */

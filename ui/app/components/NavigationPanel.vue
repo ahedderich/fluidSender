@@ -7,6 +7,11 @@
       <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
         Navigation
       </h2>
+      <div v-if="isJobActive" class="flex items-center gap-1 ml-2 mr-auto">
+        <span class="text-xs text-gray-400 dark:text-slate-500">F</span>
+        <span class="text-xs font-mono font-semibold text-blue-600 dark:text-blue-400">{{ machine.feed }}</span>
+        <span class="text-xs text-gray-400 dark:text-slate-500">mm/m</span>
+      </div>
       <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded-md p-0.5">
         <button
           @click="navMode = 'buttons'"
@@ -259,6 +264,11 @@ const settings = useSettingsStore()
 const sync = useSyncStore()
 const { navMode } = useNav()
 const modals = useModals()
+
+const isJobActive = computed(() => {
+  const s = sync.job?.status
+  return s === 'running' || s === 'pausing' || s === 'recovering' || s === 'stopping' || s === 'program_pause'
+})
 
 // true only on the browser that is actively jogging right now
 const isJogging = ref(false)

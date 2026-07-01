@@ -16,6 +16,10 @@ import type { GCodeLine, GCodeModalState, JobState, ToolSection } from './types'
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
 const UPLOADS_DIR = join(DATA_DIR, 'uploads')
 
+function jLog(msg: string): void {
+  console.log(`[JOB ${new Date().toISOString().slice(11, 23)}] ${msg}`)
+}
+
 const CHECKPOINT_LINES = 50
 const CHECKPOINT_MS = 1000
 const RESUME_SAFE_Z_LIFT = 5
@@ -194,6 +198,7 @@ class JobRunner {
       this._execPtr = 0
     }
 
+    jLog(`start() status=${this._status} totalLines=${this.lines.length} sections=${this._toolSections.length}`)
     this._currentSectionIndex = 0
     this._setStatus('running', { startWallClock: Date.now(), execPtr: this._execPtr })
     this._startRuntimeSession(this._toolSections[0] ?? null)
@@ -202,23 +207,36 @@ class JobRunner {
 
   /** Pause — sends feed hold, waits for Hold:0, resets machine. Fires 'suspended' event when done. */
   pause(): void {
-    if (this._status !== 'running') return
+    jLog(`pause() called status=${this._status} sendHandle=${this._sendHandle?.chunkId.slice(0, 8) ?? 'null'} execPtr=${this._execPtr}`)
+    if (this._status !== 'running') {
+      jLog(`pause() SKIP — not running`)
+      return
+    }
     this._setStatus('pausing')
     if (this._sendHandle) {
+      jLog(`pause() → calling suspendSend(${this._sendHandle.chunkId.slice(0, 8)})`)
       suspendSend(this._sendHandle.chunkId)
+    } else {
+      jLog(`pause() WARNING — no sendHandle to suspend`)
     }
   }
 
   /** Resume from pause — rebuilds modal state and returns to pause position before continuing. */
   async resume(): Promise<void> {
-    if (this._status !== 'paused') return
+    jLog(`resume() called status=${this._status} execPtr=${this._execPtr} mainJobChunkId=${this._mainJobChunkId?.slice(0, 8) ?? 'null'}`)
+    if (this._status !== 'paused') {
+      jLog(`resume() SKIP — not paused`)
+      return
+    }
     const resumePtr = this._execPtr
     const suspendedChunkId = this._mainJobChunkId
 
     try {
       // resumePtr is the count of confirmed-executed lines; states[resumePtr-1] is the
       // endpoint of the last completed move (= start of the in-flight move we interrupted).
+      jLog(`resume() fetching modal state at line ${resumePtr - 1}`)
       const modal = await getModalStateAtLine(resumePtr - 1)
+      jLog(`resume() modal=${modal ? `pos(${modal.position.x.toFixed(2)},${modal.position.y.toFixed(2)},${modal.position.z.toFixed(2)}) wcs=${modal.workCoordinate}` : 'null'}`)
 
       this._setStatus('recovering', {
         startWallClock: null,
@@ -233,21 +251,26 @@ class JobRunner {
         const currentZ = lastStatus?.wpos.z ?? modal.position.z
         const safeZ = Math.max(currentZ, modal.position.z + RESUME_SAFE_Z_LIFT)
         const recoveryCommands = this._buildRecoverySequence(modal, safeZ)
+        jLog(`resume() with modal recovery: safeZ=${safeZ.toFixed(3)} recoveryCommands=${recoveryCommands.length} suspendedChunkId=${suspendedChunkId?.slice(0, 8) ?? 'null'}`)
         this._sendHandle = sendGCode(recoveryCommands, (event) => {
+          jLog(`recovery event: status=${event.status} completedMode=${event.completedMode} sent=${event.sent} exec=${event.executed}`)
           this._handleRecoveryEvent(event, suspendedChunkId)
         })
       } else if (suspendedChunkId) {
         // No modal recovery needed — resume the suspended chunk directly.
+        jLog(`resume() direct resumeChunk (no modal) suspendedChunkId=${suspendedChunkId.slice(0, 8)}`)
         this._mainJobChunkId = null
         this._sendHandle = resumeChunk(suspendedChunkId)
         this._setStatus('running', { startWallClock: Date.now() })
       } else {
         // Fallback: start a new send from execPtr.
+        jLog(`resume() fallback: no modal, no suspendedChunk → fresh send from execPtr=${resumePtr}`)
         this.sendPtr = resumePtr
         this._setStatus('running', { startWallClock: Date.now() })
         this._startMainSend()
       }
     } catch (err) {
+      jLog(`resume() ERROR: ${(err as Error).message}`)
       this._broadcastError(`Resume failed: ${(err as Error).message}`)
     }
   }
@@ -277,6 +300,7 @@ class JobRunner {
 
   /** Stop — graceful feed-hold then reset. Returns to loaded state when complete. */
   stop(): void {
+    jLog(`stop() called status=${this._status} sendHandle=${this._sendHandle?.chunkId.slice(0, 8) ?? 'null'} mainJobChunkId=${this._mainJobChunkId?.slice(0, 8) ?? 'null'}`)
     if (this._status === 'paused') {
       // Main chunk is already suspended (machine is Idle). Hard-stop cleans it up.
       if (this._mainJobChunkId) {
@@ -542,7 +566,7 @@ class JobRunner {
   private _startFlatSend(): void {
     const startPtr = this.sendPtr
     this._sendHandle = startSend(
-      this.lines.slice(startPtr).map((l) => ({ raw: l.raw, isMotion: l.isMotion })),
+      this.lines.slice(startPtr).map((l) => ({ raw: l.raw, isMotion: l.isMotion, category: l.category })),
       (event) => this._handleSenderEvent(event),
       startPtr,
     )
@@ -562,7 +586,7 @@ class JobRunner {
 
     const chunk = this.lines.slice(startLine, endLine + 1)
     this._sendHandle = startSend(
-      chunk.map((l) => ({ raw: l.raw, isMotion: l.isMotion })),
+      chunk.map((l) => ({ raw: l.raw, isMotion: l.isMotion, category: l.category })),
       (event) => this._handleSenderEvent(event),
       startLine,
     )
@@ -575,6 +599,7 @@ class JobRunner {
 
     const inPlanner = Math.max(0, event.sent - event.executed)
     if (event.sent !== this.sendPtr || event.executed !== this._execPtr) {
+      jLog(`progress: sent=${event.sent} exec=${event.executed} inPlanner=${inPlanner} status=${event.status} holdPhase=${event.holdPhase}`)
       this.sendPtr = event.sent
       this._execPtr = event.executed
       ops.push(setJobState({
@@ -599,6 +624,7 @@ class JobRunner {
 
     // Chunk was suspended by suspendSend() — store chunkId for resume
     if (event.status === 'suspended') {
+      jLog(`sender SUSPENDED event: chunkId=${event.chunkId.slice(0, 8)} sent=${event.sent} exec=${event.executed} → storing as mainJobChunkId, status→paused`)
       this._mainJobChunkId = event.chunkId
       this._sendHandle = null
       this.sendPtr = this._execPtr
@@ -608,6 +634,7 @@ class JobRunner {
 
     if (event.status !== 'completed') return
 
+    jLog(`sender COMPLETED (main): chunkId=${event.chunkId.slice(0, 8)} mode=${event.completedMode} sent=${event.sent} exec=${event.executed} jobStatus=${this._status}`)
     this._sendHandle = null
 
     switch (event.completedMode) {
@@ -845,6 +872,7 @@ class JobRunner {
   }
 
   private _setStatus(status: JobState['status'], extra?: Partial<JobState>): void {
+    jLog(`status: ${this._status} → ${status}`)
     this._status = status
     broadcastPatch([setJobState({ status, ...extra })])
   }

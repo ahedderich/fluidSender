@@ -1,3 +1,5 @@
+import type { CommandCategory } from '../gcode/classifier'
+
 export type MachineMode = 'idle' | 'sending' | 'jogging'
 
 export type SenderEventStatus = 'progress' | 'suspended' | 'completed'
@@ -36,6 +38,7 @@ export interface SendHandle {
 export interface SendableLine {
   raw: string
   isMotion: boolean
+  category: CommandCategory
 }
 
 export interface MachineStatus {

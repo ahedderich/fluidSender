@@ -170,6 +170,7 @@ async fn handle_connection(
                                 result = &mut rx, if !in_pause => {
                                     if matches!(kind, PendingKind::ProgramPause) {
                                         // Drain complete — enter M0 Hold; wait for ~ below.
+                                        eprintln!("[SIM] M0 ProgramPause: planner drained → status→Hold, waiting for CycleStart (~)");
                                         let mut state = shared.write().await;
                                         state.status = MachineStatus::Hold;
                                         let _ = broadcast.send(());
@@ -320,30 +321,41 @@ async fn handle_realtime(
         }
         RealtimeCmd::FeedHold => {
             let mut state = shared.write().await;
+            eprintln!("[SIM] realtime: FeedHold (0x21) machineStatus={:?} hold_pending={}", state.status, state.hold_pending);
             if matches!(state.status, MachineStatus::Run) {
                 state.hold_pending = true;
                 state.status = MachineStatus::Hold;
+                eprintln!("[SIM] FeedHold applied: status Run→Hold planner_buf_used={}", state.planner_buf_used);
                 let _ = broadcast.send(());
+            } else {
+                eprintln!("[SIM] FeedHold ignored: not in Run state");
             }
             None
         }
         RealtimeCmd::CycleStart => {
             let mut state = shared.write().await;
+            eprintln!("[SIM] realtime: CycleStart (0x7E) machineStatus={:?}", state.status);
             if matches!(state.status, MachineStatus::Hold) {
                 state.status = MachineStatus::Idle;
+                eprintln!("[SIM] CycleStart applied: status Hold→Idle");
                 let _ = broadcast.send(());
+            } else {
+                eprintln!("[SIM] CycleStart ignored: not in Hold state");
             }
             None
         }
         RealtimeCmd::SoftReset => {
             let mut state = shared.write().await;
+            eprintln!("[SIM] realtime: SoftReset (0x18) machineStatus={:?} planner_buf_used={} epoch={}", state.status, state.planner_buf_used, state.reset_epoch);
             state.soft_reset();
+            eprintln!("[SIM] SoftReset complete: status→Idle epoch={}", state.reset_epoch);
             let _ = broadcast.send(());
             // Send greeting after reset
             Some(GREETING.to_string())
         }
         RealtimeCmd::JogCancel => {
             let mut state = shared.write().await;
+            eprintln!("[SIM] realtime: JogCancel (0x85) machineStatus={:?}", state.status);
             if matches!(state.status, MachineStatus::Run) {
                 state.jog_cancel_pending = true;
             }
@@ -351,6 +363,7 @@ async fn handle_realtime(
         }
         RealtimeCmd::SafetyDoor => {
             let mut state = shared.write().await;
+            eprintln!("[SIM] realtime: SafetyDoor (0x84) machineStatus={:?}", state.status);
             state.status = MachineStatus::Door;
             state.door = true;
             let _ = broadcast.send(());

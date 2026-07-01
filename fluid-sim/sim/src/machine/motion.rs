@@ -72,11 +72,29 @@ async fn motion_loop(
         // was queued and now, the epoch will differ and execute_move will skip it.
         let epoch = { shared.read().await.reset_epoch };
         let is_dwell = matches!(mv.kind, MoveKind::Dwell { .. });
+        let kind_label = match &mv.kind {
+            MoveKind::Linear => "Linear",
+            MoveKind::Jog => "Jog",
+            MoveKind::Arc { .. } => "Arc",
+            MoveKind::Dwell { seconds } => {
+                eprintln!("[SIM] motion: Dwell({:.3}s) dequeued epoch={}", seconds, epoch);
+                "Dwell"
+            }
+        };
+        if !is_dwell {
+            let state = shared.read().await;
+            eprintln!("[SIM] motion: {} dequeued epoch={} planner_buf_used={} machineStatus={:?} target=({:.3},{:.3},{:.3})",
+                kind_label, epoch, state.planner_buf_used, state.status,
+                mv.target[0], mv.target[1], mv.target[2]);
+        }
         let result = execute_move(&shared, &broadcast, &mv, dt, interval_dur, epoch).await;
         // Decrement planner count — but NOT for dwell: G4 drains the planner, never fills it.
         if !is_dwell {
             let mut state = shared.write().await;
+            let prev = state.planner_buf_used;
             if state.planner_buf_used > 0 { state.planner_buf_used -= 1; }
+            eprintln!("[SIM] motion: {} complete result={:?} planner_buf_used {}→{} machineStatus={:?}",
+                kind_label, result, prev, state.planner_buf_used, state.status);
             let _ = broadcast.send(());
         }
         let _ = result_tx.send(result);
@@ -148,19 +166,24 @@ async fn execute_linear(
         let mut state = shared.write().await;
         // Abort if a soft_reset happened since this move was queued.
         if state.reset_epoch != epoch {
+            eprintln!("[SIM] execute_linear: stale epoch (move={} current={}) — skipping", epoch, state.reset_epoch);
             return MoveResult::Ok;
         }
         // Skip moves queued behind an active hold or alarm — don't overwrite the status.
         if matches!(state.status, MachineStatus::Hold | MachineStatus::Alarm) {
+            eprintln!("[SIM] execute_linear: skipping move — machineStatus={:?} (behind hold/alarm)", state.status);
             return MoveResult::Ok;
         }
         // Skip jog moves queued behind a jog cancel.
         if matches!(mv.kind, MoveKind::Jog) && state.jog_cancel_pending {
+            eprintln!("[SIM] execute_linear: JogCancel pending — skipping jog, status→Idle");
             state.status = MachineStatus::Idle;
             state.feed = 0.0;
             let _ = broadcast.send(());
             return MoveResult::Ok;
         }
+        eprintln!("[SIM] execute_linear: start {:?} feed={:.1} target=({:.3},{:.3},{:.3}) status→Run",
+            mv.kind, mv.feed, mv.target[0], mv.target[1], mv.target[2]);
         state.status = MachineStatus::Run;
         state.feed = mv.feed;
     }
@@ -193,15 +216,19 @@ async fn execute_linear(
 
             // Abort mid-move if a soft_reset occurred after this move started executing.
             if state.reset_epoch != epoch {
+                eprintln!("[SIM] motion: epoch mismatch (move epoch={} current={}) — aborting move mid-tick", epoch, state.reset_epoch);
                 TickResult::Done(MoveResult::Ok)
             // Jog cancel → return to Idle immediately (not Hold)
             } else if matches!(mv.kind, MoveKind::Jog) && state.jog_cancel_pending {
+                eprintln!("[SIM] motion: JogCancel mid-move → status→Idle pos=({:.3},{:.3},{:.3})", state.pos[0], state.pos[1], state.pos[2]);
                 state.status = MachineStatus::Idle;
                 state.feed = 0.0;
                 let _ = broadcast.send(());
                 TickResult::Done(MoveResult::Ok)
             // Feed hold (non-jog moves only)
             } else if state.hold_pending || matches!(state.status, MachineStatus::Hold) {
+                eprintln!("[SIM] motion: FeedHold mid-move (hold_pending={} status={:?}) pos=({:.3},{:.3},{:.3}) → status→Hold",
+                    state.hold_pending, state.status, state.pos[0], state.pos[1], state.pos[2]);
                 state.hold_pending = false;
                 if matches!(mv.kind, MoveKind::Jog) {
                     state.status = MachineStatus::Idle;

@@ -133,7 +133,7 @@ export function analyzeGCode(
     const clean = stripComments(raw).toUpperCase()
 
     if (!clean) {
-      lines.push({ index: i, raw, type: 'comment', isMotion: false, estimatedDurationMs: 0, cumulativeDurationMs: cumulativeMs })
+      lines.push({ index: i, raw, type: 'comment', isMotion: false, category: 'comment', estimatedDurationMs: 0, cumulativeDurationMs: cumulativeMs })
       vectors.push(null)
       modalStates.push(structuredClone(state))
       continue
@@ -364,7 +364,7 @@ export function analyzeGCode(
 
     if (durationMs === 0) durationMs = 1
 
-    const { isMotion } = classifyLine(raw, getActiveFirmwareVersion())
+    const classified = classifyLine(raw, getActiveFirmwareVersion())
 
     cumulativeMs += durationMs
 
@@ -380,7 +380,8 @@ export function analyzeGCode(
       index: i,
       raw,
       type,
-      isMotion,
+      isMotion: classified.isMotion,
+      category: classified.category,
       estimatedDurationMs: durationMs,
       cumulativeDurationMs: cumulativeMs,
       ...(type === 'program_pause' ? { pauseComment } : {}),
