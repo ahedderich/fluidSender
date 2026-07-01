@@ -50,7 +50,6 @@ import {
   onBufUpdate,
   onMachineDisconnected as senderDisconnected,
   senderSoftStop,
-  senderFeedHold,
   senderCycleStart,
   senderHardStop,
   getSenderStatus,
@@ -238,9 +237,6 @@ export default defineWebSocketHandler({
       // ── Sender control ────────────────────────────────────────────────────
       case 'sender:softStop':
         senderSoftStop((msg.payload as { chunkId?: string } | undefined)?.chunkId)
-        break
-      case 'sender:feedHold':
-        senderFeedHold((msg.payload as { chunkId?: string } | undefined)?.chunkId)
         break
       case 'sender:cycleStart':
         senderCycleStart((msg.payload as { chunkId?: string } | undefined)?.chunkId)

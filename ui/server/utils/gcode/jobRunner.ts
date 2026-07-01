@@ -6,7 +6,7 @@ import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from
 import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
 import { broadcastPatch, setJobState, getConfig, setToolChangeModeActive, type PatchOp } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
-import { startSend, sendGCode } from '../machine/sender'
+import { startSend, sendGCode, suspendSend, resumeChunk, stopSend, senderHardStop } from '../machine/sender'
 import { setMode } from '../machine/machineMode'
 import { toolStore } from '../tool/toolStore'
 import { appendRuntimeSession } from '../tool/runtimeLog'
@@ -34,6 +34,8 @@ class JobRunner {
 
   // Active send session
   private _sendHandle: SendHandle | null = null
+  // ChunkId of the suspended main job chunk while status is 'paused'
+  private _mainJobChunkId: string | null = null
 
   // Chunk-send (multi-section) state
   private _toolSections: ToolSection[] = []
@@ -198,21 +200,25 @@ class JobRunner {
     this._startMainSend()
   }
 
-  /** Feed hold pause — machine decelerates and enters Hold state. Resume with resume(). */
+  /** Pause — sends feed hold, waits for Hold:0, resets machine. Fires 'suspended' event when done. */
   pause(): void {
     if (this._status !== 'running') return
     this._setStatus('pausing')
-    this._sendHandle?.feedHold()
+    if (this._sendHandle) {
+      suspendSend(this._sendHandle.chunkId)
+    }
   }
 
   /** Resume from pause — rebuilds modal state and returns to pause position before continuing. */
   async resume(): Promise<void> {
     if (this._status !== 'paused') return
     const resumePtr = this._execPtr
-    this.sendPtr = resumePtr
+    const suspendedChunkId = this._mainJobChunkId
 
     try {
-      const modal = await getModalStateAtLine(resumePtr)
+      // resumePtr is the count of confirmed-executed lines; states[resumePtr-1] is the
+      // endpoint of the last completed move (= start of the in-flight move we interrupted).
+      const modal = await getModalStateAtLine(resumePtr - 1)
 
       this._setStatus('recovering', {
         startWallClock: null,
@@ -227,8 +233,17 @@ class JobRunner {
         const currentZ = lastStatus?.wpos.z ?? modal.position.z
         const safeZ = Math.max(currentZ, modal.position.z + RESUME_SAFE_Z_LIFT)
         const recoveryCommands = this._buildRecoverySequence(modal, safeZ)
-        this._sendHandle = sendGCode(recoveryCommands, (event) => this._handleRecoveryEvent(event))
+        this._sendHandle = sendGCode(recoveryCommands, (event) => {
+          this._handleRecoveryEvent(event, suspendedChunkId)
+        })
+      } else if (suspendedChunkId) {
+        // No modal recovery needed — resume the suspended chunk directly.
+        this._mainJobChunkId = null
+        this._sendHandle = resumeChunk(suspendedChunkId)
+        this._setStatus('running', { startWallClock: Date.now() })
       } else {
+        // Fallback: start a new send from execPtr.
+        this.sendPtr = resumePtr
         this._setStatus('running', { startWallClock: Date.now() })
         this._startMainSend()
       }
@@ -260,21 +275,41 @@ class JobRunner {
     broadcastPatch([setJobState({ toolPreferences: { ...this._toolPreferences } })])
   }
 
-  /** Feed hold stop — decelerates the machine then resets to Idle. Returns to loaded state. */
+  /** Stop — graceful feed-hold then reset. Returns to loaded state when complete. */
   stop(): void {
     if (this._status === 'paused') {
-      this._doHardStopAndReturnToLoaded()
+      // Main chunk is already suspended (machine is Idle). Hard-stop cleans it up.
+      if (this._mainJobChunkId) {
+        senderHardStop(this._mainJobChunkId)
+        this._mainJobChunkId = null
+      }
+      this._execPtr = 0
+      this.sendPtr = 0
+      this._setStatus('loaded', {
+        startWallClock: null,
+        sendPtr: 0,
+        execPtr: 0,
+        inPlanner: 0,
+        recovery: null,
+        toolChangeRequest: null,
+        programPause: null,
+      })
+      clearCheckpoint().catch(() => {})
       return
     }
     if (this._status === 'tool_change') {
       setToolChangeModeActive(false)
       this._finalizeRuntimeSession().catch(() => {})
+      this._mainJobChunkId = null
       this._setStatus('loaded', { toolChangeRequest: null, startWallClock: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null })
       return
     }
     if (this._status !== 'running') return
     this._setStatus('stopping')
-    this._sendHandle?.feedHold()
+    if (this._sendHandle) {
+      stopSend(this._sendHandle.chunkId)
+      // Don't null _sendHandle here — the 'stopped' completion event handler clears it.
+    }
   }
 
   /** Immediate hard reset — no deceleration, potential mid-move position loss. */
@@ -442,7 +477,7 @@ class JobRunner {
         const currentZ = lastStatus?.wpos.z ?? modal.position.z
         const safeZ = Math.max(currentZ, modal.position.z + RESUME_SAFE_Z_LIFT)
         const recoveryCommands = this._buildRecoverySequence(modal, safeZ)
-        this._sendHandle = sendGCode(recoveryCommands, (event) => this._handleRecoveryEvent(event))
+        this._sendHandle = sendGCode(recoveryCommands, (event) => this._handleRecoveryEvent(event, null))
       } else {
         this._setStatus('running', { startWallClock: Date.now() })
         this._startMainSend()
@@ -457,8 +492,10 @@ class JobRunner {
     setToolChangeModeActive(false)
     this._finalizeRuntimeSession().catch(() => {})
     this._sendHandle = null
+    this._mainJobChunkId = null  // suspended chunk was finalized by senderDisconnected()
 
     if (this._status === 'stopping') {
+      // stopSend was in progress; treat as loaded since we didn't complete cleanly.
       this._execPtr = 0
       this.sendPtr = 0
       this._setStatus('loaded', { startWallClock: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null, toolChangeRequest: null, programPause: null })
@@ -466,6 +503,7 @@ class JobRunner {
     } else if (this._status === 'running' || this._status === 'pausing' || this._status === 'recovering') {
       this._setStatus('paused', { errorMessage: 'Machine disconnected during job' })
     }
+    // 'paused' status: suspended chunk already finalized by onMachineDisconnected in sender.
   }
 
   /** On server startup — check for a checkpoint and prepare recovery info. */
@@ -548,7 +586,7 @@ class JobRunner {
       this._checkpointIfDue()
     }
 
-    // M0 program pause detection (before feed hold handling)
+    // M0 program pause — machine entered Hold without user requesting it
     if (event.holdPhase === 0 && event.holdReason === 'program'
       && (this._status === 'running' || this._status === 'recovering')) {
       const pauseComment = this._findPauseComment(event.executed)
@@ -556,23 +594,19 @@ class JobRunner {
       return
     }
 
-    // Handle feed hold progress events
-    if (event.holdPhase !== null) {
-      if (event.holdPhase === 0) {
-        if (this._status === 'pausing') {
-          this.sendPtr = this._execPtr
-          this._setStatus('paused', { sendPtr: this._execPtr })
-          const handle = this._sendHandle
-          this._sendHandle = null
-          handle?.hardStop()
-        } else if (this._status === 'stopping') {
-          this._doHardStopAndReturnToLoaded()
-        }
-      }
+    // Skip other holdPhase progress events (Hold:1 deceleration during machine-initiated holds)
+    if (event.holdPhase !== null) return
+
+    // Chunk was suspended by suspendSend() — store chunkId for resume
+    if (event.status === 'suspended') {
+      this._mainJobChunkId = event.chunkId
+      this._sendHandle = null
+      this.sendPtr = this._execPtr
+      this._setStatus('paused', { sendPtr: this._execPtr })
       return
     }
 
-    if (!event.completed) return
+    if (event.status !== 'completed') return
 
     this._sendHandle = null
 
@@ -602,6 +636,22 @@ class JobRunner {
           this._completeJob()
         }
         break
+      case 'stopped':
+        // stopSend() completed: machine is Idle. Return to loaded state.
+        this._mainJobChunkId = null
+        this._execPtr = 0
+        this.sendPtr = 0
+        this._setStatus('loaded', {
+          startWallClock: null,
+          sendPtr: 0,
+          execPtr: 0,
+          inPlanner: 0,
+          recovery: null,
+          toolChangeRequest: null,
+          programPause: null,
+        })
+        clearCheckpoint().catch(() => {})
+        break
       case 'soft':
         break
       case 'error':
@@ -614,16 +664,24 @@ class JobRunner {
     }
   }
 
-  private _handleRecoveryEvent(event: SenderStatusEvent): void {
+  private _handleRecoveryEvent(event: SenderStatusEvent, suspendedChunkId: string | null): void {
     if (!this._sendHandle) return
-    if (!event.completed) return
+    if (event.status !== 'completed') return
 
     this._sendHandle = null
 
     switch (event.completedMode) {
       case 'success':
-        this._setStatus('running', { startWallClock: Date.now() })
-        this._startMainSend()
+        if (suspendedChunkId) {
+          // Resume the suspended main job chunk now that repositioning is done.
+          this._mainJobChunkId = null
+          this._sendHandle = resumeChunk(suspendedChunkId)
+          this._setStatus('running', { startWallClock: Date.now() })
+          // The resumed chunk fires its own events via its existing onEvent callback.
+        } else {
+          this._setStatus('running', { startWallClock: Date.now() })
+          this._startMainSend()
+        }
         break
       case 'error':
         this._broadcastError(event.errorReason ?? 'Recovery failed')
@@ -663,7 +721,7 @@ class JobRunner {
     event: SenderStatusEvent,
     baseRequest: NonNullable<JobState['toolChangeRequest']>,
   ): void {
-    if (!event.completed) return
+    if (event.status !== 'completed') return
     this._sendHandle = null
 
     if (event.completedMode === 'success') {
@@ -732,24 +790,6 @@ class JobRunner {
     } catch {
       return null
     }
-  }
-
-  private _doHardStopAndReturnToLoaded(): void {
-    const handle = this._sendHandle
-    this._sendHandle = null
-    this._execPtr = 0
-    this.sendPtr = 0
-    this._setStatus('loaded', {
-      startWallClock: null,
-      sendPtr: 0,
-      execPtr: 0,
-      inPlanner: 0,
-      recovery: null,
-      toolChangeRequest: null,
-      programPause: null,
-    })
-    clearCheckpoint().catch(() => {})
-    handle?.hardStop()
   }
 
   private _completeJob(): void {

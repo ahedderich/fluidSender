@@ -145,7 +145,7 @@ async function flushLines(lines: string[]): Promise<void> {
   if (lines.length === 0) return
   await new Promise<void>((resolve, reject) => {
     sendGCode(lines, (ev) => {
-      if (ev.completed) {
+      if (ev.status === 'completed') {
         if (ev.completedMode === 'success') resolve()
         else
           reject(

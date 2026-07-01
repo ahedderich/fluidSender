@@ -26,39 +26,42 @@ function _getPlannerTarget(): number {
     : PLANNER_TARGET_FALLBACK
 }
 
-interface SentEntry {
-  isMotion: boolean
-  acked: boolean
-}
+type ChunkInternalState =
+  | 'running'       // dispatching normally
+  | 'suspending'    // feed hold sent, waiting for Hold:0, then 0x18 → suspended
+  | 'suspended'     // halted; not _activeChunkId; dispatchPtr reset to executedPtr
+  | 'soft_stopping' // draining remaining lines then finalizing as 'soft'
+  | 'stopping'      // feed hold sent, waiting for Hold:0, then 0x18 → finalize 'stopped'
 
 interface ActiveChunk {
   chunkId: string
   lines: SendableLine[]
   dispatchPtr: number
-  sent: number
-  executed: number
-  lineOffset: number
-  pendingAck: boolean
-  sentQueue: SentEntry[]
-  softStopping: boolean
-  feedHolding: boolean
+  sentPtr: number      // count of acked/skipped lines
+  executedPtr: number  // count of confirmed-executed lines
+  lineOffset: number   // job-global offset; added to sentPtr/executedPtr in emitted events
+  pendingAck: boolean  // true while one real line has been sent but ok not yet received
+  internalState: ChunkInternalState
   onEvent: ((e: SenderStatusEvent) => void) | undefined
 }
 
-let _activeChunk: ActiveChunk | null = null
+// All live chunks (running + suspended). Completed chunks are removed.
+const _chunks = new Map<string, ActiveChunk>()
+// Exclusive send lock; null when idle.
+let _activeChunkId: string | null = null
+// Completed chunks — last event only, for status queries.
 const _chunkHistory = new Map<string, SenderStatusEvent>()
 
 export function getMaxPlannerSlots(): number {
   return _maxPlannerSlots
 }
 
-
 function _makeEvent(chunk: ActiveChunk, overrides?: Partial<SenderStatusEvent>): SenderStatusEvent {
   return {
     chunkId: chunk.chunkId,
-    sent: chunk.sent + chunk.lineOffset,
-    executed: chunk.executed + chunk.lineOffset,
-    completed: false,
+    sent: chunk.sentPtr + chunk.lineOffset,
+    executed: chunk.executedPtr + chunk.lineOffset,
+    status: 'progress',
     completedMode: null,
     errorReason: null,
     holdPhase: null,
@@ -81,47 +84,48 @@ function _storeHistory(event: SenderStatusEvent): void {
 
 function _finalize(chunk: ActiveChunk, completedMode: SenderCompletedMode, errorReason?: string): void {
   const event = _makeEvent(chunk, {
-    completed: true,
+    status: 'completed',
     completedMode,
     errorReason: errorReason ?? null,
   })
-  _activeChunk = null
+  _chunks.delete(chunk.chunkId)
+  if (_activeChunkId === chunk.chunkId) _activeChunkId = null
   _inPlanner = 0
   _completionConfirmCount = 0
   setMode('idle')
-  // Fire callback and store history after clearing active state
   chunk.onEvent?.(event)
   _storeHistory(event)
 }
 
-function _drainNonMotion(chunk: ActiveChunk): boolean {
-  let changed = false
-  while (chunk.sentQueue.length > 0 && !chunk.sentQueue[0]!.isMotion && chunk.sentQueue[0]!.acked) {
-    chunk.sentQueue.shift()
-    chunk.executed++
-    changed = true
+// Walk backward from dispatchPtr to find the last non-comment line (the one just acked).
+function _findLastRealLine(chunk: ActiveChunk): number | null {
+  for (let i = chunk.dispatchPtr - 1; i >= 0; i--) {
+    if (!isCommentOrEmpty(chunk.lines[i]!.raw)) return i
   }
-  return changed
+  return null
 }
 
 function _tryDispatch(chunk: ActiveChunk): void {
+  if (chunk.internalState !== 'running' && chunk.internalState !== 'soft_stopping') return
+
   while (chunk.dispatchPtr < chunk.lines.length) {
-    if (chunk.softStopping) break
-    if (chunk.feedHolding) break
+    if (chunk.internalState === 'soft_stopping') break
+    if (chunk.internalState !== 'running') break
     if (chunk.pendingAck) break
 
     const line = chunk.lines[chunk.dispatchPtr]!
 
     if (isCommentOrEmpty(line.raw)) {
-      chunk.sent++
-      chunk.executed++
+      chunk.sentPtr++
+      chunk.executedPtr++
       chunk.dispatchPtr++
       _emit(chunk)
       continue
     }
 
     if (line.isMotion) {
-      const motionInFlight = chunk.sentQueue.filter(e => e.isMotion).length
+      // sentPtr - executedPtr = motion lines currently in planner (replaces sentQueue filter)
+      const motionInFlight = chunk.sentPtr - chunk.executedPtr
       if (motionInFlight >= _getPlannerTarget()) break
     }
 
@@ -129,10 +133,9 @@ function _tryDispatch(chunk: ActiveChunk): void {
     const trimmed = line.raw.trim()
     if (trimmed) broadcastPatch([pushConsole({ type: 'sent', text: trimmed, ts: Date.now() })])
 
-    chunk.sentQueue.push({ isMotion: line.isMotion, acked: false })
     chunk.pendingAck = true
     chunk.dispatchPtr++
-    break  // one line per trigger; next dispatch fires on ack or BF event
+    break
   }
 }
 
@@ -142,11 +145,10 @@ function _checkCompletion(
   effectiveMax: number,
   machineState: MachineStatus['state'],
 ): void {
-  if (chunk.softStopping) return
-  if (chunk.feedHolding) return
+  if (chunk.internalState !== 'running') return
 
   const allDispatched = chunk.dispatchPtr >= chunk.lines.length
-  const allConfirmed = chunk.sentQueue.length === 0
+  const allConfirmed = !chunk.pendingAck && chunk.sentPtr === chunk.executedPtr
   const plannerDrained = plannerFree >= effectiveMax
   const isIdle = machineState === 'Idle'
 
@@ -162,20 +164,26 @@ function _checkCompletion(
 
 /** Called by ws.ts on every `ok` from the machine. */
 export function onOk(): void {
-  if (!_activeChunk) return
-  const chunk = _activeChunk
+  if (!_activeChunkId) return
+  const chunk = _chunks.get(_activeChunkId)
+  if (!chunk) return
+  if (!chunk.pendingAck) return  // stale ok (console command sent before chunk)
 
-  const entry = chunk.sentQueue.find(e => !e.acked)
-  if (!entry) return  // stale ok (e.g. a console command sent before this chunk)
-
-  entry.acked = true
   chunk.pendingAck = false
-  chunk.sent++
+  chunk.sentPtr++
 
-  _drainNonMotion(chunk)
+  // Determine if the acked line was motion (walk back past any comments).
+  const ackedIdx = _findLastRealLine(chunk)
+  const isMotion = ackedIdx !== null ? chunk.lines[ackedIdx]!.isMotion : false
+
+  if (!isMotion) {
+    // Non-motion: immediately confirmed executed (doesn't enter the planner)
+    chunk.executedPtr++
+  }
+
   _emit(chunk)
 
-  if (chunk.softStopping && chunk.sentQueue.length === 0) {
+  if (chunk.internalState === 'soft_stopping' && chunk.sentPtr === chunk.executedPtr) {
     _finalize(chunk, 'soft')
     return
   }
@@ -193,64 +201,77 @@ export function onBufUpdate(
     _maxPlannerSlots = plannerFree
   }
 
-  if (!_activeChunk) return
-  const chunk = _activeChunk
+  if (!_activeChunkId) return
+  const chunk = _chunks.get(_activeChunkId)
+  if (!chunk) return
 
   if (machineState === 'Alarm') {
     _finalize(chunk, 'error', 'Machine alarm')
     return
   }
 
-  // While in Hold: emit progress event for jobRunner (so it can detect Hold:0) but
-  // don't dispatch new lines or check for job completion.
-  if (machineState === 'Hold') {
-    // Real FluidNC emits Hold:1 (decelerating) then Hold:0 (stopped).
-    // Firmware that omits the substate sends holdPhase:null — treat as Hold:0 (already stopped).
+  // ── Machine-initiated Hold (M0, door) ─────────────────────────────────────
+  // Only emit holdPhase events when the chunk is running normally.
+  if (machineState === 'Hold' && chunk.internalState === 'running') {
     const resolvedPhase = holdPhase ?? 0
-    // holdReason distinguishes operator feed-hold (!), from firmware-initiated hold (M0/door).
-    const holdReason: 'feed_hold' | 'program' = chunk.feedHolding ? 'feed_hold' : 'program'
-    _emit(chunk, { holdPhase: resolvedPhase, holdReason })
+    _emit(chunk, { holdPhase: resolvedPhase, holdReason: 'program' })
     return
   }
 
+  // ── User-initiated suspend: waiting for Hold:0 then reset ─────────────────
+  if (machineState === 'Hold' && chunk.internalState === 'suspending') {
+    const resolvedPhase = holdPhase ?? 0
+    if (resolvedPhase === 0) {
+      machineConnection.sendByte(0x18)
+      chunk.internalState = 'suspended'
+      // 0x18 clears the planner — acked-but-not-executed lines are gone.
+      // Reset both ptrs to executedPtr so sentPtr-executedPtr=0 on resume,
+      // preventing the planner-empty fallback from spuriously advancing executedPtr.
+      chunk.executedPtr = chunk.executedPtr - 3
+      chunk.dispatchPtr = chunk.executedPtr
+      chunk.sentPtr = chunk.executedPtr
+      chunk.pendingAck = false
+      _activeChunkId = null
+      _inPlanner = 0
+      _completionConfirmCount = 0
+      setMode('idle')
+      _emit(chunk, { status: 'suspended' })
+    }
+    return
+  }
+
+  // ── User-initiated stop: waiting for Hold:0 then reset ────────────────────
+  if (machineState === 'Hold' && chunk.internalState === 'stopping') {
+    const resolvedPhase = holdPhase ?? 0
+    if (resolvedPhase === 0) {
+      machineConnection.sendByte(0x18)
+      _finalize(chunk, 'stopped')
+    }
+    return
+  }
+
+  // ── Normal run path ───────────────────────────────────────────────────────
   const effectiveMax = _maxPlannerSlots || DEFAULT_MAX_PLANNER_SLOTS
   const newInPlanner = Math.max(0, effectiveMax - plannerFree)
   const drained = _inPlanner - newInPlanner
   _inPlanner = newInPlanner
 
-  let executedChanged = false
-
   if (drained > 0) {
-    let remaining = drained
-    while (remaining > 0 && chunk.sentQueue.length > 0) {
-      const head = chunk.sentQueue[0]!
-      if (!head.isMotion) {
-        // Non-motion entries are normally drained by onOk/_drainNonMotion; count and remove defensively if one surfaces here
-        chunk.sentQueue.shift()
-        chunk.executed++
-        executedChanged = true
-        continue
-      }
-      if (!head.acked) break
-      chunk.sentQueue.shift()
-      chunk.executed++
-      executedChanged = true
-      remaining--
+    const maxDrainable = chunk.sentPtr - chunk.executedPtr
+    const actualDrained = Math.min(drained, maxDrainable)
+    if (actualDrained > 0) {
+      chunk.executedPtr += actualDrained
+      _emit(chunk)
     }
   }
 
-  // Fallback: when planner fully empty, drain all acked entries
-  if (newInPlanner === 0) {
-    while (chunk.sentQueue.length > 0 && chunk.sentQueue[0]!.acked) {
-      chunk.sentQueue.shift()
-      chunk.executed++
-      executedChanged = true
-    }
+  // Fallback: planner fully empty → align executedPtr to sentPtr
+  if (newInPlanner === 0 && chunk.executedPtr < chunk.sentPtr) {
+    chunk.executedPtr = chunk.sentPtr
+    _emit(chunk)
   }
 
-  if (executedChanged) _emit(chunk)
-
-  if (chunk.softStopping && chunk.sentQueue.length === 0) {
+  if (chunk.internalState === 'soft_stopping' && chunk.sentPtr === chunk.executedPtr) {
     _finalize(chunk, 'soft')
     return
   }
@@ -264,13 +285,24 @@ export function onMachineDisconnected(): void {
   _maxPlannerSlots = 0
   _inPlanner = 0
   _completionConfirmCount = 0
-  if (_activeChunk) {
-    _finalize(_activeChunk, 'error', 'Machine disconnected')
+  if (_activeChunkId) {
+    const chunk = _chunks.get(_activeChunkId)
+    if (chunk) _finalize(chunk, 'error', 'Machine disconnected')
   }
+  // Clear any suspended chunks too — they can't be resumed after disconnect.
+  for (const [id, chunk] of _chunks) {
+    if (id !== _activeChunkId) {
+      const event = _makeEvent(chunk, { status: 'completed', completedMode: 'error', errorReason: 'Machine disconnected' })
+      chunk.onEvent?.(event)
+      _storeHistory(event)
+    }
+  }
+  _chunks.clear()
+  _activeChunkId = null
 }
 
 /** Start sending a block of lines. Throws if machine is not in idle mode.
- *  @param lineOffset — number of job lines that preceded this chunk; added to sent/executed in emitted events so callers see job-global counts. */
+ *  @param lineOffset — job lines preceding this chunk; added to sent/executed in events so callers see job-global counts. */
 export function startSend(lines: SendableLine[], onEvent?: (e: SenderStatusEvent) => void, lineOffset = 0): SendHandle {
   if (getMode() !== 'idle') {
     throw new Error(`Cannot start send: machine is in '${getMode()}' mode`)
@@ -281,22 +313,21 @@ export function startSend(lines: SendableLine[], onEvent?: (e: SenderStatusEvent
     chunkId,
     lines,
     dispatchPtr: 0,
-    sent: 0,
-    executed: 0,
+    sentPtr: 0,
+    executedPtr: 0,
     lineOffset,
     pendingAck: false,
-    sentQueue: [],
-    softStopping: false,
-    feedHolding: false,
+    internalState: 'running',
     onEvent,
   }
 
-  _activeChunk = chunk
+  _chunks.set(chunkId, chunk)
+  _activeChunkId = chunkId
   _inPlanner = 0
   _completionConfirmCount = 0
   setMode('sending')
 
-  _emit(chunk)  // initial state event
+  _emit(chunk)
 
   if (lines.length === 0) {
     _finalize(chunk, 'success')
@@ -306,67 +337,109 @@ export function startSend(lines: SendableLine[], onEvent?: (e: SenderStatusEvent
 
   return {
     chunkId,
-    feedHold: () => senderFeedHold(chunkId),
     cycleStart: () => senderCycleStart(chunkId),
     hardStop: () => senderHardStop(chunkId),
   }
 }
 
-export function senderSoftStop(chunkId?: string): void {
-  const targetId = chunkId ?? _activeChunk?.chunkId
-  if (!targetId) return
-  if (_chunkHistory.has(targetId)) return
-  if (_activeChunk?.chunkId !== targetId) return
+/** Pause: send feed hold, wait for Hold:0, send 0x18. Fires 'suspended' event when complete. */
+export function suspendSend(chunkId: string): void {
+  if (_activeChunkId !== chunkId) return
+  const chunk = _chunks.get(chunkId)
+  if (!chunk || chunk.internalState !== 'running') return
 
-  _activeChunk.softStopping = true
-  if (_activeChunk.sentQueue.length === 0) {
-    _finalize(_activeChunk, 'soft')
+  chunk.internalState = 'suspending'
+  machineConnection.sendByte(0x21)  // '!'
+  // Completion fires in onBufUpdate when state === 'Hold' && holdPhase === 0
+}
+
+/** Resume a suspended chunk. Throws if another chunk is active. Returns a SendHandle for the resumed chunk. */
+export function resumeChunk(chunkId: string): SendHandle {
+  if (_activeChunkId !== null) {
+    throw new Error('Cannot resume chunk: another chunk is active')
+  }
+  const chunk = _chunks.get(chunkId)
+  if (!chunk || chunk.internalState !== 'suspended') {
+    throw new Error(`Chunk ${chunkId} is not in suspended state`)
+  }
+
+  chunk.internalState = 'running'
+  _activeChunkId = chunkId
+  _inPlanner = 0
+  _completionConfirmCount = 0
+  setMode('sending')
+  _emit(chunk)
+  _tryDispatch(chunk)
+
+  return {
+    chunkId,
+    cycleStart: () => senderCycleStart(chunkId),
+    hardStop: () => senderHardStop(chunkId),
   }
 }
 
-/** Send feed hold (`!`). Machine decelerates to stop and enters Hold state. Resume with cycleStart. */
-export function senderFeedHold(chunkId?: string): void {
-  const targetId = chunkId ?? _activeChunk?.chunkId
-  if (!targetId) return
-  if (_chunkHistory.has(targetId)) return
-  if (_activeChunk?.chunkId !== targetId) return
+/** Stop: send feed hold, wait for Hold:0, send 0x18. Fires 'completed' 'stopped' event when done. */
+export function stopSend(chunkId: string): void {
+  if (_activeChunkId !== chunkId) return
+  const chunk = _chunks.get(chunkId)
+  if (!chunk || chunk.internalState !== 'running') return
 
-  _activeChunk.feedHolding = true
-  machineConnection.sendByte(0x21)
+  chunk.internalState = 'stopping'
+  machineConnection.sendByte(0x21)  // '!'
+  // Completion fires in onBufUpdate when state === 'Hold' && holdPhase === 0
 }
 
-/** Send cycle start (`~`). Resumes machine from Hold; dispatch continues from dispatchPtr. */
-export function senderCycleStart(chunkId?: string): void {
-  const targetId = chunkId ?? _activeChunk?.chunkId
+export function senderSoftStop(chunkId?: string): void {
+  const targetId = chunkId ?? _activeChunkId
   if (!targetId) return
   if (_chunkHistory.has(targetId)) return
-  if (_activeChunk?.chunkId !== targetId) return
+  if (_activeChunkId !== targetId) return
+  const chunk = _chunks.get(targetId)
+  if (!chunk) return
 
-  _activeChunk.feedHolding = false
+  chunk.internalState = 'soft_stopping'
+  if (chunk.sentPtr === chunk.executedPtr) {
+    _finalize(chunk, 'soft')
+  }
+}
+
+/** Send cycle start (`~`). Resumes machine from a machine-initiated Hold (M0/door). */
+export function senderCycleStart(chunkId?: string): void {
+  const targetId = chunkId ?? _activeChunkId
+  if (!targetId) return
+  if (_chunkHistory.has(targetId)) return
+  if (_activeChunkId !== targetId) return
+  const chunk = _chunks.get(targetId)
+  if (!chunk) return
+
   machineConnection.sendByte(0x7E)
-  _tryDispatch(_activeChunk)
+  _tryDispatch(chunk)
 }
 
 export function senderHardStop(chunkId?: string): void {
-  const targetId = chunkId ?? _activeChunk?.chunkId
+  const targetId = chunkId ?? _activeChunkId
   if (!targetId) return
   if (_chunkHistory.has(targetId)) return
-  if (_activeChunk?.chunkId !== targetId) return
+  const chunk = _chunks.get(targetId)
+  if (!chunk) return
 
-  machineConnection.sendByte(0x18)
-  _finalize(_activeChunk, 'hard')
+  // Only send 0x18 if this is the active chunk (machine is still running).
+  // Suspended chunks have already received 0x18 during the suspend sequence.
+  if (_activeChunkId === targetId) {
+    machineConnection.sendByte(0x18)
+  }
+  _finalize(chunk, 'hard')
 }
 
 export function getSenderStatus(chunkId?: string): SenderStatusEvent | null {
-  const targetId = chunkId ?? _activeChunk?.chunkId
+  const targetId = chunkId ?? _activeChunkId
   if (!targetId) return null
 
   const historical = _chunkHistory.get(targetId)
   if (historical) return historical
 
-  if (_activeChunk?.chunkId === targetId) {
-    return _makeEvent(_activeChunk)
-  }
+  const chunk = _chunks.get(targetId)
+  if (chunk) return _makeEvent(chunk)
 
   return null
 }

@@ -1,30 +1,36 @@
 export type MachineMode = 'idle' | 'sending' | 'jogging'
 
-export type SenderCompletedMode = 'success' | 'soft' | 'hard' | 'error'
+export type SenderEventStatus = 'progress' | 'suspended' | 'completed'
+
+// 'stopped'  — feed-hold graceful stop requested by stopSend()
+// 'soft'     — natural drain stop (senderSoftStop)
+// 'hard'     — immediate 0x18 (emergencyStop / senderHardStop)
+// 'success'  — chunk ran to natural completion
+// 'error'    — machine alarm or disconnect
+export type SenderCompletedMode = 'success' | 'soft' | 'hard' | 'stopped' | 'error'
 
 export interface SenderStatusEvent {
   chunkId: string
-  sent: number        // lines dispatched and ok-acked
-  executed: number    // lines confirmed executed via BF planner delta
-  completed: boolean
+  sent: number        // sentPtr + lineOffset — job-global ack count
+  executed: number    // executedPtr + lineOffset — job-global execution count
+  status: SenderEventStatus
   completedMode: SenderCompletedMode | null
   errorReason: string | null
-  /** Non-null while machine is in Hold state after a feed hold; 1 = decelerating, 0 = fully stopped. */
+  /** Non-null while machine is in Hold state after a machine-initiated hold (M0/door); 1 = decelerating, 0 = fully stopped.
+   *  NOT emitted during user-initiated suspend/stop sequences (those go straight to 'suspended'/'completed'). */
   holdPhase: 0 | 1 | null
   /**
    * Reason for the hold when holdPhase becomes 0:
-   *   'feed_hold' = operator-initiated feed hold (!); machine was already feedHolding
-   *   'program'   = firmware-initiated hold (M0 or door); machine was not feedHolding
-   *   null        = not in a hold
+   *   'program' = firmware-initiated hold (M0 or door)
+   *   null      = not in a machine-initiated hold
    */
   holdReason: 'feed_hold' | 'program' | null
 }
 
 export interface SendHandle {
   readonly chunkId: string
-  feedHold(): void    // send ! — decelerate to stop, enter Hold state
-  cycleStart(): void  // send ~ — resume from Hold
-  hardStop(): void    // send 0x18 — immediate reset
+  cycleStart(): void  // send ~ — resume a machine-initiated Hold (M0)
+  hardStop(): void    // send 0x18 — immediate reset (emergency stop)
 }
 
 export interface SendableLine {
