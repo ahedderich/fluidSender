@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia'
 import type { JobState } from '~/types/job'
 import type { MacroRunState } from '~/types/macro'
+import type { ProbingState } from '~~/server/utils/appState'
+
+export type { ProbingState }
 
 export interface ModalEntry {
   id: string
@@ -35,6 +38,7 @@ export interface UiSnapshot {
   console: SyncConsoleEntry[]
   loadedToolNumber: number | null
   macroRun?: MacroRunState | null
+  probingState?: ProbingState
 }
 
 export type PatchOp =
@@ -62,6 +66,14 @@ export const useSyncStore = defineStore('sync', () => {
   const consoleLog = ref<SyncConsoleEntry[]>([])
   const job = ref<JobState | null>(null)
   const macroRun = ref<MacroRunState | null>(null)
+  const probingState = reactive<ProbingState>({
+    phase: 'idle', wizardKey: null, currentStepLabel: '',
+    stepIndex: 0, totalSteps: 0, stepResults: [],
+    measuredCenterX: null, measuredCenterY: null,
+    measuredWidth: null, measuredHeight: null, measuredDiameter: null,
+    rotation: null, heightmap: null, errorMessage: null,
+    edgeHistoryX: [null, null], edgeHistoryY: [null, null],
+  })
 
   // Always mutate the array refs in place (never reassign), so references held by
   // useModals()/useToast() stay valid across snapshots and patches.
@@ -73,6 +85,7 @@ export const useSyncStore = defineStore('sync', () => {
     toasts.value.splice(0, toasts.value.length, ...ui.toasts)
     consoleLog.value.splice(0, consoleLog.value.length, ...ui.console)
     macroRun.value = ui.macroRun ?? null
+    if (ui.probingState) Object.assign(probingState, ui.probingState)
   }
 
   // Apply a single patch op to the precise reactive slice it targets, so only
@@ -115,6 +128,9 @@ export const useSyncStore = defineStore('sync', () => {
       case 'macroRun':
         if ('set' in op) macroRun.value = (op.set as { macroRun: MacroRunState | null }).macroRun
         break
+      case 'probingState':
+        if ('set' in op) Object.assign(probingState, op.set)
+        break
     }
   }
 
@@ -122,5 +138,5 @@ export const useSyncStore = defineStore('sync', () => {
     job.value = { ...state }
   }
 
-  return { nav, selection, jogActive, modals, toasts, consoleLog, job, macroRun, applySnapshot, applyOp, applyJobState }
+  return { nav, selection, jogActive, modals, toasts, consoleLog, job, macroRun, probingState, applySnapshot, applyOp, applyJobState }
 })

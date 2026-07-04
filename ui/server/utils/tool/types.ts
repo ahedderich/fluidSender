@@ -1,3 +1,41 @@
+export interface ProbeConfig {
+  wiggleEnabled: boolean
+  fastFeedMmPerMin: number
+  slowFeedMmPerMin: number
+  cycles: number
+  averageN: number
+}
+
+/**
+ * Per-direction probe trigger deviations (mm).
+ * Sign convention (PROBE_DEVIATION_PLAN.md §2.1): deviation = extra distance travelled
+ * past the ideal geometric contact point before the trigger fires. Positive = triggers
+ * late (pre-travel); negative = triggers early. Effective offset = tipRadius − deviation.
+ */
+export interface ProbeCompensation {
+  xPlus: number
+  xMinus: number
+  yPlus: number
+  yMinus: number
+  zMinus: number
+}
+
+export const DEFAULT_PROBE_COMPENSATION: ProbeCompensation = {
+  xPlus: 0,
+  xMinus: 0,
+  yPlus: 0,
+  yMinus: 0,
+  zMinus: 0,
+}
+
+export const DEFAULT_PROBE_CONFIG: ProbeConfig = {
+  wiggleEnabled: true,
+  fastFeedMmPerMin: 500,
+  slowFeedMmPerMin: 5,
+  cycles: 3,
+  averageN: 2,
+}
+
 export interface CuttingPreset {
   guid: string
   name: string
@@ -43,6 +81,8 @@ export interface ToolLibraryEntry {
   diameterOffset?: number
   manualToolChange?: boolean
   breakControl?: boolean
+  probeConfig?: ProbeConfig
+  probeCompensation?: ProbeCompensation
   material?: string
 
   cuttingPresets?: CuttingPreset[]

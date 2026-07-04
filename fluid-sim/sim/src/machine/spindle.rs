@@ -16,9 +16,24 @@ pub struct SpindleState {
 }
 
 impl SpindleState {
-    pub fn on_cw(rpm: f64) -> Self { Self { mode: SpindleMode::Cw, rpm } }
-    pub fn on_ccw(rpm: f64) -> Self { Self { mode: SpindleMode::Ccw, rpm } }
-    pub fn off() -> Self { Self { mode: SpindleMode::Off, rpm: 0.0 } }
+    pub fn on_cw(rpm: f64) -> Self {
+        Self {
+            mode: SpindleMode::Cw,
+            rpm,
+        }
+    }
+    pub fn on_ccw(rpm: f64) -> Self {
+        Self {
+            mode: SpindleMode::Ccw,
+            rpm,
+        }
+    }
+    pub fn off() -> Self {
+        Self {
+            mode: SpindleMode::Off,
+            rpm: 0.0,
+        }
+    }
 
     pub fn accessory_flag(&self) -> Option<char> {
         match self.mode {

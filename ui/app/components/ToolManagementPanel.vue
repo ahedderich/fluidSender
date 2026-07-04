@@ -412,6 +412,52 @@
               <input v-model="modalForm.productLink" type="url" placeholder="https://…"
                 class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
             </div>
+
+            <!-- Probe config (shown only for type === 'probe') -->
+            <template v-if="modalForm.type.trim() === 'probe'">
+              <div class="border-t border-gray-200 dark:border-slate-700 pt-3 mt-1">
+                <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">Probe Configuration</p>
+                <label class="flex items-center gap-2 cursor-pointer mb-2">
+                  <input v-model="modalForm.wiggleEnabled" type="checkbox" class="rounded accent-blue-600" />
+                  <span class="text-xs text-gray-600 dark:text-slate-300">Wiggle probing (multi-speed cycles)</span>
+                </label>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Fast Feed (mm/min)</label>
+                    <input v-model.number="modalForm.fastFeedMmPerMin" type="number" min="1" step="10"
+                      class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Slow Feed (mm/min)</label>
+                    <input v-model.number="modalForm.slowFeedMmPerMin" type="number" min="1" step="1"
+                      class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Cycles</label>
+                    <input v-model.number="modalForm.probeCycles" type="number" min="1" max="10" step="1"
+                      class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Average N</label>
+                    <input v-model.number="modalForm.averageN" type="number" min="1" max="10" step="1"
+                      class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  </div>
+                </div>
+              </div>
+              <div class="border-t border-gray-200 dark:border-slate-700 pt-3 mt-1">
+                <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">Probe Compensation</p>
+                <div class="grid grid-cols-2 gap-2">
+                  <div v-for="field in PROBE_COMP_FIELDS" :key="field.key">
+                    <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">{{ field.label }} (mm)</label>
+                    <input v-model.number="modalForm.probeCompensation[field.key]" type="number" step="0.01"
+                      class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  </div>
+                </div>
+                <p class="text-xs text-gray-400 dark:text-slate-500 mt-2">
+                  Per-direction trigger deviation: positive = probe triggers late (pre-travel), negative = triggers early.
+                </p>
+              </div>
+            </template>
           </div>
 
           <!-- Geometry tab -->
@@ -738,6 +784,7 @@ const SourceBadge = defineComponent({
 <script setup lang="ts">
 import { defineComponent, h } from 'vue'
 import { useMachineStore, type ToolLibraryEntry } from '~/stores/machine'
+import { DEFAULT_PROBE_COMPENSATION, type ProbeCompensation } from '~~/server/utils/tool/types'
 import { useJobControl } from '~/composables/useJobControl'
 import { useSettingsStore } from '~/stores/settings'
 import { useModals } from '~/composables/useModals'
@@ -840,7 +887,7 @@ const machineName = computed(() => settings.activeMachine?.name ?? 'Machine')
 
 const TOOL_TYPES = [
   'flat end mill', 'ball end mill', 'v-cutter', 'chamfer mill',
-  'drill', 'face mill', 'tap', 'other',
+  'drill', 'face mill', 'tap', 'probe', 'other',
 ]
 
 const modalTab = ref<'basic' | 'geometry' | 'presets' | 'lifecycle'>('basic')
@@ -867,7 +914,22 @@ const modalForm = reactive({
   rightHanded: true,
   lengthOffset: undefined as number | undefined,
   diameterOffset: undefined as number | undefined,
+  // Probe config (only used when type === 'probe')
+  wiggleEnabled: true,
+  fastFeedMmPerMin: 500,
+  slowFeedMmPerMin: 5,
+  probeCycles: 3,
+  averageN: 2,
+  probeCompensation: { ...DEFAULT_PROBE_COMPENSATION } as ProbeCompensation,
 })
+
+const PROBE_COMP_FIELDS: Array<{ key: keyof ProbeCompensation; label: string }> = [
+  { key: 'xPlus', label: '+X' },
+  { key: 'xMinus', label: '−X' },
+  { key: 'yPlus', label: '+Y' },
+  { key: 'yMinus', label: '−Y' },
+  { key: 'zMinus', label: '−Z' },
+]
 
 const exportForm = reactive({
   includeMachine: true,
@@ -914,6 +976,12 @@ function resetModalForm() {
   modalForm.rightHanded = true
   modalForm.lengthOffset = undefined
   modalForm.diameterOffset = undefined
+  modalForm.wiggleEnabled = true
+  modalForm.fastFeedMmPerMin = 500
+  modalForm.slowFeedMmPerMin = 5
+  modalForm.probeCycles = 3
+  modalForm.averageN = 2
+  modalForm.probeCompensation = { ...DEFAULT_PROBE_COMPENSATION }
 }
 
 function openAddModal() {
@@ -944,6 +1012,13 @@ function openEditModal(entry: ToolLibraryEntry) {
   modalForm.rightHanded = entry.rightHanded ?? true
   modalForm.lengthOffset = entry.lengthOffset
   modalForm.diameterOffset = entry.diameterOffset
+  const pc = entry.probeConfig
+  modalForm.wiggleEnabled = pc?.wiggleEnabled ?? true
+  modalForm.fastFeedMmPerMin = pc?.fastFeedMmPerMin ?? 500
+  modalForm.slowFeedMmPerMin = pc?.slowFeedMmPerMin ?? 5
+  modalForm.probeCycles = pc?.cycles ?? 3
+  modalForm.averageN = pc?.averageN ?? 2
+  modalForm.probeCompensation = { ...DEFAULT_PROBE_COMPENSATION, ...entry.probeCompensation }
   modalTab.value = 'basic'
   showToolModal.value = true
 }
@@ -972,6 +1047,20 @@ function saveModal() {
     rightHanded: modalForm.rightHanded !== false ? undefined : false,
     lengthOffset: modalForm.lengthOffset !== undefined ? Number(modalForm.lengthOffset) : undefined,
     diameterOffset: modalForm.diameterOffset !== undefined ? Number(modalForm.diameterOffset) : undefined,
+    probeConfig: modalForm.type.trim() === 'probe' ? {
+      wiggleEnabled: modalForm.wiggleEnabled,
+      fastFeedMmPerMin: Number(modalForm.fastFeedMmPerMin),
+      slowFeedMmPerMin: Number(modalForm.slowFeedMmPerMin),
+      cycles: Number(modalForm.probeCycles),
+      averageN: Number(modalForm.averageN),
+    } : undefined,
+    probeCompensation: modalForm.type.trim() === 'probe' ? {
+      xPlus: Number(modalForm.probeCompensation.xPlus) || 0,
+      xMinus: Number(modalForm.probeCompensation.xMinus) || 0,
+      yPlus: Number(modalForm.probeCompensation.yPlus) || 0,
+      yMinus: Number(modalForm.probeCompensation.yMinus) || 0,
+      zMinus: Number(modalForm.probeCompensation.zMinus) || 0,
+    } : undefined,
     cuttingPresets: editingTool.value?.cuttingPresets,
     holder: editingTool.value?.holder,
     totalRuntimeMinutes: editingTool.value?.totalRuntimeMinutes ?? 0,

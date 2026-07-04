@@ -9,10 +9,6 @@ function isCommentOrEmpty(raw: string): boolean {
   return t === '' || t.startsWith(';') || t.startsWith('(')
 }
 
-function sLog(msg: string): void {
-  console.log(`[SENDER ${new Date().toISOString().slice(11, 23)}] ${msg}`)
-}
-
 const PLANNER_SAFETY_MARGIN = 2
 const PLANNER_TARGET_FALLBACK = 3
 const DEFAULT_MAX_PLANNER_SLOTS = 15
@@ -23,6 +19,7 @@ const CHUNK_HISTORY_LIMIT = 100
 let _maxPlannerSlots = 0
 let _inPlanner = 0
 let _completionConfirmCount = 0
+let _restoreProbing = false
 
 function _getPlannerTarget(): number {
   return _maxPlannerSlots > 0
@@ -87,7 +84,6 @@ function _storeHistory(event: SenderStatusEvent): void {
 }
 
 function _finalize(chunk: ActiveChunk, completedMode: SenderCompletedMode, errorReason?: string): void {
-  sLog(`_finalize chunkId=${chunk.chunkId.slice(0, 8)} mode=${completedMode}${errorReason ? ` err="${errorReason}"` : ''} sent=${chunk.sentPtr + chunk.lineOffset} exec=${chunk.executedPtr + chunk.lineOffset} internalState=${chunk.internalState}`)
   const event = _makeEvent(chunk, {
     status: 'completed',
     completedMode,
@@ -97,7 +93,9 @@ function _finalize(chunk: ActiveChunk, completedMode: SenderCompletedMode, error
   if (_activeChunkId === chunk.chunkId) _activeChunkId = null
   _inPlanner = 0
   _completionConfirmCount = 0
-  setMode('idle')
+  const modeToRestore = _restoreProbing ? 'probing' : 'idle'
+  _restoreProbing = false
+  setMode(modeToRestore)
   chunk.onEvent?.(event)
   _storeHistory(event)
 }
@@ -181,7 +179,6 @@ export function onOk(): void {
 
   // Determine category of the acked line (walk back past any comments).
   const ackedIdx = _findLastRealLine(chunk)
-  const isMotion = ackedIdx !== null ? chunk.lines[ackedIdx]!.isMotion : false
   const category = ackedIdx !== null ? chunk.lines[ackedIdx]!.category : 'unknown'
 
   if (category === 'B1' || category === 'B2') {
@@ -191,8 +188,6 @@ export function onOk(): void {
     // Immediate ack — preceding motions may still be executing; drain inference handles it.
   }
   // Category A (motion): drain inference handles execPtr advance.
-
-  sLog(`onOk chunkId=${chunk.chunkId.slice(0, 8)} category=${category} isMotion=${isMotion} sentPtr=${chunk.sentPtr} execPtr=${chunk.executedPtr} dispatchPtr=${chunk.dispatchPtr} internalState=${chunk.internalState} pendingAck=false`)
 
   _emit(chunk)
 
@@ -212,23 +207,13 @@ export function onBufUpdate(
 ): void {
   if (!_maxPlannerSlots && machineState === 'Idle' && plannerFree > 0) {
     _maxPlannerSlots = plannerFree
-    sLog(`maxPlannerSlots calibrated to ${plannerFree}`)
   }
 
-  if (!_activeChunkId) {
-    // Log if we see a suspended chunk still in the map during a hold
-    if (machineState === 'Hold' || machineState === 'Alarm') {
-      sLog(`onBufUpdate noActiveChunk machineState=${machineState} holdPhase=${holdPhase} Bf:free=${plannerFree} suspendedChunks=${_chunks.size}`)
-    }
-    return
-  }
+  if (!_activeChunkId) return
   const chunk = _chunks.get(_activeChunkId)
   if (!chunk) return
 
-  sLog(`onBufUpdate chunkId=${chunk.chunkId.slice(0, 8)} machineState=${machineState} holdPhase=${holdPhase} Bf:free=${plannerFree} internalState=${chunk.internalState} sentPtr=${chunk.sentPtr} execPtr=${chunk.executedPtr} dispatchPtr=${chunk.dispatchPtr}`)
-
   if (machineState === 'Alarm') {
-    sLog(`ALARM detected → finalizing chunk as error`)
     _finalize(chunk, 'error', 'Machine alarm')
     return
   }
@@ -237,7 +222,6 @@ export function onBufUpdate(
   // Only emit holdPhase events when the chunk is running normally.
   if (machineState === 'Hold' && chunk.internalState === 'running') {
     const resolvedPhase = holdPhase ?? 0
-    sLog(`machine-initiated Hold (M0/door) holdPhase=${resolvedPhase} — emitting holdPhase event`)
     _emit(chunk, { holdPhase: resolvedPhase, holdReason: 'program' })
     return
   }
@@ -245,9 +229,7 @@ export function onBufUpdate(
   // ── User-initiated suspend: waiting for Hold:0 then reset ─────────────────
   if (machineState === 'Hold' && chunk.internalState === 'suspending') {
     const resolvedPhase = holdPhase ?? 0
-    sLog(`suspending: machineState=Hold holdPhase=${resolvedPhase} waiting for holdPhase=0 to send 0x18`)
     if (resolvedPhase === 0) {
-      sLog(`suspending: Hold:0 confirmed → sending 0x18 (SoftReset) execPtr=${chunk.executedPtr} sentPtr=${chunk.sentPtr}`)
       machineConnection.sendByte(0x18)
       chunk.internalState = 'suspended'
       // 0x18 clears the planner — all queued-but-not-executing lines are gone.
@@ -255,11 +237,9 @@ export function onBufUpdate(
       // dispatchPtr and sentPtr reset to executedPtr so the chunk resumes from the
       // interrupted command (index executedPtr), which the recovery sequence repositions
       // the machine to before replaying.
-      const prevExec = chunk.executedPtr
       chunk.dispatchPtr = chunk.executedPtr
       chunk.sentPtr = chunk.executedPtr
       chunk.pendingAck = false
-      sLog(`suspending: ptrs reset sentPtr=${chunk.sentPtr} dispatchPtr=${chunk.dispatchPtr} execPtr=${chunk.executedPtr} (unchanged from ${prevExec}) → emitting suspended event, releasing _activeChunkId`)
       _activeChunkId = null
       _inPlanner = 0
       _completionConfirmCount = 0
@@ -272,9 +252,7 @@ export function onBufUpdate(
   // ── User-initiated stop: waiting for Hold:0 then reset ────────────────────
   if (machineState === 'Hold' && chunk.internalState === 'stopping') {
     const resolvedPhase = holdPhase ?? 0
-    sLog(`stopping: machineState=Hold holdPhase=${resolvedPhase} waiting for holdPhase=0 to send 0x18`)
     if (resolvedPhase === 0) {
-      sLog(`stopping: Hold:0 confirmed → sending 0x18 (SoftReset) → finalizing as 'stopped'`)
       machineConnection.sendByte(0x18)
       _finalize(chunk, 'stopped')
     }
@@ -305,7 +283,6 @@ export function onBufUpdate(
       }
     }
     if (ptr > chunk.executedPtr) {
-      sLog(`planner drained=${drained} execPtr ${chunk.executedPtr}→${ptr} (walked A+C lines)`)
       chunk.executedPtr = ptr
       _emit(chunk)
     }
@@ -313,13 +290,11 @@ export function onBufUpdate(
 
   // Fallback: planner fully empty → align executedPtr to sentPtr
   if (newInPlanner === 0 && chunk.executedPtr < chunk.sentPtr) {
-    sLog(`planner fallback: newInPlanner=0 execPtr ${chunk.executedPtr}→${chunk.sentPtr} (aligned to sentPtr)`)
     chunk.executedPtr = chunk.sentPtr
     _emit(chunk)
   }
 
   if (chunk.internalState === 'soft_stopping' && chunk.sentPtr === chunk.executedPtr) {
-    sLog(`soft_stopping: sentPtr===execPtr → finalizing as 'soft'`)
     _finalize(chunk, 'soft')
     return
   }
@@ -349,15 +324,16 @@ export function onMachineDisconnected(): void {
   _activeChunkId = null
 }
 
-/** Start sending a block of lines. Throws if machine is not in idle mode.
+/** Start sending a block of lines. Throws if machine is not in idle or probing mode.
  *  @param lineOffset — job lines preceding this chunk; added to sent/executed in events so callers see job-global counts. */
 export function startSend(lines: SendableLine[], onEvent?: (e: SenderStatusEvent) => void, lineOffset = 0): SendHandle {
-  if (getMode() !== 'idle') {
-    throw new Error(`Cannot start send: machine is in '${getMode()}' mode`)
+  const currentMode = getMode()
+  if (currentMode !== 'idle' && currentMode !== 'probing') {
+    throw new Error(`Cannot start send: machine is in '${currentMode}' mode`)
   }
+  _restoreProbing = currentMode === 'probing'
 
   const chunkId = crypto.randomUUID()
-  sLog(`startSend chunkId=${chunkId.slice(0, 8)} lines=${lines.length} offset=${lineOffset}`)
   const chunk: ActiveChunk = {
     chunkId,
     lines,
@@ -393,17 +369,10 @@ export function startSend(lines: SendableLine[], onEvent?: (e: SenderStatusEvent
 
 /** Pause: send feed hold, wait for Hold:0, send 0x18. Fires 'suspended' event when complete. */
 export function suspendSend(chunkId: string): void {
-  if (_activeChunkId !== chunkId) {
-    sLog(`suspendSend: skip — _activeChunkId=${_activeChunkId?.slice(0, 8)} ≠ requested=${chunkId.slice(0, 8)}`)
-    return
-  }
+  if (_activeChunkId !== chunkId) return
   const chunk = _chunks.get(chunkId)
-  if (!chunk || chunk.internalState !== 'running') {
-    sLog(`suspendSend: skip — chunk=${chunk ? 'found' : 'missing'} internalState=${chunk?.internalState}`)
-    return
-  }
+  if (!chunk || chunk.internalState !== 'running') return
 
-  sLog(`suspendSend chunkId=${chunkId.slice(0, 8)} sentPtr=${chunk.sentPtr} execPtr=${chunk.executedPtr} dispatchPtr=${chunk.dispatchPtr} → sending 0x21 (FeedHold), internalState: running→suspending`)
   chunk.internalState = 'suspending'
   machineConnection.sendByte(0x21)  // '!'
   // Completion fires in onBufUpdate when state === 'Hold' && holdPhase === 0
@@ -412,16 +381,13 @@ export function suspendSend(chunkId: string): void {
 /** Resume a suspended chunk. Throws if another chunk is active. Returns a SendHandle for the resumed chunk. */
 export function resumeChunk(chunkId: string): SendHandle {
   if (_activeChunkId !== null) {
-    sLog(`resumeChunk FAIL: _activeChunkId=${_activeChunkId.slice(0, 8)} already active`)
     throw new Error('Cannot resume chunk: another chunk is active')
   }
   const chunk = _chunks.get(chunkId)
   if (!chunk || chunk.internalState !== 'suspended') {
-    sLog(`resumeChunk FAIL: chunk=${chunk ? 'found' : 'missing'} internalState=${chunk?.internalState}`)
     throw new Error(`Chunk ${chunkId} is not in suspended state`)
   }
 
-  sLog(`resumeChunk chunkId=${chunkId.slice(0, 8)} dispatchPtr=${chunk.dispatchPtr} sentPtr=${chunk.sentPtr} execPtr=${chunk.executedPtr} totalLines=${chunk.lines.length} → internalState: suspended→running`)
   chunk.internalState = 'running'
   _activeChunkId = chunkId
   _inPlanner = 0
@@ -439,17 +405,10 @@ export function resumeChunk(chunkId: string): SendHandle {
 
 /** Stop: send feed hold, wait for Hold:0, send 0x18. Fires 'completed' 'stopped' event when done. */
 export function stopSend(chunkId: string): void {
-  if (_activeChunkId !== chunkId) {
-    sLog(`stopSend: skip — _activeChunkId=${_activeChunkId?.slice(0, 8)} ≠ requested=${chunkId.slice(0, 8)}`)
-    return
-  }
+  if (_activeChunkId !== chunkId) return
   const chunk = _chunks.get(chunkId)
-  if (!chunk || chunk.internalState !== 'running') {
-    sLog(`stopSend: skip — chunk=${chunk ? 'found' : 'missing'} internalState=${chunk?.internalState}`)
-    return
-  }
+  if (!chunk || chunk.internalState !== 'running') return
 
-  sLog(`stopSend chunkId=${chunkId.slice(0, 8)} → sending 0x21 (FeedHold), internalState: running→stopping`)
   chunk.internalState = 'stopping'
   machineConnection.sendByte(0x21)  // '!'
   // Completion fires in onBufUpdate when state === 'Hold' && holdPhase === 0

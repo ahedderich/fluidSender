@@ -14,6 +14,52 @@ export interface StockDef {
   rotation?: number
   diameter?: number
   depth: number
+  measuredWidth?: number
+  measuredHeight?: number
+  measuredDiameter?: number
+}
+
+export type ProbingPhase = 'idle' | 'running' | 'aborted' | 'completed'
+
+export interface ProbingStepResult {
+  axis: 'X' | 'Y' | 'Z'
+  direction: '+' | '-'
+  edgeWpos: number
+}
+
+export interface ProbingRotationResult {
+  rotationDeg: number
+  bowMm: number
+  edge: 'top' | 'bottom' | 'left' | 'right'
+}
+
+export interface HeightmapResult {
+  colCount: number
+  rowCount: number
+  spacingX: number
+  spacingY: number
+  originX: number
+  originY: number
+  values: (number | null)[]
+}
+
+export interface ProbingState {
+  phase: ProbingPhase
+  wizardKey: string | null
+  currentStepLabel: string
+  stepIndex: number
+  totalSteps: number
+  stepResults: ProbingStepResult[]
+  measuredCenterX: number | null
+  measuredCenterY: number | null
+  measuredWidth: number | null
+  measuredHeight: number | null
+  measuredDiameter: number | null
+  rotation: ProbingRotationResult | null
+  heightmap: HeightmapResult | null
+  errorMessage: string | null
+  edgeHistoryX: [number | null, number | null]
+  edgeHistoryY: [number | null, number | null]
 }
 
 export interface ConnectionState {
@@ -66,6 +112,7 @@ export interface UiState {
   console: UiConsoleEntry[]
   loadedToolNumber: number | null
   macroRun: MacroRunState | null
+  probingState: ProbingState
 }
 
 const CONSOLE_LIMIT = 300
@@ -79,6 +126,14 @@ const ui: UiState = {
   console: [],
   loadedToolNumber: null,
   macroRun: null,
+  probingState: {
+    phase: 'idle', wizardKey: null, currentStepLabel: '',
+    stepIndex: 0, totalSteps: 0, stepResults: [],
+    measuredCenterX: null, measuredCenterY: null,
+    measuredWidth: null, measuredHeight: null, measuredDiameter: null,
+    rotation: null, heightmap: null, errorMessage: null,
+    edgeHistoryX: [null, null], edgeHistoryY: [null, null],
+  } as ProbingState,
 }
 
 // ─── Tool change mode flag (runtime-only, not synced to clients) ──────────────
@@ -154,12 +209,27 @@ export async function setStock(s: StockDef): Promise<PatchOp> {
   return { path: 'stock', set: { stock: s } }
 }
 
-export async function clearStock(): Promise<PatchOp> {
+export async function clearStock(): Promise<PatchOp[]> {
   stockDef = null
   const config = await getConfig()
   config.app = { ...(config.app ?? {}), stock: null }
   await setConfig(config)
-  return { path: 'stock', set: { stock: null } }
+  return [
+    { path: 'stock', set: { stock: null } },
+    setProbingState({
+      measuredWidth: null, measuredHeight: null, measuredDiameter: null,
+      rotation: null, heightmap: null,
+      edgeHistoryX: [null, null], edgeHistoryY: [null, null],
+    }),
+  ]
+}
+
+export function clearMeasurements(): PatchOp {
+  return setProbingState({
+    measuredWidth: null, measuredHeight: null, measuredDiameter: null,
+    rotation: null, heightmap: null,
+    edgeHistoryX: [null, null], edgeHistoryY: [null, null],
+  })
 }
 
 // ─── Job state (server-authoritative, synced to all clients via patch) ────────
@@ -288,6 +358,15 @@ export function setMacroRunState(state: MacroRunState | null): PatchOp {
   return { path: 'macroRun', set: { macroRun: state } }
 }
 
+export function getProbingState(): ProbingState {
+  return ui.probingState
+}
+
+export function setProbingState(patch: Partial<ProbingState>): PatchOp {
+  Object.assign(ui.probingState, patch)
+  return { path: 'probingState', set: { ...ui.probingState } as unknown as Record<string, unknown> }
+}
+
 export async function setLoadedTool(machineId: string, toolNumber: number | null): Promise<PatchOp> {
   ui.loadedToolNumber = toolNumber
   const config = await getConfig()
@@ -387,5 +466,6 @@ export function getSnapshot() {
     stock: stockDef,
     toolLibrary: _getToolLibrary ? _getToolLibrary(machineId) : { machine: [], app: [] },
     macroRun: ui.macroRun,
+    probingState: ui.probingState,
   }
 }

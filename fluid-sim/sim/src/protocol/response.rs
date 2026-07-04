@@ -1,14 +1,23 @@
 use crate::machine::state::{MachineState, MachineStatus, AXIS_COUNT, MAX_PLANNER_SLOTS};
 
-pub const GREETING: &str = "Grbl 4.0.3 [FluidNC v4.0.3 (Simulator)] ready\r\n[MSG: Machine: Connected]\r\nok\r\n";
+pub const GREETING: &str =
+    "Grbl 4.0.3 [FluidNC v4.0.3 (Simulator)] ready\r\n[MSG: Machine: Connected]\r\nok\r\n";
 
-pub fn ok() -> String { "ok\r\n".to_string() }
+pub fn ok() -> String {
+    "ok\r\n".to_string()
+}
 
-pub fn error(code: u32) -> String { format!("error:{}\r\n", code) }
+pub fn error(code: u32) -> String {
+    format!("error:{}\r\n", code)
+}
 
-pub fn msg(text: &str) -> String { format!("[MSG:{}]\r\n", text) }
+pub fn msg(text: &str) -> String {
+    format!("[MSG:{}]\r\n", text)
+}
 
-pub fn alarm(code: u32) -> String { format!("ALARM:{}\r\n", code) }
+pub fn alarm(code: u32) -> String {
+    format!("ALARM:{}\r\n", code)
+}
 
 /// Format a full FluidNC status response.
 /// `<State|MPos:x,y,z|WCO:x,y,z|FS:f,s|Pn:pins|A:acc>`
@@ -37,13 +46,19 @@ pub fn status(state: &MachineState) -> String {
         format!("Bf:{},128", planner_free),
         format!("Ov:{},100,{}", state.feed_override, state.spindle_override),
     ];
-    if !pn.is_empty() { parts.push(format!("Pn:{}", pn)); }
+    if !pn.is_empty() {
+        parts.push(format!("Pn:{}", pn));
+    }
 
     // Accessory state
     let mut acc = String::new();
-    if let Some(flag) = state.spindle.accessory_flag() { acc.push(flag); }
+    if let Some(flag) = state.spindle.accessory_flag() {
+        acc.push(flag);
+    }
     acc.push_str(&state.coolant.accessory_flags());
-    if !acc.is_empty() { parts.push(format!("A:{}", acc)); }
+    if !acc.is_empty() {
+        parts.push(format!("A:{}", acc));
+    }
 
     format!("<{}>\r\n", parts.join("|"))
 }
@@ -60,7 +75,9 @@ fn format_axes(arr: &[f64; AXIS_COUNT], n: usize) -> String {
 pub fn probe_result(pos: [f64; 3], success: bool) -> String {
     format!(
         "[PRB:{:.3},{:.3},{:.3}:{}]\r\n",
-        pos[0], pos[1], pos[2],
+        pos[0],
+        pos[1],
+        pos[2],
         if success { 1 } else { 0 }
     )
 }
@@ -77,9 +94,9 @@ pub fn config_value(key: &str, value: &str) -> String {
 
 /// GCode modal state response for `$G`: `[GC:G0 G54 G17 G21 G90 G94 M5 M9 T0 F0 S0]`
 pub fn gc_state(state: &MachineState) -> String {
+    use crate::machine::coolant::CoolantState;
     use crate::machine::modal::{DistanceMode, Plane, Units};
     use crate::machine::spindle::SpindleMode;
-    use crate::machine::coolant::CoolantState;
 
     let wcs = format!("G{}", 53 + state.modal.wcs as u32);
     let plane = match state.modal.plane {
@@ -120,7 +137,7 @@ mod tests {
 
     fn test_state() -> MachineState {
         let travel = [300.0, 200.0, 80.0, 360.0, 360.0, 360.0];
-        MachineState::new(3, travel, 2.0, 1)
+        MachineState::new(3, travel, 2.0, Default::default(), 1)
     }
 
     #[test]
@@ -144,7 +161,10 @@ mod tests {
         assert!(s.contains("FS:"));
         // 3-axis: exactly 3 comma-separated values in MPos
         let mpos_start = s.find("MPos:").unwrap() + 5;
-        let mpos_end = s[mpos_start..].find('|').map(|i| mpos_start + i).unwrap_or(s.len());
+        let mpos_end = s[mpos_start..]
+            .find('|')
+            .map(|i| mpos_start + i)
+            .unwrap_or(s.len());
         let mpos_str = &s[mpos_start..mpos_end];
         assert_eq!(mpos_str.split(',').count(), 3);
     }

@@ -62,12 +62,13 @@
           class="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/50 rounded px-2 py-1 font-mono text-sm text-right text-blue-800 dark:text-blue-200 w-full focus:outline-none focus:ring-1 focus:ring-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
         />
 
-        <!-- Machine position (editable) + travel bar -->
+        <!-- Machine position (editable — teleports machine state, no motion) + travel bar -->
         <div
           class="bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded px-2 pt-1 pb-0.5 flex flex-col gap-0.5"
         >
           <input
-            v-model.number="s.pos[axis]"
+            :value="s.pos[axis].toFixed(3)"
+            @change="setMachinePos(axis, +($event.target as HTMLInputElement).value)"
             type="number"
             step="0.001"
             class="w-full bg-transparent font-mono text-sm text-right text-gray-700 dark:text-slate-300 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -86,7 +87,8 @@
         <!-- Max travel (editable) -->
         <div class="flex items-center gap-1">
           <input
-            v-model.number="s.travel[axis]"
+            :value="s.travel[axis]"
+            @change="setTravelAxis(axis, +($event.target as HTMLInputElement).value)"
             type="number"
             min="1"
             step="1"
@@ -149,6 +151,18 @@ async function setWpos(axis: AxisKey, value: number) {
   const newWco = s.pos[axis] - value
   s.wco[axis] = newWco
   await s.setWco({ [axis]: newWco })
+}
+
+// Overwrites the sim's machine position directly (teleport) — never issues a move.
+async function setMachinePos(axis: AxisKey, value: number) {
+  if (!Number.isFinite(value)) return
+  s.pos[axis] = value
+  await s.setPosition({ [axis]: value })
+}
+
+async function setTravelAxis(axis: AxisKey, value: number) {
+  if (!Number.isFinite(value) || value < 1) return
+  await s.setTravel({ [axis]: value })
 }
 
 async function zeroAxis(axis: AxisKey) {

@@ -44,23 +44,37 @@ pub enum ParsedLine {
 
 /// Detects real-time single-byte commands without line parsing.
 pub fn is_realtime_byte(b: u8) -> bool {
-    matches!(b, 0x18 | 0x19 | 0x1A | 0x1B | 0x21 | 0x3F | 0x7E | 0x84 | 0x85
-               | 0x90..=0x9F)
+    matches!(
+        b,
+        0x18 | 0x19 | 0x1A | 0x1B | 0x21 | 0x3F | 0x7E | 0x84 | 0x85 | 0x90..=0x9F
+    )
 }
 
 pub fn parse_line(raw: &str) -> ParsedLine {
     let trimmed = raw.trim();
 
     // Single real-time characters that might arrive as lines
-    if trimmed == "?" { return ParsedLine::StatusQuery; }
-    if trimmed == "!" { return ParsedLine::FeedHold; }
-    if trimmed == "~" { return ParsedLine::CycleStart; }
+    if trimmed == "?" {
+        return ParsedLine::StatusQuery;
+    }
+    if trimmed == "!" {
+        return ParsedLine::FeedHold;
+    }
+    if trimmed == "~" {
+        return ParsedLine::CycleStart;
+    }
     // 0x18 as string char
     // Real-time single-byte commands that may arrive as a one-byte "line"
-    if trimmed.as_bytes() == [0x18] { return ParsedLine::SoftReset; }
-    if trimmed.as_bytes() == [0x85] { return ParsedLine::JogCancel; }
+    if trimmed.as_bytes() == [0x18] {
+        return ParsedLine::SoftReset;
+    }
+    if trimmed.as_bytes() == [0x85] {
+        return ParsedLine::JogCancel;
+    }
 
-    if trimmed.is_empty() { return ParsedLine::Empty; }
+    if trimmed.is_empty() {
+        return ParsedLine::Empty;
+    }
 
     // $ system commands
     if let Some(rest) = trimmed.strip_prefix('$') {
@@ -79,10 +93,18 @@ fn parse_dollar(rest: &str) -> ParsedLine {
     if rest.is_empty() || rest == "$" {
         return ParsedLine::DumpSettings;
     }
-    if rest == "G" { return ParsedLine::GCodeQuery; }
-    if rest == "H" { return ParsedLine::Home; }
-    if rest == "X" { return ParsedLine::Unlock; }
-    if rest.starts_with("RS") { return ParsedLine::Restart; }
+    if rest == "G" {
+        return ParsedLine::GCodeQuery;
+    }
+    if rest == "H" {
+        return ParsedLine::Home;
+    }
+    if rest == "X" {
+        return ParsedLine::Unlock;
+    }
+    if rest.starts_with("RS") {
+        return ParsedLine::Restart;
+    }
 
     // $J=<gcode>
     if let Some(jog_part) = rest.strip_prefix("J=") {
@@ -114,10 +136,20 @@ pub fn parse_gcode_words(line: &str) -> Result<Vec<Word>, String> {
     let mut in_comment = false;
 
     while let Some(c) = chars.next() {
-        if c == '(' { in_comment = true; continue; }
-        if c == ')' { in_comment = false; continue; }
-        if c == ';' { break; } // rest is comment
-        if in_comment || c.is_whitespace() { continue; }
+        if c == '(' {
+            in_comment = true;
+            continue;
+        }
+        if c == ')' {
+            in_comment = false;
+            continue;
+        }
+        if c == ';' {
+            break;
+        } // rest is comment
+        if in_comment || c.is_whitespace() {
+            continue;
+        }
 
         if c.is_ascii_alphabetic() {
             let letter = c.to_ascii_uppercase();
@@ -132,7 +164,9 @@ pub fn parse_gcode_words(line: &str) -> Result<Vec<Word>, String> {
             if num_str.is_empty() || num_str == "-" || num_str == "+" {
                 return Err(format!("Missing number after '{}'", letter));
             }
-            let value: f64 = num_str.parse().map_err(|_| format!("Bad number: {}", num_str))?;
+            let value: f64 = num_str
+                .parse()
+                .map_err(|_| format!("Bad number: {}", num_str))?;
             words.push(Word { letter, value });
         } else {
             return Err(format!("Unexpected char: {}", c));
@@ -161,16 +195,27 @@ pub fn extract_axes(words: &[Word]) -> [Option<f64>; 6] {
 
 /// Extract a word value by letter.
 pub fn word_val(words: &[Word], letter: char) -> Option<f64> {
-    words.iter().find(|w| w.letter == letter.to_ascii_uppercase()).map(|w| w.value)
+    words
+        .iter()
+        .find(|w| w.letter == letter.to_ascii_uppercase())
+        .map(|w| w.value)
 }
 
 /// Collect all G-codes and M-codes in the word list.
 pub fn gcodes(words: &[Word]) -> Vec<f64> {
-    words.iter().filter(|w| w.letter == 'G').map(|w| w.value).collect()
+    words
+        .iter()
+        .filter(|w| w.letter == 'G')
+        .map(|w| w.value)
+        .collect()
 }
 
 pub fn mcodes(words: &[Word]) -> Vec<f64> {
-    words.iter().filter(|w| w.letter == 'M').map(|w| w.value).collect()
+    words
+        .iter()
+        .filter(|w| w.letter == 'M')
+        .map(|w| w.value)
+        .collect()
 }
 
 #[cfg(test)]
@@ -179,35 +224,87 @@ mod tests {
 
     #[test]
     fn parse_g0() {
-        let ParsedLine::GCode(words) = parse_line("G0 X10 Y20") else { panic!() };
-        assert_eq!(words[0], Word { letter: 'G', value: 0.0 });
-        assert_eq!(words[1], Word { letter: 'X', value: 10.0 });
-        assert_eq!(words[2], Word { letter: 'Y', value: 20.0 });
+        let ParsedLine::GCode(words) = parse_line("G0 X10 Y20") else {
+            panic!()
+        };
+        assert_eq!(
+            words[0],
+            Word {
+                letter: 'G',
+                value: 0.0
+            }
+        );
+        assert_eq!(
+            words[1],
+            Word {
+                letter: 'X',
+                value: 10.0
+            }
+        );
+        assert_eq!(
+            words[2],
+            Word {
+                letter: 'Y',
+                value: 20.0
+            }
+        );
     }
 
     #[test]
     fn parse_g1_negative() {
-        let ParsedLine::GCode(words) = parse_line("G1 X-5.5 F500") else { panic!() };
-        assert_eq!(words[1], Word { letter: 'X', value: -5.5 });
-        assert_eq!(words[2], Word { letter: 'F', value: 500.0 });
+        let ParsedLine::GCode(words) = parse_line("G1 X-5.5 F500") else {
+            panic!()
+        };
+        assert_eq!(
+            words[1],
+            Word {
+                letter: 'X',
+                value: -5.5
+            }
+        );
+        assert_eq!(
+            words[2],
+            Word {
+                letter: 'F',
+                value: 500.0
+            }
+        );
     }
 
     #[test]
     fn parse_m3() {
-        let ParsedLine::GCode(words) = parse_line("M3 S1000") else { panic!() };
-        assert_eq!(words[0], Word { letter: 'M', value: 3.0 });
-        assert_eq!(words[1], Word { letter: 'S', value: 1000.0 });
+        let ParsedLine::GCode(words) = parse_line("M3 S1000") else {
+            panic!()
+        };
+        assert_eq!(
+            words[0],
+            Word {
+                letter: 'M',
+                value: 3.0
+            }
+        );
+        assert_eq!(
+            words[1],
+            Word {
+                letter: 'S',
+                value: 1000.0
+            }
+        );
     }
 
     #[test]
     fn parse_g38_2() {
-        let ParsedLine::GCode(words) = parse_line("G38.2 Z-10 F100") else { panic!() };
+        let ParsedLine::GCode(words) = parse_line("G38.2 Z-10 F100") else {
+            panic!()
+        };
         assert!((words[0].value - 38.2).abs() < 0.001);
     }
 
     #[test]
     fn parse_g10_l20() {
-        let ParsedLine::GCode(words) = parse_line("G10 L20 P1 X0 Y0 Z0") else { panic!() };
+        let ParsedLine::GCode(words) = parse_line("G10 L20 P1 X0 Y0 Z0") else {
+            panic!()
+        };
         assert_eq!(word_val(&words, 'G'), Some(10.0));
         assert_eq!(word_val(&words, 'L'), Some(20.0));
         assert_eq!(word_val(&words, 'P'), Some(1.0));
@@ -215,7 +312,9 @@ mod tests {
 
     #[test]
     fn parse_jog() {
-        let ParsedLine::Jog(words) = parse_line("$J=G91 X10 F500") else { panic!() };
+        let ParsedLine::Jog(words) = parse_line("$J=G91 X10 F500") else {
+            panic!()
+        };
         assert_eq!(word_val(&words, 'X'), Some(10.0));
         assert_eq!(word_val(&words, 'F'), Some(500.0));
     }
@@ -237,13 +336,17 @@ mod tests {
 
     #[test]
     fn parse_config_read() {
-        let ParsedLine::ConfigRead(key) = parse_line("$Config/axes/x/steps_per_mm") else { panic!() };
+        let ParsedLine::ConfigRead(key) = parse_line("$Config/axes/x/steps_per_mm") else {
+            panic!()
+        };
         assert_eq!(key, "axes/x/steps_per_mm");
     }
 
     #[test]
     fn parse_config_write() {
-        let ParsedLine::ConfigWrite(k, v) = parse_line("$axes/x/steps_per_mm=80.000") else { panic!() };
+        let ParsedLine::ConfigWrite(k, v) = parse_line("$axes/x/steps_per_mm=80.000") else {
+            panic!()
+        };
         assert_eq!(k, "axes/x/steps_per_mm");
         assert_eq!(v, "80.000");
     }
@@ -258,7 +361,9 @@ mod tests {
 
     #[test]
     fn strip_comment() {
-        let ParsedLine::GCode(words) = parse_line("G0 X5 (move to 5) Y10") else { panic!() };
+        let ParsedLine::GCode(words) = parse_line("G0 X5 (move to 5) Y10") else {
+            panic!()
+        };
         assert_eq!(word_val(&words, 'X'), Some(5.0));
         assert_eq!(word_val(&words, 'Y'), Some(10.0));
     }

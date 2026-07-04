@@ -28,6 +28,7 @@ import {
   getLoadedToolForMachine,
   setStock,
   clearStock,
+  clearMeasurements,
   type ModalEntry,
   type Toast,
   type StockDef,
@@ -57,6 +58,8 @@ import {
 import { sendJog, cancelJog, onJogStatusUpdate } from '../utils/machine/jogger'
 import { jobRunner } from '../utils/gcode/jobRunner'
 import { loadRuntimeLog } from '../utils/tool/runtimeLog'
+import { probingRunner } from '../utils/probing/probingRunner'
+import type { ProbeConfig, ProbeCompensation } from '../utils/tool/types'
 
 // ─── One-time bootstrap ──────────────────────────────────────────────────────
 
@@ -155,6 +158,9 @@ machineConnection.on('event', (ev) => {
     }
     case 'ok':
       onOk()
+      break
+    case 'probeLine':
+      probingRunner.onProbeLine(ev)
       break
   }
 })
@@ -409,8 +415,12 @@ export default defineWebSocketHandler({
         break
       }
       case 'ui:stock:clear': {
-        const op = await clearStock()
-        broadcastPatch([op])
+        const ops = await clearStock()
+        broadcastPatch(ops)
+        break
+      }
+      case 'ui:stock:clearMeasurements': {
+        broadcastPatch([clearMeasurements()])
         break
       }
 
@@ -454,6 +464,48 @@ export default defineWebSocketHandler({
       case 'macro:abort':
         macroRunner.abort()
         break
+
+      // ── Probing ───────────────────────────────────────────────────────────
+      case 'probing:start': {
+        const { wizardKey, config: wzConfig, tipRadius, probeConfig, compensation } = msg.payload as {
+          wizardKey: string
+          config: Parameters<typeof probingRunner.startWizard>[1]
+          tipRadius: number
+          probeConfig: ProbeConfig
+          compensation?: ProbeCompensation
+        }
+        probingRunner.startWizard(wizardKey, wzConfig, tipRadius, probeConfig, compensation).catch((err: unknown) => {
+          console.error('[ws] probing:start error:', err)
+        })
+        break
+      }
+      case 'probing:abort':
+        probingRunner.abort()
+        break
+      case 'probing:continue':
+        probingRunner.continue()
+        break
+      case 'probing:edge': {
+        const { axis, direction, tipRadius: pTipRadius, probeConfig: pConfig, buffer, compensation: pComp } = msg.payload as {
+          axis: 'X' | 'Y' | 'Z'
+          direction: '+' | '-'
+          tipRadius: number
+          probeConfig: ProbeConfig
+          buffer: number
+          compensation?: ProbeCompensation
+        }
+        probingRunner.probeIndividualEdge(axis, direction, pTipRadius, pConfig, buffer, pComp).catch((err: unknown) => {
+          console.error('[ws] probing:edge error:', err)
+        })
+        break
+      }
+      case 'probing:setCenter': {
+        const { axis: cAxis } = msg.payload as { axis: 'X' | 'Y' }
+        probingRunner.setCenterAxis(cAxis).catch((err: unknown) => {
+          console.error('[ws] probing:setCenter error:', err)
+        })
+        break
+      }
 
       default:
         console.warn('[WS] unknown message type:', msg.t)

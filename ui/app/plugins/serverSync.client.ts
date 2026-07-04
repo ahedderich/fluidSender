@@ -99,6 +99,10 @@ export default defineNuxtPlugin((nuxtApp) => {
         else machineStore.clearStock()
         if (p.toolLibrary) machineStore.setToolLibrary(p.toolLibrary)
         machineStore.setLoadedToolNumber(p.ui?.loadedToolNumber ?? null)
+        const snap = p as Record<string, unknown>
+        if (snap.probingState) {
+          syncStore.applyOp({ path: 'probingState', set: snap.probingState as Record<string, unknown> })
+        }
         break
       }
       case 'patch': {

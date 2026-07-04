@@ -56,16 +56,17 @@
               <line v-for="sy in gridY" :key="`gy${sy}`" :x1="-s.travel.x" :y1="sy" x2="0" :y2="sy" stroke="#e5e7eb" stroke-width="0.3" />
             </g>
 
-            <!-- Stock body (SVG_y = -(CNC_y + height) for rect top edge) -->
+            <!-- Stock body. ox/oy is the stock CENTRE (matching the sim's collision
+                 math); rect top edge in SVG y = -(oy + height/2). -->
             <rect v-if="s.stock.shape === 'rect'"
-              :x="s.stock.ox"
-              :y="-(s.stock.oy + s.stock.height)"
+              :x="s.stock.ox - s.stock.width / 2"
+              :y="-(s.stock.oy + s.stock.height / 2)"
               :width="s.stock.width" :height="s.stock.height"
               fill="#bfdbfe" fill-opacity="0.7" stroke="#3b82f6" stroke-width="0.8"
               :transform="stockTransform" />
             <circle v-else
-              :cx="s.stock.ox + s.stock.diameter / 2"
-              :cy="-(s.stock.oy + s.stock.diameter / 2)"
+              :cx="s.stock.ox"
+              :cy="-s.stock.oy"
               :r="s.stock.diameter / 2"
               fill="#bfdbfe" fill-opacity="0.7" stroke="#3b82f6" stroke-width="0.8" />
 
@@ -136,13 +137,13 @@
             <rect x="0" y="0" width="8" :height="s.travel.z"
               fill="#f3f4f6" stroke="#d1d5db" stroke-width="0.8" />
 
-            <!-- Stock Z depth -->
-            <rect x="0" :y="s.stock.oz" width="8" :height="s.stock.depth"
+            <!-- Stock Z depth (oz is the signed machine-z top surface; SVG y = -machine z) -->
+            <rect x="0" :y="-s.stock.oz" width="8" :height="s.stock.depth"
               fill="#bfdbfe" fill-opacity="0.7" stroke="#3b82f6" stroke-width="0.8" />
 
             <!-- Hole depth indicator (centered notch) -->
             <rect v-if="s.stock.hole.enabled"
-              x="2" :y="s.stock.oz" width="4"
+              x="2" :y="-s.stock.oz" width="4"
               :height="Math.min(s.stock.depth, s.stock.hole.depth)"
               fill="#f9fafb" fill-opacity="0.95"
               stroke="#6b7280" stroke-width="0.5" stroke-dasharray="1 0.5" />
@@ -193,10 +194,9 @@ const gridY = computed(() => {
 
 const stockTransform = computed(() => {
   if (s.stock.rotation === 0) return ''
-  const cx = s.stock.ox + s.stock.width / 2
-  const cy = -(s.stock.oy + s.stock.height / 2)
+  // ox/oy is the stock centre — the sim rotates around it too.
   // Negate rotation because the Y axis is flipped in SVG vs CNC space.
-  return `rotate(${-s.stock.rotation}, ${cx}, ${cy})`
+  return `rotate(${-s.stock.rotation}, ${s.stock.ox}, ${-s.stock.oy})`
 })
 
 const zToolY = computed(() => Math.max(0, Math.min(s.travel.z, -s.pos.z)))

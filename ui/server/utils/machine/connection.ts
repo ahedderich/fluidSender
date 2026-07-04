@@ -10,6 +10,7 @@ export type ConnectionEvent =
   | { type: 'alarm'; code: string }
   | { type: 'error'; message: string }
   | { type: 'ok' }
+  | { type: 'probeLine'; mpos: { x: number; y: number; z: number; a?: number }; contact: boolean }
 
 interface MachineConnectionConfig {
   type: 'tcp' | 'usb'
@@ -116,6 +117,19 @@ class MachineConnection extends EventEmitter {
   private _handleLine(raw: string): void {
     const line = raw.trim()
     if (!line) return
+
+    if (line.startsWith('[PRB:') && line.endsWith(']')) {
+      const inner = line.slice(5, -1)
+      const colonIdx = inner.lastIndexOf(':')
+      const coords = inner.slice(0, colonIdx).split(',').map(Number)
+      const contact = inner.slice(colonIdx + 1) === '1'
+      this.emit('event', {
+        type: 'probeLine',
+        mpos: { x: coords[0] ?? 0, y: coords[1] ?? 0, z: coords[2] ?? 0, a: coords[3] },
+        contact,
+      } satisfies ConnectionEvent)
+      return
+    }
 
     if (line.startsWith('<') && line.endsWith('>')) {
       this.emit('event', { type: 'statusLine', line } satisfies ConnectionEvent)

@@ -15,6 +15,11 @@ interface SimStateMsg {
   }
   probeTriggered: boolean
   probeTipDiameter: number
+  probeDeviations: {
+    xPlus: number; xMinus: number
+    yPlus: number; yMinus: number
+    zMinus: number
+  }
   door: boolean
   simSpeed: number
   axisCount: number
@@ -41,6 +46,7 @@ export function useSimConnection() {
     store.simSpeed = msg.simSpeed
     store.probe.tipDiameter = msg.probeTipDiameter
     store.probe.triggered = msg.probeTriggered
+    if (msg.probeDeviations) Object.assign(store.probe.deviations, msg.probeDeviations)
     store.limits.xMin = msg.limits.xMin
     store.limits.xMax = msg.limits.xMax
     store.limits.yMin = msg.limits.yMin
@@ -69,6 +75,7 @@ export function useSimConnection() {
 
     ws.onopen = () => {
       retryDelay = 1000
+      store.applyDefaultScenario()
     }
 
     ws.onmessage = (event: MessageEvent) => {

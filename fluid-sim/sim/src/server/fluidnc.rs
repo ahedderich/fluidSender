@@ -17,8 +17,9 @@ use crate::protocol::response::{self, GREETING};
 
 /// Distinguishes what to do when an async operation's receiver fires.
 enum PendingKind {
-    /// G38 probe: send TLO + ok (or error 54) from the move result.
-    Probe,
+    /// G38 probe (B2): ok is withheld until the cycle completes, then [PRB:...] + ok.
+    /// A miss raises ALARM:5 first when `error_on_miss` (G38.2/G38.4).
+    Probe { error_on_miss: bool },
     /// $H homing: reset position to 0 and send ok after the move completes.
     Homing,
     /// G4 dwell: send ok after planner drains + dwell elapses (no planner slot consumed).
@@ -37,7 +38,9 @@ pub async fn run(
     move_tx: MoveTx,
 ) {
     let addr = format!("0.0.0.0:{}", port);
-    let listener = TcpListener::bind(&addr).await.expect("Failed to bind FluidNC TCP port");
+    let listener = TcpListener::bind(&addr)
+        .await
+        .expect("Failed to bind FluidNC TCP port");
     info!("FluidNC TCP server listening on {}", addr);
 
     loop {
@@ -49,8 +52,15 @@ pub async fn run(
                 let console = console.clone();
                 let move_tx = move_tx.clone();
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        handle_connection(stream, shared, broadcast, console, move_tx, peer.to_string()).await
+                    if let Err(e) = handle_connection(
+                        stream,
+                        shared,
+                        broadcast,
+                        console,
+                        move_tx,
+                        peer.to_string(),
+                    )
+                    .await
                     {
                         warn!("FluidNC connection error: {}", e);
                     }
@@ -63,7 +73,7 @@ pub async fn run(
 
 /// Broadcast one line of protocol traffic to the sim-ui console (best-effort).
 fn log_console(console: &ConsoleBroadcast, dir: &'static str, source: &str, text: &str) {
-    let text = text.trim_end_matches(|c| c == '\r' || c == '\n').to_string();
+    let text = text.trim_end_matches(['\r', '\n']).to_string();
     if text.is_empty() {
         return;
     }
@@ -91,7 +101,7 @@ fn extract_line_and_rt(buf: &[u8]) -> (String, Vec<u8>) {
         }
     }
     let line = String::from_utf8_lossy(&line_bytes)
-        .trim_end_matches(|c: char| c == '\n' || c == '\r')
+        .trim_end_matches(['\n', '\r'])
         .to_string();
     (line, rt_bytes)
 }
@@ -114,126 +124,159 @@ async fn handle_connection(
     writer.write_all(GREETING.as_bytes()).await?;
     log_console(&console, "tx", &peer, GREETING);
 
+    // Command lines received while a B2 command (probe/dwell/homing/M0) is awaiting its
+    // result. Real FluidNC keeps reading its input channel and executes these afterwards;
+    // dropping them would desync the client's per-line ok accounting and modal state.
+    let mut deferred: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+
     loop {
-        tokio::select! {
-            biased;
+        enum Next {
+            Line(String),
+            Skip,
+            Eof,
+        }
 
-            // Async alarm from a background move-result monitor fires here.
-            Some(alarm_msg) = alarm_rx.recv() => {
-                writer.write_all(alarm_msg.as_bytes()).await?;
-                log_console(&console, "tx", &peer, alarm_msg.trim_end());
-            }
+        // Deferred lines run first; otherwise read from the socket.
+        let next = if let Some(l) = deferred.pop_front() {
+            // Already rx-logged when it was received during the pending wait.
+            Next::Line(l)
+        } else {
+            tokio::select! {
+                biased;
 
-            // read_until reads raw bytes — no UTF-8 validation — so real-time bytes like
-            // 0x85 (jog cancel) never cause the UTF-8 decode error that `lines()` would.
-            n = reader.read_until(b'\n', &mut raw_buf) => {
-                let n = n?;
-                if n == 0 { break; } // EOF
-
-                let (line, rt_bytes) = extract_line_and_rt(&raw_buf);
-                raw_buf.clear();
-
-                log_console(&console, "rx", &peer, &line);
-
-                // Handle real-time bytes extracted from this chunk.
-                for b in &rt_bytes {
-                    let response = handle_realtime(classify(*b), &shared, &broadcast).await;
-                    if let Some(resp) = response {
-                        writer.write_all(resp.as_bytes()).await?;
-                        log_console(&console, "tx", &peer, resp.trim_end());
-                    }
+                // Async alarm from a background move-result monitor fires here.
+                Some(alarm_msg) = alarm_rx.recv() => {
+                    writer.write_all(alarm_msg.as_bytes()).await?;
+                    log_console(&console, "tx", &peer, alarm_msg.trim_end());
+                    Next::Skip
                 }
 
-                // Only dispatch a line command if there is actual text content, OR if the
-                // chunk was a bare blank line (no RT bytes mixed in).  A chunk that contained
-                // only real-time bytes (e.g. \x85 flushed out by the next \n) should not
-                // generate a spurious `ok`.
-                if !line.is_empty() || rt_bytes.is_empty() {
-                    let parsed = parse_line(&line);
-                    let (response, pending) =
-                        dispatch(parsed, &shared, &broadcast, &move_tx, &alarm_tx).await;
-                    if !response.is_empty() {
-                        writer.write_all(response.as_bytes()).await?;
-                        log_console(&console, "tx", &peer, response.trim_end());
-                    }
+                // read_until reads raw bytes — no UTF-8 validation — so real-time bytes like
+                // 0x85 (jog cancel) never cause the UTF-8 decode error that `lines()` would.
+                n = reader.read_until(b'\n', &mut raw_buf) => {
+                    let n = n?;
+                    if n == 0 {
+                        Next::Eof
+                    } else {
+                        let (line, rt_bytes) = extract_line_and_rt(&raw_buf);
+                        raw_buf.clear();
 
-                    // For probe / homing / dwell we must wait for the result before sending
-                    // the final response, but keep reading the stream so `?` queries are
-                    // answered in real time during the move.
-                    if let Some((kind, mut rx)) = pending {
-                        // in_pause is set after M0's drain dwell completes; the loop then waits
-                        // for ~ (cycle-start) before sending ok and breaking.
-                        let mut in_pause = false;
-                        loop {
-                            tokio::select! {
-                                // Guard prevents polling a consumed oneshot in the pause phase.
-                                result = &mut rx, if !in_pause => {
-                                    if matches!(kind, PendingKind::ProgramPause) {
-                                        // Drain complete — enter M0 Hold; wait for ~ below.
-                                        eprintln!("[SIM] M0 ProgramPause: planner drained → status→Hold, waiting for CycleStart (~)");
-                                        let mut state = shared.write().await;
-                                        state.status = MachineStatus::Hold;
-                                        let _ = broadcast.send(());
+                        log_console(&console, "rx", &peer, &line);
+
+                        // Handle real-time bytes extracted from this chunk.
+                        for b in &rt_bytes {
+                            let response = handle_realtime(classify(*b), &shared, &broadcast).await;
+                            if let Some(resp) = response {
+                                writer.write_all(resp.as_bytes()).await?;
+                                log_console(&console, "tx", &peer, resp.trim_end());
+                            }
+                        }
+
+                        // Only dispatch a line command if there is actual text content, OR if
+                        // the chunk was a bare blank line (no RT bytes mixed in).  A chunk that
+                        // contained only real-time bytes (e.g. \x85 flushed out by the next \n)
+                        // should not generate a spurious `ok`.
+                        if line.is_empty() && !rt_bytes.is_empty() {
+                            Next::Skip
+                        } else {
+                            Next::Line(line)
+                        }
+                    }
+                }
+            }
+        };
+
+        let line = match next {
+            Next::Eof => break,
+            Next::Skip => continue,
+            Next::Line(l) => l,
+        };
+
+        let parsed = parse_line(&line);
+        let (response, pending) = dispatch(parsed, &shared, &broadcast, &move_tx, &alarm_tx).await;
+        if !response.is_empty() {
+            writer.write_all(response.as_bytes()).await?;
+            log_console(&console, "tx", &peer, response.trim_end());
+        }
+
+        // For probe / homing / dwell we must wait for the result before sending
+        // the final response, but keep reading the stream so `?` queries are
+        // answered in real time during the move. Other command lines received
+        // meanwhile are deferred, not dropped.
+        if let Some((kind, mut rx)) = pending {
+            // in_pause is set after M0's drain dwell completes; the loop then waits
+            // for ~ (cycle-start) before sending ok and breaking.
+            let mut in_pause = false;
+            loop {
+                tokio::select! {
+                    // Guard prevents polling a consumed oneshot in the pause phase.
+                    result = &mut rx, if !in_pause => {
+                        if matches!(kind, PendingKind::ProgramPause) {
+                            // Drain complete — enter M0 Hold; wait for ~ below.
+                            let mut state = shared.write().await;
+                            state.status = MachineStatus::Hold;
+                            let _ = broadcast.send(());
+                            drop(state);
+                            in_pause = true;
+                        } else {
+                            handle_pending_result(
+                                kind,
+                                result.unwrap_or(MoveResult::Ok),
+                                &shared,
+                                &broadcast,
+                                &mut writer,
+                                &console,
+                                &peer,
+                            ).await?;
+                            break;
+                        }
+                    }
+                    inner_n = reader.read_until(b'\n', &mut raw_buf) => {
+                        match inner_n? {
+                            0 => return Ok(()), // EOF
+                            _ => {
+                                let (ql, ql_rt) = extract_line_and_rt(&raw_buf);
+                                raw_buf.clear();
+
+                                log_console(&console, "rx", &peer, &ql);
+
+                                for b in &ql_rt {
+                                    let resp = handle_realtime(classify(*b), &shared, &broadcast).await;
+                                    if let Some(r) = resp {
+                                        writer.write_all(r.as_bytes()).await?;
+                                        log_console(&console, "tx", &peer, r.trim_end());
+                                    }
+                                }
+
+                                // Status queries are answered in real time; every other
+                                // command line is deferred until the pending op resolves
+                                // (skipping RT-only chunks, same as the outer loop).
+                                if matches!(parse_line(&ql), ParsedLine::StatusQuery) {
+                                    let state = shared.read().await;
+                                    let resp = response::status(&state);
+                                    writer.write_all(resp.as_bytes()).await?;
+                                    log_console(&console, "tx", &peer, resp.trim_end());
+                                } else if !ql.is_empty() || ql_rt.is_empty() {
+                                    deferred.push_back(ql);
+                                }
+                                if in_pause {
+                                    // CycleStart (~) sets state to Idle via handle_realtime.
+                                    // Check whether Hold was exited by any means.
+                                    let state = shared.read().await;
+                                    if !matches!(state.status, MachineStatus::Hold) {
                                         drop(state);
-                                        in_pause = true;
-                                    } else {
-                                        handle_pending_result(
-                                            kind,
-                                            result.unwrap_or(MoveResult::Ok),
-                                            &shared,
-                                            &broadcast,
-                                            &mut writer,
-                                            &console,
-                                            &peer,
-                                        ).await?;
+                                        let resp = response::ok();
+                                        writer.write_all(resp.as_bytes()).await?;
+                                        log_console(&console, "tx", &peer, resp.trim_end());
                                         break;
                                     }
                                 }
-                                inner_n = reader.read_until(b'\n', &mut raw_buf) => {
-                                    match inner_n? {
-                                        0 => return Ok(()), // EOF
-                                        _ => {
-                                            let (ql, ql_rt) = extract_line_and_rt(&raw_buf);
-                                            raw_buf.clear();
-
-                                            log_console(&console, "rx", &peer, &ql);
-
-                                            for b in &ql_rt {
-                                                let resp = handle_realtime(classify(*b), &shared, &broadcast).await;
-                                                if let Some(r) = resp {
-                                                    writer.write_all(r.as_bytes()).await?;
-                                                    log_console(&console, "tx", &peer, r.trim_end());
-                                                }
-                                            }
-
-                                            // During a pending move only status queries matter.
-                                            if matches!(parse_line(&ql), ParsedLine::StatusQuery) {
-                                                let state = shared.read().await;
-                                                let resp = response::status(&state);
-                                                writer.write_all(resp.as_bytes()).await?;
-                                                log_console(&console, "tx", &peer, resp.trim_end());
-                                            }
-                                            if in_pause {
-                                                // CycleStart (~) sets state to Idle via handle_realtime.
-                                                // Check whether Hold was exited by any means.
-                                                let state = shared.read().await;
-                                                if !matches!(state.status, MachineStatus::Hold) {
-                                                    drop(state);
-                                                    let resp = response::ok();
-                                                    writer.write_all(resp.as_bytes()).await?;
-                                                    log_console(&console, "tx", &peer, resp.trim_end());
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Some(alarm_msg) = alarm_rx.recv() => {
-                                    writer.write_all(alarm_msg.as_bytes()).await?;
-                                    log_console(&console, "tx", &peer, alarm_msg.trim_end());
-                                }
                             }
                         }
+                    }
+                    Some(alarm_msg) = alarm_rx.recv() => {
+                        writer.write_all(alarm_msg.as_bytes()).await?;
+                        log_console(&console, "tx", &peer, alarm_msg.trim_end());
                     }
                 }
             }
@@ -275,36 +318,46 @@ async fn handle_pending_result(
             writer.write_all(resp.as_bytes()).await?;
             log_console(console, "tx", peer, resp.trim_end());
         }
-        PendingKind::Probe => {
-            match result {
-                MoveResult::ProbeContact(pos) => {
-                    let resp = format!(
-                        "{}{}{}",
-                        response::probe_result(pos, true),
-                        response::ok(),
-                        ""
-                    );
-                    writer.write_all(resp.as_bytes()).await?;
-                    log_console(console, "tx", peer, resp.trim_end());
-                }
-                MoveResult::ProbeNoContact => {
-                    let pos = { shared.read().await.pos };
-                    let resp = format!(
-                        "{}{}",
-                        response::probe_result([pos[0], pos[1], pos[2]], false),
-                        response::error(54)
-                    );
-                    writer.write_all(resp.as_bytes()).await?;
-                    log_console(console, "tx", peer, resp.trim_end());
-                }
-                MoveResult::Alarm(code) => {
-                    let resp = response::alarm(code);
-                    writer.write_all(resp.as_bytes()).await?;
-                    log_console(console, "tx", peer, resp.trim_end());
-                }
-                MoveResult::Ok => {}
+        PendingKind::Probe { error_on_miss } => match result {
+            MoveResult::ProbeContact(pos) => {
+                let resp = format!("{}{}", response::probe_result(pos, true), response::ok());
+                writer.write_all(resp.as_bytes()).await?;
+                log_console(console, "tx", peer, resp.trim_end());
             }
-        }
+            MoveResult::ProbeNoContact => {
+                let pos = { shared.read().await.pos };
+                let prb = response::probe_result([pos[0], pos[1], pos[2]], false);
+                let resp = if error_on_miss {
+                    // FluidNC G38.2/G38.4 miss: send_alarm(ExecAlarm::ProbeFailContact)
+                    // → ALARM:5 + Alarm state, then [PRB:...:0], then the line's ok.
+                    {
+                        let mut state = shared.write().await;
+                        state.status = MachineStatus::Alarm;
+                        let _ = broadcast.send(());
+                    }
+                    format!("{}{}{}", response::alarm(5), prb, response::ok())
+                } else {
+                    // G38.3/G38.5 miss is not an error: [PRB:...:0] + ok.
+                    format!("{}{}", prb, response::ok())
+                };
+                writer.write_all(resp.as_bytes()).await?;
+                log_console(console, "tx", peer, resp.trim_end());
+            }
+            MoveResult::Alarm(code) => {
+                // Mid-probe alarm (e.g. soft limit). The line never got its queue-time
+                // ok (B2), so ack it after the alarm to keep the one-ok-per-line invariant.
+                let resp = format!("{}{}", response::alarm(code), response::ok());
+                writer.write_all(resp.as_bytes()).await?;
+                log_console(console, "tx", peer, resp.trim_end());
+            }
+            MoveResult::Ok => {
+                // Probe aborted before completion (feed hold / soft reset) — still ack
+                // the line so the client's send loop doesn't stall.
+                let resp = response::ok();
+                writer.write_all(resp.as_bytes()).await?;
+                log_console(console, "tx", peer, resp.trim_end());
+            }
+        },
     }
     Ok(())
 }
@@ -321,41 +374,30 @@ async fn handle_realtime(
         }
         RealtimeCmd::FeedHold => {
             let mut state = shared.write().await;
-            eprintln!("[SIM] realtime: FeedHold (0x21) machineStatus={:?} hold_pending={}", state.status, state.hold_pending);
             if matches!(state.status, MachineStatus::Run) {
                 state.hold_pending = true;
                 state.status = MachineStatus::Hold;
-                eprintln!("[SIM] FeedHold applied: status Run→Hold planner_buf_used={}", state.planner_buf_used);
                 let _ = broadcast.send(());
-            } else {
-                eprintln!("[SIM] FeedHold ignored: not in Run state");
             }
             None
         }
         RealtimeCmd::CycleStart => {
             let mut state = shared.write().await;
-            eprintln!("[SIM] realtime: CycleStart (0x7E) machineStatus={:?}", state.status);
             if matches!(state.status, MachineStatus::Hold) {
                 state.status = MachineStatus::Idle;
-                eprintln!("[SIM] CycleStart applied: status Hold→Idle");
                 let _ = broadcast.send(());
-            } else {
-                eprintln!("[SIM] CycleStart ignored: not in Hold state");
             }
             None
         }
         RealtimeCmd::SoftReset => {
             let mut state = shared.write().await;
-            eprintln!("[SIM] realtime: SoftReset (0x18) machineStatus={:?} planner_buf_used={} epoch={}", state.status, state.planner_buf_used, state.reset_epoch);
             state.soft_reset();
-            eprintln!("[SIM] SoftReset complete: status→Idle epoch={}", state.reset_epoch);
             let _ = broadcast.send(());
             // Send greeting after reset
             Some(GREETING.to_string())
         }
         RealtimeCmd::JogCancel => {
             let mut state = shared.write().await;
-            eprintln!("[SIM] realtime: JogCancel (0x85) machineStatus={:?}", state.status);
             if matches!(state.status, MachineStatus::Run) {
                 state.jog_cancel_pending = true;
             }
@@ -363,7 +405,6 @@ async fn handle_realtime(
         }
         RealtimeCmd::SafetyDoor => {
             let mut state = shared.write().await;
-            eprintln!("[SIM] realtime: SafetyDoor (0x84) machineStatus={:?}", state.status);
             state.status = MachineStatus::Door;
             state.door = true;
             let _ = broadcast.send(());
@@ -475,7 +516,10 @@ async fn dispatch(
             let mut state = shared.write().await;
             state.status = MachineStatus::Idle;
             let _ = broadcast.send(());
-            (format!("{}{}", response::msg("Caution: Unlocked"), response::ok()), None)
+            (
+                format!("{}{}", response::msg("Caution: Unlocked"), response::ok()),
+                None,
+            )
         }
         ParsedLine::Restart => {
             let mut state = shared.write().await;
@@ -485,7 +529,10 @@ async fn dispatch(
         }
         ParsedLine::GCodeQuery => {
             let state = shared.read().await;
-            (format!("{}{}", response::gc_state(&state), response::ok()), None)
+            (
+                format!("{}{}", response::gc_state(&state), response::ok()),
+                None,
+            )
         }
         ParsedLine::DumpSettings => {
             let state = shared.read().await;
@@ -502,7 +549,10 @@ async fn dispatch(
         ParsedLine::ConfigRead(key) => {
             let state = shared.read().await;
             if let Some(val) = state.fluid_config.get(&key) {
-                (format!("{}{}", response::config_value(&key, val), response::ok()), None)
+                (
+                    format!("{}{}", response::config_value(&key, val), response::ok()),
+                    None,
+                )
             } else {
                 (
                     format!(
@@ -550,26 +600,34 @@ async fn dispatch(
                     (String::new(), None)
                 }
                 InterpretResult::Move(mv) => {
-                    let is_probe = mv.probe.is_some();
+                    let probe_error_on_miss = mv.probe.as_ref().map(|p| p.error_on_miss);
+                    let is_probe = probe_error_on_miss.is_some();
                     let (res_tx, res_rx) = oneshot::channel();
                     // Probe moves (B2) drain the planner before running — they never add a
                     // planner slot. Only category-A moves (linear/arc/jog) consume a slot.
                     if !is_probe {
                         let mut state = shared.write().await;
-                        state.planner_buf_used = (state.planner_buf_used + 1).min(MAX_PLANNER_SLOTS);
+                        state.planner_buf_used =
+                            (state.planner_buf_used + 1).min(MAX_PLANNER_SLOTS);
                         let _ = broadcast.send(());
                     }
                     if move_tx.send((mv, res_tx)).await.is_err() {
                         if !is_probe {
                             let mut state = shared.write().await;
-                            if state.planner_buf_used > 0 { state.planner_buf_used -= 1; }
+                            if state.planner_buf_used > 0 {
+                                state.planner_buf_used -= 1;
+                            }
                             let _ = broadcast.send(());
                         }
                         return (response::error(9), None);
                     }
-                    if is_probe {
-                        // Probe moves must report contact position after completion
-                        (response::ok(), Some((PendingKind::Probe, res_rx)))
+                    if let Some(error_on_miss) = probe_error_on_miss {
+                        // B2: no ok yet — the single ok follows [PRB:...] once the
+                        // probe cycle completes (matches FluidNC's blocking probe).
+                        (
+                            String::new(),
+                            Some((PendingKind::Probe { error_on_miss }, res_rx)),
+                        )
                     } else {
                         // Non-probe: ok as soon as queued; motion runs concurrently.
                         // Spawn a background task so in-motion soft limit alarms (e.g. arc
@@ -589,15 +647,19 @@ async fn dispatch(
                     // but block this connection loop (don't send ok) until dwell completes.
                     let (res_tx, res_rx) = oneshot::channel();
                     let current_pos = { shared.read().await.pos };
-                    if move_tx.send((
-                        PendingMove {
-                            kind: MoveKind::Dwell { seconds },
-                            target: current_pos,
-                            feed: 0.0,
-                            probe: None,
-                        },
-                        res_tx,
-                    )).await.is_err() {
+                    if move_tx
+                        .send((
+                            PendingMove {
+                                kind: MoveKind::Dwell { seconds },
+                                target: current_pos,
+                                feed: 0.0,
+                                probe: None,
+                            },
+                            res_tx,
+                        ))
+                        .await
+                        .is_err()
+                    {
                         return (response::error(9), None);
                     }
                     (String::new(), Some((PendingKind::Dwell, res_rx)))
@@ -607,15 +669,19 @@ async fn dispatch(
                     // channel ensures all prior moves finish before ok is sent.
                     let (res_tx, res_rx) = oneshot::channel();
                     let current_pos = { shared.read().await.pos };
-                    if move_tx.send((
-                        PendingMove {
-                            kind: MoveKind::Dwell { seconds: 0.0 },
-                            target: current_pos,
-                            feed: 0.0,
-                            probe: None,
-                        },
-                        res_tx,
-                    )).await.is_err() {
+                    if move_tx
+                        .send((
+                            PendingMove {
+                                kind: MoveKind::Dwell { seconds: 0.0 },
+                                target: current_pos,
+                                feed: 0.0,
+                                probe: None,
+                            },
+                            res_tx,
+                        ))
+                        .await
+                        .is_err()
+                    {
                         return (response::error(9), None);
                     }
                     (String::new(), Some((PendingKind::Drain, res_rx)))
@@ -624,15 +690,19 @@ async fn dispatch(
                     // B2 M0: drain planner, then Hold, then wait for ~ before sending ok.
                     let (res_tx, res_rx) = oneshot::channel();
                     let current_pos = { shared.read().await.pos };
-                    if move_tx.send((
-                        PendingMove {
-                            kind: MoveKind::Dwell { seconds: 0.0 },
-                            target: current_pos,
-                            feed: 0.0,
-                            probe: None,
-                        },
-                        res_tx,
-                    )).await.is_err() {
+                    if move_tx
+                        .send((
+                            PendingMove {
+                                kind: MoveKind::Dwell { seconds: 0.0 },
+                                target: current_pos,
+                                feed: 0.0,
+                                probe: None,
+                            },
+                            res_tx,
+                        ))
+                        .await
+                        .is_err()
+                    {
                         return (response::error(9), None);
                     }
                     (String::new(), Some((PendingKind::ProgramPause, res_rx)))
@@ -666,7 +736,11 @@ async fn do_homing(
         let mut state = shared.write().await;
         if matches!(state.status, MachineStatus::Alarm) {
             return (
-                format!("{}{}", response::msg("Alarm active — use $X to unlock first"), response::error(9)),
+                format!(
+                    "{}{}",
+                    response::msg("Alarm active — use $X to unlock first"),
+                    response::error(9)
+                ),
                 None,
             );
         }
@@ -677,7 +751,15 @@ async fn do_homing(
     let target = [0.0f64; AXIS_COUNT];
     let (res_tx, res_rx) = oneshot::channel();
     let _ = move_tx
-        .send((PendingMove { kind: MoveKind::Linear, target, feed: 3000.0, probe: None }, res_tx))
+        .send((
+            PendingMove {
+                kind: MoveKind::Linear,
+                target,
+                feed: 3000.0,
+                probe: None,
+            },
+            res_tx,
+        ))
         .await;
 
     // Return receiver to caller; handle_connection will answer ? queries while homing runs

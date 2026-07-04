@@ -1,6 +1,6 @@
 import type { CommandCategory } from '../gcode/classifier'
 
-export type MachineMode = 'idle' | 'sending' | 'jogging'
+export type MachineMode = 'idle' | 'sending' | 'jogging' | 'probing'
 
 export type SenderEventStatus = 'progress' | 'suspended' | 'completed'
 

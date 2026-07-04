@@ -1,15 +1,17 @@
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time;
-use std::sync::Arc; // used in tests
+use tokio::time; // used in tests
 
 use crate::machine::probe::{check_probe_contact, ProbeHit};
-use crate::machine::state::{MachineState, MachineStatus, SharedMachineState, StateBroadcast, AXIS_COUNT};
+use crate::machine::state::{
+    MachineState, MachineStatus, SharedMachineState, StateBroadcast, AXIS_COUNT,
+};
 
 /// Probe options for a motion move that behaves as a probing cycle.
 #[derive(Debug, Clone)]
 pub struct ProbeConfig {
-    /// If true, reaching target without contact is error:54.
+    /// G38.2/G38.4: a miss raises ALARM:5 (ProbeFailContact). G38.3/G38.5: a miss
+    /// just reports [PRB:...:0]. Consumed by the connection handler, not the motion task.
     pub error_on_miss: bool,
     /// If true, probe away (contact *loss* triggers, not contact).
     pub probe_away: bool,
@@ -24,7 +26,9 @@ pub enum MoveKind {
         offset: [f64; 3],
     },
     Jog,
-    Dwell { seconds: f64 },
+    Dwell {
+        seconds: f64,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -72,29 +76,13 @@ async fn motion_loop(
         // was queued and now, the epoch will differ and execute_move will skip it.
         let epoch = { shared.read().await.reset_epoch };
         let is_dwell = matches!(mv.kind, MoveKind::Dwell { .. });
-        let kind_label = match &mv.kind {
-            MoveKind::Linear => "Linear",
-            MoveKind::Jog => "Jog",
-            MoveKind::Arc { .. } => "Arc",
-            MoveKind::Dwell { seconds } => {
-                eprintln!("[SIM] motion: Dwell({:.3}s) dequeued epoch={}", seconds, epoch);
-                "Dwell"
-            }
-        };
-        if !is_dwell {
-            let state = shared.read().await;
-            eprintln!("[SIM] motion: {} dequeued epoch={} planner_buf_used={} machineStatus={:?} target=({:.3},{:.3},{:.3})",
-                kind_label, epoch, state.planner_buf_used, state.status,
-                mv.target[0], mv.target[1], mv.target[2]);
-        }
         let result = execute_move(&shared, &broadcast, &mv, dt, interval_dur, epoch).await;
         // Decrement planner count — but NOT for dwell: G4 drains the planner, never fills it.
         if !is_dwell {
             let mut state = shared.write().await;
-            let prev = state.planner_buf_used;
-            if state.planner_buf_used > 0 { state.planner_buf_used -= 1; }
-            eprintln!("[SIM] motion: {} complete result={:?} planner_buf_used {}→{} machineStatus={:?}",
-                kind_label, result, prev, state.planner_buf_used, state.status);
+            if state.planner_buf_used > 0 {
+                state.planner_buf_used -= 1;
+            }
             let _ = broadcast.send(());
         }
         let _ = result_tx.send(result);
@@ -113,7 +101,9 @@ async fn execute_move(
         MoveKind::Dwell { seconds } => {
             {
                 let mut state = shared.write().await;
-                if state.reset_epoch != epoch { return MoveResult::Ok; }
+                if state.reset_epoch != epoch {
+                    return MoveResult::Ok;
+                }
                 state.status = MachineStatus::Run;
                 let _ = broadcast.send(());
             }
@@ -121,14 +111,16 @@ async fn execute_move(
             time::sleep(Duration::from_millis(millis)).await;
             {
                 let mut state = shared.write().await;
-                if state.reset_epoch != epoch { return MoveResult::Ok; }
+                if state.reset_epoch != epoch {
+                    return MoveResult::Ok;
+                }
                 // Dwell always completes to Idle — all prior planner moves are done
                 // because the motion channel is FIFO and dwell queues after them.
                 state.status = MachineStatus::Idle;
                 state.feed = 0.0;
                 let _ = broadcast.send(());
             }
-            return MoveResult::Ok;
+            MoveResult::Ok
         }
         MoveKind::Arc { clockwise, offset } => {
             // Convert arc to linear segments then execute
@@ -143,10 +135,13 @@ async fn execute_move(
                     feed: mv.feed,
                     probe: mv.probe.clone(),
                 };
-                let result = execute_linear(shared, broadcast, &seg_mv, dt, interval_dur, epoch).await;
-                if !matches!(result, MoveResult::Ok) { return result; }
+                let result =
+                    execute_linear(shared, broadcast, &seg_mv, dt, interval_dur, epoch).await;
+                if !matches!(result, MoveResult::Ok) {
+                    return result;
+                }
             }
-            return MoveResult::Ok;
+            MoveResult::Ok
         }
         MoveKind::Linear | MoveKind::Jog => {
             return execute_linear(shared, broadcast, mv, dt, interval_dur, epoch).await;
@@ -166,24 +161,22 @@ async fn execute_linear(
         let mut state = shared.write().await;
         // Abort if a soft_reset happened since this move was queued.
         if state.reset_epoch != epoch {
-            eprintln!("[SIM] execute_linear: stale epoch (move={} current={}) — skipping", epoch, state.reset_epoch);
             return MoveResult::Ok;
         }
         // Skip moves queued behind an active hold or alarm — don't overwrite the status.
         if matches!(state.status, MachineStatus::Hold | MachineStatus::Alarm) {
-            eprintln!("[SIM] execute_linear: skipping move — machineStatus={:?} (behind hold/alarm)", state.status);
             return MoveResult::Ok;
         }
-        // Skip jog moves queued behind a jog cancel.
+        // Skip jog moves queued behind a jog cancel. The discarded move's target was
+        // already baked into planned_pos at parse time — snap it back to reality so
+        // later relative commands don't chain off a position that was never reached.
         if matches!(mv.kind, MoveKind::Jog) && state.jog_cancel_pending {
-            eprintln!("[SIM] execute_linear: JogCancel pending — skipping jog, status→Idle");
             state.status = MachineStatus::Idle;
             state.feed = 0.0;
+            state.planned_pos = state.pos;
             let _ = broadcast.send(());
             return MoveResult::Ok;
         }
-        eprintln!("[SIM] execute_linear: start {:?} feed={:.1} target=({:.3},{:.3},{:.3}) status→Run",
-            mv.kind, mv.feed, mv.target[0], mv.target[1], mv.target[2]);
         state.status = MachineStatus::Run;
         state.feed = mv.feed;
     }
@@ -193,7 +186,9 @@ async fn execute_linear(
     // Snap to target immediately so the job engine can advance rather than hanging.
     if mv.feed <= 0.0 {
         let mut state = shared.write().await;
-        for i in 0..AXIS_COUNT { state.pos[i] = mv.target[i]; }
+        for i in 0..AXIS_COUNT {
+            state.pos[i] = mv.target[i];
+        }
         state.status = MachineStatus::Idle;
         state.feed = 0.0;
         let _ = broadcast.send(());
@@ -216,23 +211,23 @@ async fn execute_linear(
 
             // Abort mid-move if a soft_reset occurred after this move started executing.
             if state.reset_epoch != epoch {
-                eprintln!("[SIM] motion: epoch mismatch (move epoch={} current={}) — aborting move mid-tick", epoch, state.reset_epoch);
                 TickResult::Done(MoveResult::Ok)
             // Jog cancel → return to Idle immediately (not Hold)
             } else if matches!(mv.kind, MoveKind::Jog) && state.jog_cancel_pending {
-                eprintln!("[SIM] motion: JogCancel mid-move → status→Idle pos=({:.3},{:.3},{:.3})", state.pos[0], state.pos[1], state.pos[2]);
                 state.status = MachineStatus::Idle;
                 state.feed = 0.0;
+                state.planned_pos = state.pos;
                 let _ = broadcast.send(());
                 TickResult::Done(MoveResult::Ok)
             // Feed hold (non-jog moves only)
             } else if state.hold_pending || matches!(state.status, MachineStatus::Hold) {
-                eprintln!("[SIM] motion: FeedHold mid-move (hold_pending={} status={:?}) pos=({:.3},{:.3},{:.3}) → status→Hold",
-                    state.hold_pending, state.status, state.pos[0], state.pos[1], state.pos[2]);
                 state.hold_pending = false;
                 if matches!(mv.kind, MoveKind::Jog) {
+                    // Hold cancels a jog outright (GRBL semantics) — the jog's target
+                    // is discarded, so planned_pos must snap back to reality.
                     state.status = MachineStatus::Idle;
                     state.feed = 0.0;
+                    state.planned_pos = state.pos;
                 } else {
                     state.status = MachineStatus::Hold;
                 }
@@ -246,41 +241,60 @@ async fn execute_linear(
                 // Compute direction to target
                 let mut d = [0.0f64; AXIS_COUNT];
                 let mut dist_sq = 0.0f64;
-                for i in 0..AXIS_COUNT {
-                    d[i] = mv.target[i] - state.pos[i];
-                    dist_sq += d[i] * d[i];
+                for (i, di) in d.iter_mut().enumerate() {
+                    *di = mv.target[i] - state.pos[i];
+                    dist_sq += *di * *di;
                 }
                 let dist = dist_sq.sqrt();
 
                 if dist < 1e-6 {
-                    // Already at target
+                    // Already at target — for a probe this is full travel without contact.
                     state.status = MachineStatus::Idle;
                     state.feed = 0.0;
                     let _ = broadcast.send(());
-                    TickResult::Done(MoveResult::Ok)
+                    if mv.probe.is_some() {
+                        TickResult::Done(MoveResult::ProbeNoContact)
+                    } else {
+                        TickResult::Done(MoveResult::Ok)
+                    }
                 } else {
                     let nd: Vec<f64> = d.iter().map(|v| v / dist).collect();
                     let step = max_step.min(dist);
 
                     // Probe check
-                    if mv.probe.is_some() {
+                    if let Some(probe_cfg) = &mv.probe {
                         let dir3 = [nd[0], nd[1], nd[2]];
                         let pos3 = [state.pos[0], state.pos[1], state.pos[2]];
                         let manual = state.probe.triggered;
                         let tip = state.probe.tip_diameter;
 
-                        let probe_hit = check_probe_contact(pos3, dir3, tip, manual, None);
+                        let probe_hit = check_probe_contact(
+                            pos3,
+                            dir3,
+                            probe_cfg.probe_away,
+                            tip,
+                            &state.probe.deviations,
+                            manual,
+                            state.stock.as_ref(),
+                        );
                         if let ProbeHit::Contact(reported) = probe_hit {
                             state.probe.triggered = false;
                             state.status = MachineStatus::Idle;
+                            state.feed = 0.0;
+                            // FluidNC runs plan_sync_position() after every probe cycle:
+                            // the probe stopped short of its programmed target, so the
+                            // parser position must be the contact point, not the target.
+                            // Without this, queued G91 moves chain off the never-reached
+                            // full-travel target.
+                            state.planned_pos = state.pos;
                             let _ = broadcast.send(());
                             return MoveResult::ProbeContact(reported);
                         }
                     }
 
                     // Advance position
-                    for i in 0..AXIS_COUNT {
-                        state.pos[i] += nd[i] * step;
+                    for (i, ndv) in nd.iter().enumerate() {
+                        state.pos[i] += ndv * step;
                     }
 
                     // Check soft limits: |pos| must not exceed travel on any axis.
@@ -303,28 +317,32 @@ async fn execute_linear(
                     // Check if reached target
                     let reached = step >= dist - 1e-6;
                     if reached {
-                        for i in 0..AXIS_COUNT { state.pos[i] = mv.target[i]; }
+                        for i in 0..AXIS_COUNT {
+                            state.pos[i] = mv.target[i];
+                        }
                         state.status = MachineStatus::Idle;
                         state.feed = 0.0;
                     }
                     let _ = broadcast.send(());
-                    if reached { TickResult::Done(MoveResult::Ok) } else { TickResult::Continue }
+                    if reached {
+                        // A probe reaching full travel is a miss. Aborts (hold, reset,
+                        // jog cancel) deliberately stay MoveResult::Ok — only a genuine
+                        // end-of-travel counts as ProbeNoContact.
+                        if mv.probe.is_some() {
+                            TickResult::Done(MoveResult::ProbeNoContact)
+                        } else {
+                            TickResult::Done(MoveResult::Ok)
+                        }
+                    } else {
+                        TickResult::Continue
+                    }
                 }
             }
         };
 
         match tick {
             TickResult::Continue => {}
-            TickResult::Done(MoveResult::Ok) => {
-                // Probe miss check
-                if let Some(probe_cfg) = &mv.probe {
-                    if probe_cfg.error_on_miss {
-                        return MoveResult::ProbeNoContact;
-                    }
-                }
-                return MoveResult::Ok;
-            }
-            TickResult::Done(other) => return other,
+            TickResult::Done(result) => return result,
         }
     }
 }
@@ -354,18 +372,24 @@ fn arc_to_segments(
     let c2 = start[a2] + o2;
 
     let r = ((start[a1] - c1).powi(2) + (start[a2] - c2).powi(2)).sqrt();
-    if r < 1e-6 { return vec![*end]; }
+    if r < 1e-6 {
+        return vec![*end];
+    }
 
     let start_angle = (start[a2] - c2).atan2(start[a1] - c1);
     let end_angle = (end[a2] - c2).atan2(end[a1] - c1);
 
     let arc_span = if clockwise {
         let mut span = start_angle - end_angle;
-        if span < 0.0 { span += std::f64::consts::TAU; }
+        if span < 0.0 {
+            span += std::f64::consts::TAU;
+        }
         -span
     } else {
         let mut span = end_angle - start_angle;
-        if span < 0.0 { span += std::f64::consts::TAU; }
+        if span < 0.0 {
+            span += std::f64::consts::TAU;
+        }
         span
     };
 
@@ -391,10 +415,11 @@ fn arc_to_segments(
 mod tests {
     use super::*;
     use crate::machine::state::MachineState;
+    use std::sync::Arc;
 
     fn make_shared() -> (SharedMachineState, StateBroadcast) {
         let travel = [300.0, 200.0, 80.0, 360.0, 360.0, 360.0];
-        let state = MachineState::new(3, travel, 2.0, 1);
+        let state = MachineState::new(3, travel, 2.0, Default::default(), 1);
         crate::machine::state::new_shared(state)
     }
 
@@ -413,9 +438,16 @@ mod tests {
 
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         tx.send((
-            PendingMove { kind: MoveKind::Linear, target, feed: 3000.0, probe: None },
+            PendingMove {
+                kind: MoveKind::Linear,
+                target,
+                feed: 3000.0,
+                probe: None,
+            },
             result_tx,
-        )).await.unwrap();
+        ))
+        .await
+        .unwrap();
 
         let result = result_rx.await.unwrap();
         assert!(matches!(result, MoveResult::Ok));
@@ -437,19 +469,161 @@ mod tests {
 
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         tx.send((
-            PendingMove { kind: MoveKind::Jog, target, feed: 100.0, probe: None },
+            PendingMove {
+                kind: MoveKind::Jog,
+                target,
+                feed: 100.0,
+                probe: None,
+            },
             result_tx,
-        )).await.unwrap();
+        ))
+        .await
+        .unwrap();
 
         // Let it run a few ticks then trigger hold
         time::sleep(Duration::from_millis(100)).await;
-        { shared.write().await.hold_pending = true; }
+        {
+            shared.write().await.hold_pending = true;
+        }
 
         let result = result_rx.await.unwrap();
         assert!(matches!(result, MoveResult::Ok));
         let state = shared.read().await;
         // Position should NOT have reached -250
         assert!(state.pos[0] > -250.0, "should not have reached target");
+    }
+
+    fn probe_test_stock() -> crate::machine::stock::StockDefinition {
+        // 100×80 rect centred at the initial XY position (-150, -100), top z=-10.
+        crate::machine::stock::StockDefinition {
+            shape: crate::machine::stock::StockShape::Rect {
+                width: 100.0,
+                height: 80.0,
+                rotation: 0.0,
+            },
+            depth: 20.0,
+            ox: -150.0,
+            oy: -100.0,
+            oz: -10.0,
+            hole: None,
+            point: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_contact_syncs_planned_pos() {
+        let (shared, bcast) = make_shared();
+        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+
+        let target = {
+            let mut s = shared.write().await;
+            s.stock = Some(probe_test_stock());
+            let mut t = s.pos;
+            t[2] = -40.0;
+            // Mimic gcode interpret(): planned_pos is the full-travel target at parse time.
+            s.planned_pos = t;
+            t
+        };
+
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        tx.send((
+            PendingMove {
+                kind: MoveKind::Linear,
+                target,
+                feed: 600.0,
+                probe: Some(crate::machine::motion::ProbeConfig {
+                    error_on_miss: false,
+                    probe_away: false,
+                }),
+            },
+            result_tx,
+        ))
+        .await
+        .unwrap();
+
+        let result = result_rx.await.unwrap();
+        assert!(matches!(result, MoveResult::ProbeContact(_)), "{result:?}");
+
+        let state = shared.read().await;
+        // Tip Ø2, stock top -10 → trigger at z ≈ -9, far short of the -40 target.
+        assert!(state.pos[2] > -10.0, "z={}", state.pos[2]);
+        assert_eq!(
+            state.planned_pos, state.pos,
+            "planned_pos must snap to the contact position"
+        );
+    }
+
+    #[tokio::test]
+    async fn probe_miss_returns_no_contact_without_error_flag() {
+        let (shared, bcast) = make_shared();
+        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+
+        // No stock → the probe runs to full travel and misses.
+        let target = {
+            let s = shared.read().await;
+            let mut t = s.pos;
+            t[2] = -20.0;
+            t
+        };
+
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        tx.send((
+            PendingMove {
+                kind: MoveKind::Linear,
+                target,
+                feed: 3000.0,
+                probe: Some(crate::machine::motion::ProbeConfig {
+                    error_on_miss: false,
+                    probe_away: false,
+                }),
+            },
+            result_tx,
+        ))
+        .await
+        .unwrap();
+
+        let result = result_rx.await.unwrap();
+        assert!(matches!(result, MoveResult::ProbeNoContact), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn jog_cancel_syncs_planned_pos() {
+        let (shared, bcast) = make_shared();
+        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+
+        let mut target = [0.0f64; AXIS_COUNT];
+        target[0] = -250.0;
+        {
+            let mut s = shared.write().await;
+            s.planned_pos = target;
+        }
+
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        tx.send((
+            PendingMove {
+                kind: MoveKind::Jog,
+                target,
+                feed: 100.0,
+                probe: None,
+            },
+            result_tx,
+        ))
+        .await
+        .unwrap();
+
+        time::sleep(Duration::from_millis(100)).await;
+        {
+            shared.write().await.jog_cancel_pending = true;
+        }
+
+        let result = result_rx.await.unwrap();
+        assert!(matches!(result, MoveResult::Ok));
+        let state = shared.read().await;
+        assert!(state.pos[0] > -250.0, "jog should have been cancelled");
+        assert_eq!(
+            state.planned_pos, state.pos,
+            "planned_pos must snap back after jog cancel"
+        );
     }
 
     #[tokio::test]
@@ -463,9 +637,16 @@ mod tests {
 
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         tx.send((
-            PendingMove { kind: MoveKind::Linear, target, feed: 5000.0, probe: None },
+            PendingMove {
+                kind: MoveKind::Linear,
+                target,
+                feed: 5000.0,
+                probe: None,
+            },
             result_tx,
-        )).await.unwrap();
+        ))
+        .await
+        .unwrap();
 
         let result = result_rx.await.unwrap();
         assert!(matches!(result, MoveResult::Alarm(_)));

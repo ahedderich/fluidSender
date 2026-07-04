@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
-use crate::machine::modal::ModalState;
-use crate::machine::spindle::SpindleState;
 use crate::machine::coolant::CoolantState;
+use crate::machine::modal::ModalState;
+use crate::machine::probe::ProbeDeviations;
+use crate::machine::spindle::SpindleState;
+use crate::machine::stock::StockDefinition;
 
 pub const AXIS_COUNT: usize = 6;
 pub const AXIS_NAMES: [&str; AXIS_COUNT] = ["x", "y", "z", "a", "b", "c"];
@@ -40,20 +42,20 @@ impl std::fmt::Display for MachineStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LimitState {
-    #[serde(rename = "xMin")] pub x_min: bool,
-    #[serde(rename = "xMax")] pub x_max: bool,
-    #[serde(rename = "yMin")] pub y_min: bool,
-    #[serde(rename = "yMax")] pub y_max: bool,
-    #[serde(rename = "zMin")] pub z_min: bool,
-    #[serde(rename = "zMax")] pub z_max: bool,
-}
-
-impl Default for LimitState {
-    fn default() -> Self {
-        Self { x_min: false, x_max: false, y_min: false, y_max: false, z_min: false, z_max: false }
-    }
+    #[serde(rename = "xMin")]
+    pub x_min: bool,
+    #[serde(rename = "xMax")]
+    pub x_max: bool,
+    #[serde(rename = "yMin")]
+    pub y_min: bool,
+    #[serde(rename = "yMax")]
+    pub y_max: bool,
+    #[serde(rename = "zMin")]
+    pub z_min: bool,
+    #[serde(rename = "zMax")]
+    pub z_max: bool,
 }
 
 impl LimitState {
@@ -63,14 +65,30 @@ impl LimitState {
 
     pub fn pn_string(&self, probe: bool, door: bool) -> String {
         let mut s = String::new();
-        if self.x_min { s.push('X'); }
-        if self.x_max { s.push('x'); }
-        if self.y_min { s.push('Y'); }
-        if self.y_max { s.push('y'); }
-        if self.z_min { s.push('Z'); }
-        if self.z_max { s.push('z'); }
-        if probe      { s.push('P'); }
-        if door       { s.push('D'); }
+        if self.x_min {
+            s.push('X');
+        }
+        if self.x_max {
+            s.push('x');
+        }
+        if self.y_min {
+            s.push('Y');
+        }
+        if self.y_max {
+            s.push('y');
+        }
+        if self.z_min {
+            s.push('Z');
+        }
+        if self.z_max {
+            s.push('z');
+        }
+        if probe {
+            s.push('P');
+        }
+        if door {
+            s.push('D');
+        }
         s
     }
 }
@@ -78,12 +96,19 @@ impl LimitState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProbeState {
     pub triggered: bool,
-    #[serde(rename = "tipDiameter")] pub tip_diameter: f64,
+    #[serde(rename = "tipDiameter")]
+    pub tip_diameter: f64,
+    #[serde(default)]
+    pub deviations: ProbeDeviations,
 }
 
 impl Default for ProbeState {
     fn default() -> Self {
-        Self { triggered: false, tip_diameter: 2.0 }
+        Self {
+            triggered: false,
+            tip_diameter: 2.0,
+            deviations: ProbeDeviations::default(),
+        }
     }
 }
 
@@ -99,17 +124,35 @@ pub struct AxisMap {
 
 impl AxisMap {
     pub fn zeros() -> Self {
-        Self { x: 0.0, y: 0.0, z: 0.0, a: 0.0, b: 0.0, c: 0.0 }
+        Self {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            a: 0.0,
+            b: 0.0,
+            c: 0.0,
+        }
     }
 
     pub fn from_arr(arr: &[f64; AXIS_COUNT]) -> Self {
-        Self { x: arr[0], y: arr[1], z: arr[2], a: arr[3], b: arr[4], c: arr[5] }
+        Self {
+            x: arr[0],
+            y: arr[1],
+            z: arr[2],
+            a: arr[3],
+            b: arr[4],
+            c: arr[5],
+        }
     }
 
     pub fn get(&self, axis: usize) -> f64 {
         match axis {
-            0 => self.x, 1 => self.y, 2 => self.z,
-            3 => self.a, 4 => self.b, 5 => self.c,
+            0 => self.x,
+            1 => self.y,
+            2 => self.z,
+            3 => self.a,
+            4 => self.b,
+            5 => self.c,
             _ => 0.0,
         }
     }
@@ -117,22 +160,37 @@ impl AxisMap {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MachineState {
-    #[serde(rename = "machineState")] pub status: MachineStatus,
+    #[serde(rename = "machineState")]
+    pub status: MachineStatus,
     pub pos: [f64; AXIS_COUNT],
     pub wco: [f64; AXIS_COUNT],
     pub feed: f64,
-    #[serde(rename = "spindleSpeed")] pub spindle_speed: f64,
+    #[serde(rename = "spindleSpeed")]
+    pub spindle_speed: f64,
     pub spindle: SpindleState,
     pub coolant: CoolantState,
     pub limits: LimitState,
     pub probe: ProbeState,
     pub door: bool,
-    #[serde(rename = "feedOverride")] pub feed_override: u8,
-    #[serde(rename = "spindleOverride")] pub spindle_override: u8,
-    #[serde(rename = "simSpeed")] pub sim_speed: u8,
-    #[serde(rename = "axisCount")] pub axis_count: usize,
+    #[serde(rename = "feedOverride")]
+    pub feed_override: u8,
+    #[serde(rename = "spindleOverride")]
+    pub spindle_override: u8,
+    #[serde(rename = "simSpeed")]
+    pub sim_speed: u8,
+    #[serde(rename = "axisCount")]
+    pub axis_count: usize,
     pub travel: [f64; AXIS_COUNT],
-    #[serde(rename = "fluidConfig")] pub fluid_config: HashMap<String, String>,
+    /// Per-axis max rate (mm/min). Rapids (G0/G28/G30) run at the vector rate that
+    /// keeps every participating axis at or below its max — F words are ignored.
+    #[serde(skip)]
+    pub max_rate: [f64; AXIS_COUNT],
+    #[serde(rename = "fluidConfig")]
+    pub fluid_config: HashMap<String, String>,
+    /// Stock definition used for probe collision detection; set via the control API.
+    /// Persists across soft-resets.
+    #[serde(skip)]
+    pub stock: Option<StockDefinition>,
     #[serde(skip)]
     pub modal: ModalState,
     /// Planned end position: updated when a motion command is accepted into the queue.
@@ -164,7 +222,13 @@ pub struct MachineState {
 }
 
 impl MachineState {
-    pub fn new(axis_count: usize, travel: [f64; AXIS_COUNT], tip_diameter: f64, sim_speed: u8) -> Self {
+    pub fn new(
+        axis_count: usize,
+        travel: [f64; AXIS_COUNT],
+        tip_diameter: f64,
+        deviations: ProbeDeviations,
+        sim_speed: u8,
+    ) -> Self {
         let mut fluid_config = HashMap::new();
         fluid_config.insert("board".into(), "BlackBox X32".into());
         fluid_config.insert("name".into(), "CNC Router (Simulator)".into());
@@ -192,14 +256,20 @@ impl MachineState {
             spindle: SpindleState::default(),
             coolant: CoolantState::default(),
             limits: LimitState::default(),
-            probe: ProbeState { triggered: false, tip_diameter },
+            probe: ProbeState {
+                triggered: false,
+                tip_diameter,
+                deviations,
+            },
             door: false,
             feed_override: 100,
             spindle_override: 100,
             sim_speed,
             axis_count,
             travel,
+            max_rate: [5000.0, 5000.0, 1000.0, 1000.0, 1000.0, 1000.0],
             fluid_config,
+            stock: None,
             modal: ModalState::default(),
             planned_pos: initial_pos,
             homing_in_progress: false,
@@ -213,8 +283,8 @@ impl MachineState {
 
     pub fn wpos(&self) -> [f64; AXIS_COUNT] {
         let mut w = [0.0; AXIS_COUNT];
-        for i in 0..AXIS_COUNT {
-            w[i] = self.pos[i] - self.wco[i];
+        for (i, wi) in w.iter_mut().enumerate() {
+            *wi = self.pos[i] - self.wco[i];
         }
         w
     }
@@ -239,7 +309,10 @@ impl MachineState {
     }
 
     pub fn is_accepting_commands(&self) -> bool {
-        matches!(self.status, MachineStatus::Idle | MachineStatus::Run | MachineStatus::Check)
+        matches!(
+            self.status,
+            MachineStatus::Idle | MachineStatus::Run | MachineStatus::Check
+        )
     }
 }
 
