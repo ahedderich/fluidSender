@@ -327,6 +327,30 @@ export function resolveModal(id: string, result: unknown): PatchOp | null {
   return { path: 'modals', removeId: id, meta: { result } }
 }
 
+// ─── Server-side program-pause modal registry ─────────────────────────────────
+const _programPauseHandlers = new Map<string, (action: 'continue' | 'cancel' | 'closed') => void>()
+
+export function openProgramPauseModal(comment: string | null): { id: string; op: PatchOp } {
+  const id = (globalThis.crypto?.randomUUID?.() ?? `pp-${Date.now()}-${Math.random().toString(36).slice(2)}`) as string
+  const entry: ModalEntry = { id, kind: 'program_pause', props: comment != null ? { comment } : {} }
+  ui.modals.push(entry)
+  return { id, op: { path: 'modals', push: entry } }
+}
+
+export function registerProgramPauseHandler(id: string, handler: (action: 'continue' | 'cancel' | 'closed') => void): void {
+  _programPauseHandlers.set(id, handler)
+}
+
+/** Resolves a modal, calling any registered program-pause handler first. */
+export function settleProgramPauseModal(id: string, result: unknown): PatchOp | null {
+  const handler = _programPauseHandlers.get(id)
+  if (handler) {
+    _programPauseHandlers.delete(id)
+    handler(result as 'continue' | 'cancel' | 'closed')
+  }
+  return resolveModal(id, result)
+}
+
 export function pushToast(toast: Toast): PatchOp {
   ui.toasts.push(toast)
   return { path: 'toasts', push: toast }

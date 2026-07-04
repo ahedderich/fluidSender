@@ -4,7 +4,7 @@ import { analyzeGCode } from './analysis'
 import { getModalStateAtLine } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
 import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
-import { broadcastPatch, setJobState, getConfig, setToolChangeModeActive, type PatchOp } from '../appState'
+import { broadcastPatch, setJobState, getConfig, setToolChangeModeActive, openProgramPauseModal, registerProgramPauseHandler, settleProgramPauseModal, type PatchOp } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
 import { startSend, sendGCode, suspendSend, resumeChunk, stopSend, senderHardStop } from '../machine/sender'
 import { setMode } from '../machine/machineMode'
@@ -49,6 +49,9 @@ class JobRunner {
 
   // Runtime session
   private _runtimeSession: { toolNumber: number; scope: 'M' | 'A'; startMs: number } | null = null
+
+  // Active program-pause modal id (null when no M0 pause is in progress)
+  private _programPauseModalId: string | null = null
 
   get status() { return this._status }
 
@@ -326,6 +329,25 @@ class JobRunner {
       this._finalizeRuntimeSession().catch(() => {})
       this._mainJobChunkId = null
       this._setStatus('loaded', { toolChangeRequest: null, startWallClock: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null })
+      return
+    }
+    if (this._status === 'program_pause') {
+      // Machine is in M0 Hold — hard-stop resets it immediately
+      const handle = this._sendHandle
+      this._sendHandle = null
+      this._execPtr = 0
+      this.sendPtr = 0
+      this._setStatus('loaded', {
+        startWallClock: null,
+        sendPtr: 0,
+        execPtr: 0,
+        inPlanner: 0,
+        recovery: null,
+        toolChangeRequest: null,
+        programPause: null,
+      })
+      clearCheckpoint().catch(() => {})
+      handle?.hardStop()
       return
     }
     if (this._status !== 'running') return
@@ -761,7 +783,20 @@ class JobRunner {
 
   private _enterProgramPause(comment: string | null): void {
     this._status = 'program_pause'
-    broadcastPatch([setJobState({ status: 'program_pause', programPause: { comment } })])
+    const { id, op: modalOp } = openProgramPauseModal(comment)
+    this._programPauseModalId = id
+    registerProgramPauseHandler(id, (action: 'continue' | 'cancel' | 'closed') => {
+      this._programPauseModalId = null
+      if (action === 'continue') {
+        if (this._status !== 'program_pause') return
+        this._setStatus('running', { programPause: null })
+        this._sendHandle?.cycleStart()
+      } else if (action === 'cancel') {
+        this.stop()
+      }
+      // 'closed' — state already handled by the alarm/disconnect path that called _closeModal
+    })
+    broadcastPatch([setJobState({ status: 'program_pause', programPause: { comment } }), modalOp])
   }
 
   private _findPauseComment(execPtr: number): string | null {
@@ -871,13 +906,26 @@ class JobRunner {
     return cmds
   }
 
+  private _closeModal(): PatchOp | null {
+    if (!this._programPauseModalId) return null
+    const op = settleProgramPauseModal(this._programPauseModalId, 'closed')
+    this._programPauseModalId = null
+    return op
+  }
+
   private _setStatus(status: JobState['status'], extra?: Partial<JobState>): void {
     jLog(`status: ${this._status} → ${status}`)
+    if (this._status === 'program_pause' && status !== 'program_pause') {
+      const closeOp = this._closeModal()
+      if (closeOp) broadcastPatch([closeOp])
+    }
     this._status = status
     broadcastPatch([setJobState({ status, ...extra })])
   }
 
   private _broadcastError(msg: string): void {
+    const closeOp = this._closeModal()
+    if (closeOp) broadcastPatch([closeOp])
     this._status = 'error'
     broadcastPatch([setJobState({ status: 'error', errorMessage: msg })])
   }

@@ -7,6 +7,8 @@ import {
   getConnection,
   getConfig,
   setMacroRunState,
+  openProgramPauseModal,
+  registerProgramPauseHandler,
 } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
 import { sendGCode, senderHardStop } from '../machine/sender'
@@ -144,7 +146,28 @@ const WHILE_ITERATION_CAP = 10_000
 async function flushLines(lines: string[]): Promise<void> {
   if (lines.length === 0) return
   await new Promise<void>((resolve, reject) => {
-    sendGCode(lines, (ev) => {
+    let m0Handled = false
+    const handle = sendGCode(lines, (ev) => {
+      // Reset guard once machine leaves Hold (after cycle-start resumes it)
+      if (m0Handled && ev.holdPhase === null) {
+        m0Handled = false
+      }
+
+      if (ev.holdPhase === 0 && ev.holdReason === 'program' && !m0Handled) {
+        m0Handled = true
+        const { id, op } = openProgramPauseModal(null)
+        broadcastPatch([op])
+        registerProgramPauseHandler(id, (action) => {
+          if (action === 'continue') {
+            handle.cycleStart()
+          } else {
+            handle.hardStop()
+            reject(new MacroRuntimeError(0, 'Macro aborted at M0 program pause'))
+          }
+        })
+        return
+      }
+
       if (ev.status === 'completed') {
         if (ev.completedMode === 'success') resolve()
         else

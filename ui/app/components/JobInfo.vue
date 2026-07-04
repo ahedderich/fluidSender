@@ -100,36 +100,6 @@
       </table>
     </div>
 
-    <!-- M0 Program Pause banner -->
-    <div
-      v-if="job?.status === 'program_pause'"
-      class="px-3 py-2.5 border-b border-blue-200 dark:border-blue-800/50 bg-blue-50 dark:bg-blue-900/20 shrink-0"
-    >
-      <div class="flex items-start gap-2 mb-2.5">
-        <svg class="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <div class="min-w-0">
-          <p class="text-xs font-semibold text-blue-800 dark:text-blue-300">Program Pause (M0)</p>
-          <p v-if="job?.programPause?.comment" class="text-xs text-blue-700 dark:text-blue-400 mt-0.5 font-medium">{{ job?.programPause?.comment }}</p>
-        </div>
-      </div>
-      <div class="flex gap-1.5">
-        <button
-          class="flex-1 py-1.5 bg-white dark:bg-slate-700 border border-blue-200 dark:border-slate-600 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors"
-          @click="wsSend({ t: 'job:stop' })"
-        >
-          Cancel Job
-        </button>
-        <button
-          class="flex-1 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-xs font-semibold transition-colors"
-          @click="wsSend({ t: 'job:resumeProgramPause' })"
-        >
-          Continue →
-        </button>
-      </div>
-    </div>
-
     <!-- Tool Change banner -->
     <div
       v-if="job?.status === 'tool_change' && job?.toolChangeRequest"

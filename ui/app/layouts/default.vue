@@ -3,6 +3,7 @@
     <TopBar />
     <slot />
     <ConfirmDialog />
+    <ProgramPauseModal />
     <ToastHost />
   </div>
 </template>

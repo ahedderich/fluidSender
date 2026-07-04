@@ -14,7 +14,7 @@ import {
   setSelection,
   setJogActive,
   openModal,
-  resolveModal,
+  settleProgramPauseModal,
   pushToast,
   removeToast,
   pushConsole,
@@ -436,7 +436,7 @@ export default defineWebSocketHandler({
       }
       case 'ui:modal:resolve': {
         const { id, result } = msg.payload as { id: string; result: unknown }
-        const op = resolveModal(id, result)
+        const op = settleProgramPauseModal(id, result)
         if (op) broadcastPatch([op])
         break
       }
