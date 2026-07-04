@@ -257,6 +257,21 @@ Pipelines live in `.github/workflows/`. Minimum required workflows:
 
 ---
 
+## UI — TopBar Layout
+
+`TopBar.vue` has four fixed horizontal sections, left to right:
+
+| # | Name | Flex behaviour | Contents |
+|---|------|---------------|----------|
+| 1 | **Connect area** | `shrink-0`, left-bound | Machine select, connect button, firmware version badge, restart button; also WS-offline and connection-error badges |
+| 2 | **Cycle area** | `flex-[65]`, content centered | Machine state badge, Unlock (Alarm only), job-status hints (Pausing/Paused/Recovering), Cycle Start / Resume, Pause, Stop |
+| 3 | **Emergency area** | `flex-[35]`, content centered | E-Stop button only |
+| 4 | **Menu area** | `shrink-0`, right-bound | Sensors panel, dark/light toggle, user icon (auth only), settings / back link |
+
+Cycle area and Emergency area share the remaining width after the two fixed sections in a 75/25 ratio via Tailwind `flex-[75]` / `flex-[25]` (sets `flex-grow` proportionally; `flex-basis: 0`).
+
+---
+
 ## Development Conventions
 
 - **Library versions:** Always select the latest stable version. Check npm/crates.io release dates before pinning.

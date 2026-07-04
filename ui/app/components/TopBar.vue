@@ -1,9 +1,10 @@
 <template>
   <header
-    class="h-14 flex items-center px-3 gap-3 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-700 z-50 shadow-lg shrink-0"
+    class="h-14 flex items-center px-3 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-700 z-50 shadow-lg shrink-0"
   >
-    <!-- Left: machine selector + connect -->
-    <div class="flex items-center gap-2 min-w-0 shrink-0">
+    <!-- ── 1. Connect area (left-bound, natural width) ───────────────────── -->
+    <!-- Contains: machine select, connect button, firmware version, restart -->
+    <div class="shrink-0 flex items-center gap-2 pr-3">
       <select
         v-if="s.hasMachines"
         :value="s.activeMachineId"
@@ -28,34 +29,49 @@
         {{ isMounted ? (machine.connecting ? 'Connecting…' : machine.connected ? 'Disconnect' : 'Connect') : 'Connect' }}
       </button>
 
-      <span
-        v-if="machine.connected"
-        class="text-xs text-gray-500 dark:text-slate-400 bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded font-mono whitespace-nowrap border border-gray-200 dark:border-slate-700"
-      >
-        FluidNC {{ machine.firmwareVersion }}
-      </span>
+      <div v-if="machine.connected" class="flex items-center gap-1">
+        <span class="text-xs text-gray-500 dark:text-slate-400 bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded font-mono whitespace-nowrap border border-gray-200 dark:border-slate-700">
+          FluidNC {{ machine.firmwareVersion }}
+        </span>
+        <button
+          @click="restartFirmware"
+          class="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-md transition-colors"
+          title="Restart firmware"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+        <button
+          @click="machine.sendCommand('$X')"
+          class="p-1.5 rounded-md transition-colors"
+          :class="machine.machineState === 'Alarm'
+            ? 'text-amber-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20'
+            : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700'"
+          title="Unlock — clear alarm ($X)"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+          </svg>
+        </button>
+      </div>
 
-      <!-- WS offline indicator -->
       <span
         v-if="!wsConnected"
         class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 px-2 py-1 rounded whitespace-nowrap"
         title="Lost connection to server — reconnecting…"
-      >
-        Server offline
-      </span>
+      >Server offline</span>
 
-      <!-- Connection error -->
       <span
         v-if="machine.connectionError"
         class="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700/50 px-2 py-1 rounded max-w-xs truncate"
         :title="machine.connectionError"
-      >
-        {{ machine.connectionError }}
-      </span>
+      >{{ machine.connectionError }}</span>
     </div>
 
-    <!-- Center: status + controls -->
-    <div class="flex-1 flex items-center justify-center gap-2">
+    <!-- ── 2. Cycle area (65% of remaining space, content centered) ────────── -->
+    <!-- Contains: machine state badge, unlock, job hints, cycle start, pause, stop -->
+    <div class="flex-[75] flex items-center justify-center gap-2 min-w-0">
       <div
         :class="statusClass"
         class="px-3 py-1 rounded-md text-sm font-bold tracking-widest select-none"
@@ -71,34 +87,24 @@
         Unlock
       </button>
 
-      <!-- Pausing hint: waiting for machine to drain -->
       <span
         v-if="job?.status === 'pausing'"
         class="text-xs px-2.5 py-1 rounded-md bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60 font-medium whitespace-nowrap"
         title="Waiting for queued moves to finish before pausing."
-      >
-        Pausing…
-      </span>
+      >Pausing…</span>
 
-      <!-- Paused hint: jog controls are live -->
       <span
         v-if="job?.status === 'paused'"
         class="text-xs px-2.5 py-1 rounded-md bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60 font-medium whitespace-nowrap"
         title="Machine is paused. Jog freely — Resume will safely return to pause position."
-      >
-        Paused · Jog enabled
-      </span>
+      >Paused · Jog enabled</span>
 
-      <!-- Recovering hint: machine returning to pause position -->
       <span
         v-if="job?.status === 'recovering'"
         class="text-xs px-2.5 py-1 rounded-md bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-700/60 font-medium whitespace-nowrap"
         title="Machine is returning to the pause position before resuming the job."
-      >
-        Resuming — returning to position…
-      </span>
+      >Resuming — returning to position…</span>
 
-      <!-- Job controls: single Cycle Start / Resume button -->
       <button
         :disabled="!machine.connected || !cycleStartEnabled"
         @click="cycleStartAction"
@@ -106,11 +112,10 @@
         :class="machine.connected && cycleStartEnabled ? 'hover:bg-green-500' : 'opacity-40 cursor-not-allowed'"
         :title="job?.status === 'paused' ? 'Resume — machine will safely return to pause position' : 'Cycle Start'"
       >
-        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M8 5v14l11-7z" />
-        </svg>
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
         {{ job?.status === 'paused' ? 'Resume' : 'Cycle Start' }}
       </button>
+
       <button
         :disabled="!job || job.status !== 'running'"
         @click="pauseJob"
@@ -118,11 +123,10 @@
         :class="job?.status === 'running' ? 'hover:bg-amber-400' : 'opacity-40 cursor-not-allowed'"
         title="Pause — feed hold, machine decelerates and holds position"
       >
-        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-        </svg>
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>
         Pause
       </button>
+
       <button
         :disabled="!['running', 'pausing', 'paused', 'stopping', 'recovering'].includes(job?.status ?? '')"
         @click="stopJob"
@@ -132,56 +136,40 @@
           : 'border-gray-200 dark:border-slate-600 text-gray-300 dark:text-slate-600 cursor-not-allowed'"
         title="Stop — feed hold then reset, machine returns to Idle"
       >
-        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M6 6h12v12H6z" />
-        </svg>
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z" /></svg>
         Stop
       </button>
+    </div>
 
-      <!-- E-Stop: separated by a large gap to prevent accidental clicks -->
-      <div class="ml-6">
-        <button
-          :disabled="!['running', 'pausing', 'paused', 'stopping', 'recovering'].includes(job?.status ?? '')"
-          @click="emergencyStop"
-          class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-md text-sm font-bold transition-colors"
-          :class="['running', 'pausing', 'paused', 'stopping', 'recovering'].includes(job?.status ?? '') ? 'hover:bg-red-500' : 'opacity-40 cursor-not-allowed'"
-          title="Emergency Stop — immediate halt, no deceleration, machine may alarm"
-        >
-          <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2zm-1 14V8h2v8h-2z" />
-          </svg>
-          E-Stop
-        </button>
-      </div>
-
+    <!-- ── 3. Emergency area (35% of remaining space, content centered) ───── -->
+    <!-- Contains: E-Stop button only -->
+    <div class="flex-[25] flex items-center justify-center">
       <button
-        v-if="machine.connected"
-        @click="restartFirmware"
-        class="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-md transition-colors"
-        title="Restart firmware"
+        :disabled="!machine.connected"
+        @click="emergencyStop"
+        class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-md text-sm font-bold transition-colors"
+        :class="machine.connected ? 'hover:bg-red-500' : 'opacity-40 cursor-not-allowed'"
+        title="Emergency Stop — immediate halt, no deceleration, machine may alarm"
       >
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-          />
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2zm-1 14V8h2v8h-2z" />
         </svg>
+        E-Stop
       </button>
+    </div>
 
-      <!-- Sensor status -->
-      <div v-if="machine.connected" class="relative" data-sensor-btn>
+    <!-- ── 4. Menu area (right-bound, natural width) ──────────────────────── -->
+    <!-- Contains: sensors panel, dark/light toggle, user icon, settings -->
+    <div class="shrink-0 flex items-center gap-1 pl-3">
+      <!-- Sensors panel -->
+      <div v-if="machine.connected" class="relative">
         <button
           @click="sensorOpen = !sensorOpen"
           :class="anyTriggered ? 'text-red-400 bg-red-900/30' : 'text-gray-500 dark:text-slate-400'"
           class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors text-sm"
         >
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"
-            />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" />
           </svg>
           Sensors
           <span v-if="anyTriggered" class="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -189,86 +177,102 @@
 
         <div
           v-if="sensorOpen"
-          class="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg shadow-2xl p-3 z-50 space-y-3"
+          class="absolute top-full right-0 mt-2 w-72 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg shadow-2xl p-3 z-50 space-y-3"
         >
-          <!-- Limit switches -->
+          <div class="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-slate-700">
+            <span class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Machine Sensors</span>
+            <button
+              @click="sensorOpen = false"
+              class="p-0.5 rounded text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
           <div>
-            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide">
-              Limit Switches
-            </div>
-            <div class="space-y-1">
-              <div
-                v-for="axis in configuredAxes"
-                :key="axis"
-                class="flex items-center justify-between py-1 px-1.5 rounded"
-              >
+            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide">Limit Switches</div>
+            <div class="grid grid-cols-2 gap-x-2 gap-y-0.5">
+              <div v-for="axis in configuredAxes" :key="axis" class="flex items-center justify-between py-1 px-1.5 rounded">
                 <span class="text-sm text-gray-800 dark:text-slate-200 font-mono">{{ axis }}</span>
                 <span
-                  :class="machine.limitSwitches.some(sw => sw.name === axis && sw.triggered)
-                    ? 'bg-red-500 text-white'
-                    : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'"
+                  :class="machine.limitSwitches.some(sw => sw.name === axis && sw.triggered) ? 'bg-red-500 text-white' : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'"
                   class="text-xs px-2 py-0.5 rounded-full font-medium"
-                >
-                  {{ machine.limitSwitches.some(sw => sw.name === axis && sw.triggered) ? 'TRIGGERED' : 'OK' }}
-                </span>
+                >{{ machine.limitSwitches.some(sw => sw.name === axis && sw.triggered) ? 'TRIGGERED' : 'OK' }}</span>
               </div>
             </div>
           </div>
 
-          <!-- Probe / Toolsetter / Door (if present in firmware config or ever triggered) -->
           <div v-if="hasProbe || hasToolsetter || hasDoor">
-            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide border-t border-gray-100 dark:border-slate-700 pt-2.5">
-              Inputs
-            </div>
+            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide border-t border-gray-100 dark:border-slate-700 pt-2.5">Inputs</div>
             <div class="space-y-1">
               <div v-if="hasProbe" class="flex items-center justify-between py-1 px-1.5 rounded">
                 <span class="text-sm text-gray-800 dark:text-slate-200">Probe</span>
-                <span
-                  :class="machine.probe ? 'bg-amber-500 text-white' : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'"
-                  class="text-xs px-2 py-0.5 rounded-full font-medium"
-                >
+                <span :class="machine.probe ? 'bg-amber-500 text-white' : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'" class="text-xs px-2 py-0.5 rounded-full font-medium">
                   {{ machine.probe ? 'TRIGGERED' : 'OK' }}
                 </span>
               </div>
               <div v-if="hasToolsetter" class="flex items-center justify-between py-1 px-1.5 rounded">
                 <span class="text-sm text-gray-800 dark:text-slate-200">Toolsetter</span>
-                <span
-                  :class="machine.toolsetter ? 'bg-amber-500 text-white' : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'"
-                  class="text-xs px-2 py-0.5 rounded-full font-medium"
-                >
+                <span :class="machine.toolsetter ? 'bg-amber-500 text-white' : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'" class="text-xs px-2 py-0.5 rounded-full font-medium">
                   {{ machine.toolsetter ? 'TRIGGERED' : 'OK' }}
                 </span>
               </div>
               <div v-if="hasDoor" class="flex items-center justify-between py-1 px-1.5 rounded">
                 <span class="text-sm text-gray-800 dark:text-slate-200">Safety Door</span>
-                <span
-                  :class="machine.door ? 'bg-red-500 text-white' : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'"
-                  class="text-xs px-2 py-0.5 rounded-full font-medium"
-                >
+                <span :class="machine.door ? 'bg-red-500 text-white' : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400'" class="text-xs px-2 py-0.5 rounded-full font-medium">
                   {{ machine.door ? 'OPEN' : 'CLOSED' }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="border-t border-gray-100 dark:border-slate-700 pt-2.5">
+            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide">Spindle</div>
+            <div class="space-y-1">
+              <div class="flex items-center justify-between py-1 px-1.5 rounded">
+                <span class="text-sm text-gray-800 dark:text-slate-200">State</span>
+                <span :class="machine.spindleOn ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400'" class="text-xs px-2 py-0.5 rounded-full font-medium">
+                  {{ machine.spindleOn ? (machine.spindleDir === 'ccw' ? 'ON · CCW' : 'ON · CW') : 'OFF' }}
+                </span>
+              </div>
+              <div class="flex items-center justify-between py-1 px-1.5 rounded">
+                <span class="text-sm text-gray-800 dark:text-slate-200">Speed</span>
+                <span class="text-xs font-mono text-gray-600 dark:text-slate-300">{{ machine.spindleRpm }} RPM</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="border-t border-gray-100 dark:border-slate-700 pt-2.5">
+            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide">Coolant</div>
+            <div class="flex items-center justify-between py-1 px-1.5 rounded">
+              <span class="text-sm text-gray-800 dark:text-slate-200">Status</span>
+              <span :class="machine.coolant !== 'off' ? 'bg-cyan-500 text-white' : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400'" class="text-xs px-2 py-0.5 rounded-full font-medium">
+                {{ machine.coolant === 'off' ? 'OFF' : machine.coolant === 'flood' ? 'FLOOD' : 'MIST' }}
+              </span>
+            </div>
+          </div>
+
+          <div class="border-t border-gray-100 dark:border-slate-700 pt-2.5">
+            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide">Overrides</div>
+            <div class="space-y-1">
+              <div class="flex items-center justify-between py-1 px-1.5 rounded">
+                <span class="text-sm text-gray-800 dark:text-slate-200">Feed</span>
+                <span :class="machine.feedOverride !== 100 ? 'bg-amber-400 text-white' : 'text-gray-600 dark:text-slate-300'" class="text-xs font-mono px-2 py-0.5 rounded-full">
+                  {{ machine.feedOverride }}%
+                </span>
+              </div>
+              <div class="flex items-center justify-between py-1 px-1.5 rounded">
+                <span class="text-sm text-gray-800 dark:text-slate-200">Spindle</span>
+                <span :class="machine.spindleOverride !== 100 ? 'bg-amber-400 text-white' : 'text-gray-600 dark:text-slate-300'" class="text-xs font-mono px-2 py-0.5 rounded-full">
+                  {{ machine.spindleOverride }}%
                 </span>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- Right: theme + user + settings -->
-    <div class="flex items-center gap-1 shrink-0">
-      <button
-        v-if="ui.authEnabled"
-        class="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-md transition-colors"
-        title="Account"
-      >
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-          />
-        </svg>
-      </button>
 
       <button
         @click="ui.toggleDarkMode()"
@@ -276,22 +280,23 @@
         :title="ui.darkMode ? 'Light mode' : 'Dark mode'"
       >
         <svg v-if="ui.darkMode" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"
-          />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
         </svg>
         <svg v-else class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
-          />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
         </svg>
       </button>
 
-      <!-- Back arrow only shown when machines exist; otherwise settings icon is always shown -->
+      <button
+        v-if="ui.authEnabled"
+        class="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-md transition-colors"
+        title="Account"
+      >
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+        </svg>
+      </button>
+
       <NuxtLink
         v-if="isSettings && s.hasMachines"
         to="/"
@@ -309,11 +314,7 @@
         title="Settings"
       >
         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-          />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
       </NuxtLink>
@@ -420,12 +421,4 @@ async function restartFirmware() {
   if (ok) machine.sendCommand('$bye')
 }
 
-onMounted(() => {
-  document.addEventListener('click', (e) => {
-    const target = e.target as HTMLElement
-    if (sensorOpen.value && !target.closest('[data-sensor-btn]')) {
-      sensorOpen.value = false
-    }
-  })
-})
 </script>
