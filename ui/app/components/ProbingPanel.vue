@@ -7,7 +7,7 @@
       <button
         v-for="tab in tabs"
         :key="tab.key"
-        @click="activeTab = tab.key"
+        @click="setTab(tab.key)"
         :class="activeTab === tab.key ? 'bg-gray-200 dark:bg-slate-700 text-slate-100 dark:text-slate-100 text-gray-800' : 'text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300'"
         class="flex-1 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap"
       >
@@ -18,9 +18,8 @@
     <!-- Tab content -->
     <div class="overflow-y-auto p-3 space-y-3 min-h-[18rem]">
 
-      <!-- Stock Definition -->
+      <!-- ── Stock tab ────────────────────────────────────────────────────────── -->
       <template v-if="activeTab === 'stock'">
-        <!-- No stock set -->
         <template v-if="!machine.stock">
           <div class="flex flex-col items-center justify-center py-10 gap-3">
             <p class="text-sm text-gray-400 dark:text-slate-500">No stock defined</p>
@@ -34,7 +33,6 @@
         </template>
 
         <template v-else>
-          <!-- Stock type badge + Edit / Clear buttons -->
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-slate-200">
               <svg v-if="machine.stock.shape === 'rect'" class="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -61,7 +59,6 @@
             </div>
           </div>
 
-          <!-- Dimensions table -->
           <div class="rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
             <table class="w-full text-sm">
               <thead>
@@ -77,7 +74,7 @@
                     <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Width (X)</td>
                     <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ machine.stock.width }} mm</td>
                     <td class="px-3 py-2.5 text-right font-mono">
-                      <span v-if="measured.width !== null" class="text-emerald-600 dark:text-emerald-400">{{ measured.width.toFixed(3) }} mm</span>
+                      <span v-if="ps.measuredWidth !== null" class="text-emerald-600 dark:text-emerald-400">{{ ps.measuredWidth!.toFixed(3) }} mm</span>
                       <span v-else class="text-gray-300 dark:text-slate-600">—</span>
                     </td>
                   </tr>
@@ -85,7 +82,7 @@
                     <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Length (Y)</td>
                     <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ machine.stock.height }} mm</td>
                     <td class="px-3 py-2.5 text-right font-mono">
-                      <span v-if="measured.depth !== null" class="text-emerald-600 dark:text-emerald-400">{{ measured.depth.toFixed(3) }} mm</span>
+                      <span v-if="ps.measuredHeight !== null" class="text-emerald-600 dark:text-emerald-400">{{ ps.measuredHeight!.toFixed(3) }} mm</span>
                       <span v-else class="text-gray-300 dark:text-slate-600">—</span>
                     </td>
                   </tr>
@@ -100,7 +97,7 @@
                     <td class="px-3 py-2.5 text-gray-600 dark:text-slate-300">Diameter</td>
                     <td class="px-3 py-2.5 text-right font-mono text-gray-900 dark:text-slate-100">{{ machine.stock.diameter }} mm</td>
                     <td class="px-3 py-2.5 text-right font-mono">
-                      <span v-if="measured.diameter !== null" class="text-emerald-600 dark:text-emerald-400">{{ measured.diameter.toFixed(3) }} mm</span>
+                      <span v-if="ps.measuredDiameter !== null" class="text-emerald-600 dark:text-emerald-400">{{ ps.measuredDiameter!.toFixed(3) }} mm</span>
                       <span v-else class="text-gray-300 dark:text-slate-600">—</span>
                     </td>
                   </tr>
@@ -113,10 +110,31 @@
               </tbody>
             </table>
           </div>
+
+          <!-- Session summary -->
+          <div v-if="ps.rotation || ps.heightmap" class="space-y-1 pt-1 border-t border-gray-100 dark:border-slate-700">
+            <p class="text-xs font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Session</p>
+            <div v-if="ps.rotation" class="flex items-center justify-between text-xs">
+              <span class="text-gray-500 dark:text-slate-400">Rotation</span>
+              <span class="font-mono text-gray-700 dark:text-slate-300">{{ ps.rotation.rotationDeg.toFixed(3) }}° ({{ ps.rotation.edge }} edge)</span>
+            </div>
+            <div v-if="ps.heightmap" class="flex items-center justify-between text-xs">
+              <span class="text-gray-500 dark:text-slate-400">Heightmap</span>
+              <span class="font-mono text-gray-700 dark:text-slate-300">{{ ps.heightmap.colCount }}×{{ ps.heightmap.rowCount }} grid</span>
+            </div>
+          </div>
+
+          <button
+            v-if="ps.measuredWidth !== null || ps.measuredHeight !== null || ps.measuredDiameter !== null || ps.rotation !== null || ps.heightmap !== null"
+            @click="wsSend({ t: 'ui:stock:clearMeasurements', payload: {} })"
+            class="w-full py-1.5 text-xs font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-500 dark:text-slate-400 rounded-lg transition-colors"
+          >
+            Clear Measurements
+          </button>
         </template>
       </template>
 
-      <!-- XYZ Probing -->
+      <!-- ── XYZ tab ─────────────────────────────────────────────────────────── -->
       <template v-if="activeTab === 'xyz'">
         <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">XYZ Origin Probing</p>
         <div class="space-y-2">
@@ -124,115 +142,178 @@
             label="Corner Probing"
             description="Find a corner and set XYZ zero"
             icon="corner"
+            :disabled="isProbing || !machine.connected || machine.stock?.shape === 'round'"
+            :disabled-reason="machine.stock?.shape === 'round' ? 'Corner probing requires rectangular stock' : undefined"
             @click="openWizard('corner')"
           />
           <ProbeWizardButton
             label="Center — Outside In"
-            description="Find center of a feature by probing outside edges"
+            description="Find center of stock by probing outside edges"
             icon="center-out"
+            :disabled="isProbing || !machine.connected"
             @click="openWizard('center-out')"
           />
           <ProbeWizardButton
-            label="Center — Inside Out"
-            description="Find center of a pocket or bore"
+            label="Center — Pocket/Hole"
+            description="Find center of a pocket, bore, or hole"
             icon="center-in"
+            :disabled="isProbing || !machine.connected"
             @click="openWizard('center-in')"
           />
         </div>
       </template>
 
-      <!-- Edge Probing -->
+      <!-- ── Edges tab ───────────────────────────────────────────────────────── -->
       <template v-if="activeTab === 'edges'">
         <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Individual Edge Probing</p>
-        <div class="grid grid-cols-2 gap-2">
+
+        <!-- Edge probe buttons grid -->
+        <div class="grid grid-cols-3 gap-2 text-center">
+          <div />
           <button
-            v-for="dir in edgeDirs"
-            :key="dir.label"
-            @click="openWizard('edge-' + dir.key)"
-            class="flex flex-col items-center gap-1.5 py-3 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-800 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors"
+            :disabled="isProbing || !machine.connected"
+            @click="probeEdge('Y', '+')"
+            class="flex flex-col items-center gap-0.5 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-gray-700 dark:text-slate-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            <span class="text-2xl leading-none">{{ dir.icon }}</span>
-            <span class="text-xs">{{ dir.label }}</span>
+            <span class="text-lg leading-none">↑</span>Y+
           </button>
+          <div />
+          <button
+            :disabled="isProbing || !machine.connected"
+            @click="probeEdge('X', '-')"
+            class="flex flex-col items-center gap-0.5 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-gray-700 dark:text-slate-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <span class="text-lg leading-none">←</span>X-
+          </button>
+          <button
+            :disabled="isProbing || !machine.connected"
+            @click="probeEdge('Z', '-')"
+            class="flex flex-col items-center gap-0.5 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-gray-700 dark:text-slate-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <span class="text-lg leading-none">↓</span>Z
+          </button>
+          <button
+            :disabled="isProbing || !machine.connected"
+            @click="probeEdge('X', '+')"
+            class="flex flex-col items-center gap-0.5 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-gray-700 dark:text-slate-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <span class="text-lg leading-none">→</span>X+
+          </button>
+          <div />
+          <button
+            :disabled="isProbing || !machine.connected"
+            @click="probeEdge('Y', '-')"
+            class="flex flex-col items-center gap-0.5 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-gray-700 dark:text-slate-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <span class="text-lg leading-none">↓</span>Y-
+          </button>
+          <div />
+        </div>
+
+        <!-- Edge history -->
+        <div class="rounded-lg bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-3 space-y-2 text-xs">
+          <div class="grid grid-cols-3 gap-2 items-center">
+            <div>
+              <span class="text-gray-400 dark:text-slate-500">X₁</span>
+              <span class="ml-1.5 font-mono text-gray-900 dark:text-slate-100">{{ ps.edgeHistoryX[0] !== null ? ps.edgeHistoryX[0]!.toFixed(3) : '—' }}</span>
+            </div>
+            <div>
+              <span class="text-gray-400 dark:text-slate-500">X₂</span>
+              <span class="ml-1.5 font-mono text-gray-900 dark:text-slate-100">{{ ps.edgeHistoryX[1] !== null ? ps.edgeHistoryX[1]!.toFixed(3) : '—' }}</span>
+            </div>
+            <button
+              :disabled="ps.edgeHistoryX[0] === null || ps.edgeHistoryX[1] === null || isProbing || !machine.connected"
+              @click="wsSend({ t: 'probing:setCenter', payload: { axis: 'X' } })"
+              class="px-2 py-1 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+            >
+              X=0 center
+            </button>
+          </div>
+          <div class="grid grid-cols-3 gap-2 items-center">
+            <div>
+              <span class="text-gray-400 dark:text-slate-500">Y₁</span>
+              <span class="ml-1.5 font-mono text-gray-900 dark:text-slate-100">{{ ps.edgeHistoryY[0] !== null ? ps.edgeHistoryY[0]!.toFixed(3) : '—' }}</span>
+            </div>
+            <div>
+              <span class="text-gray-400 dark:text-slate-500">Y₂</span>
+              <span class="ml-1.5 font-mono text-gray-900 dark:text-slate-100">{{ ps.edgeHistoryY[1] !== null ? ps.edgeHistoryY[1]!.toFixed(3) : '—' }}</span>
+            </div>
+            <button
+              :disabled="ps.edgeHistoryY[0] === null || ps.edgeHistoryY[1] === null || isProbing || !machine.connected"
+              @click="wsSend({ t: 'probing:setCenter', payload: { axis: 'Y' } })"
+              class="px-2 py-1 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+            >
+              Y=0 center
+            </button>
+          </div>
+        </div>
+
+        <!-- Last edge result (inline, stays on initiating client's tab) -->
+        <div v-if="lastEdgeResult" class="text-xs text-center font-mono text-emerald-600 dark:text-emerald-400">
+          {{ lastEdgeResult.axis }}{{ lastEdgeResult.direction }} = {{ lastEdgeResult.edgeWpos.toFixed(3) }} mm (wpos)
+        </div>
+        <div v-if="ps.errorMessage && ps.wizardKey === 'edge'" class="text-xs text-red-500 dark:text-red-400">
+          {{ ps.errorMessage }}
         </div>
       </template>
 
-      <!-- Surface Heightmap -->
-      <template v-if="activeTab === 'heightmap'">
-        <div class="grid grid-cols-2 gap-2">
-          <DimInput label="Grid X" v-model="heightmap.gridX" unit="pts" :step="1" :min="2" :max="20" />
-          <DimInput label="Grid Y" v-model="heightmap.gridY" unit="pts" :step="1" :min="2" :max="20" />
-          <DimInput label="Probe Depth" v-model="heightmap.depth" unit="mm" />
-          <DimInput label="Probe Feed" v-model="heightmap.feed" unit="mm/m" :step="10" />
-        </div>
-        <p class="text-xs text-gray-400 dark:text-slate-500">
-          {{ heightmap.gridX * heightmap.gridY }} probe points · {{ heightmap.gridX }}×{{ heightmap.gridY }} grid
-        </p>
-        <div class="flex gap-2">
-          <button
-            @click="hasHeightmap = true"
-            class="flex-1 py-2.5 bg-blue-700 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors"
-          >
-            Start Heightmap Probing
-          </button>
-          <button
-            v-if="hasHeightmap"
-            @click="hasHeightmap = false"
-            class="px-3 py-2.5 bg-gray-100 dark:bg-slate-700 hover:bg-red-600 hover:text-white text-gray-500 dark:text-slate-400 rounded-lg text-sm transition-colors"
-            title="Clear heightmap"
-          >
-            Clear
-          </button>
-        </div>
-        <button
-          :disabled="!hasHeightmap"
-          @click="hasHeightmap && (showHeightmapModal = true)"
-          :class="hasHeightmap
-            ? 'bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 cursor-pointer'
-            : 'bg-gray-50 dark:bg-slate-900 text-gray-300 dark:text-slate-600 cursor-default'"
-          class="w-full py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-        >
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.5l6.75-6.75L13.5 10.5 19.5 4.5m0 0H15m4.5 0V9" />
-          </svg>
-          {{ hasHeightmap ? 'View Heightmap Result' : 'No result available' }}
-        </button>
-      </template>
+      <!-- ── Correction tab ─────────────────────────────────────────────────── -->
+      <template v-if="activeTab === 'correction'">
+        <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Correction Wizards</p>
 
-      <!-- Rotation Probing -->
-      <template v-if="activeTab === 'rotation'">
-        <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Stock Rotation</p>
-        <p class="text-xs text-gray-500 dark:text-slate-400">
-          Probe two points on an edge to calculate stock rotation around the Z-axis.
-        </p>
-        <div class="space-y-2 mt-1">
+        <div class="space-y-2">
           <ProbeWizardButton
-            label="Probe Outside Edge"
-            description="Two probing points on an outside face"
+            label="Stock Rotation"
+            description="Three-point edge probing to measure rotation"
             icon="rotation-out"
-            @click="openWizard('rotation-out')"
+            :disabled="isProbing || !machine.connected || machine.stock?.shape === 'round'"
+            :disabled-reason="machine.stock?.shape === 'round' ? 'Rotation probing requires a straight reference edge — not applicable to round stock' : undefined"
+            @click="openWizard('rotation')"
           />
           <ProbeWizardButton
-            label="Probe Inside Edge"
-            description="Two probing points on an inside face"
-            icon="rotation-in"
-            @click="openWizard('rotation-in')"
+            label="Surface Heightmap"
+            description="Probe a grid across the stock surface"
+            icon="heightmap"
+            :disabled="isProbing || !machine.connected || !machine.stock"
+            @click="openWizard('heightmap')"
           />
         </div>
+
+        <p v-if="!machine.stock" class="text-xs text-amber-500 dark:text-amber-400 text-center">
+          Define stock first to enable heightmap probing
+        </p>
+
+        <!-- Last rotation result -->
         <div
-          v-if="rotationResult !== null"
-          class="mt-2 bg-gray-50 dark:bg-slate-900 rounded-lg p-3 border border-gray-200 dark:border-slate-700"
+          v-if="ps.rotation"
+          class="bg-gray-50 dark:bg-slate-900 rounded-lg p-3 border border-gray-200 dark:border-slate-700"
         >
-          <p class="text-xs text-gray-500 dark:text-slate-400">Measured rotation</p>
+          <p class="text-xs text-gray-500 dark:text-slate-400">Measured rotation ({{ ps.rotation.edge }} edge)</p>
           <p class="text-2xl font-bold font-mono text-gray-900 dark:text-slate-100 tabular-nums">
-            {{ rotationResult.toFixed(3) }}°
+            {{ ps.rotation.rotationDeg.toFixed(3) }}°
+          </p>
+          <p class="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+            Bow: {{ ps.rotation.bowMm.toFixed(3) }} mm
           </p>
         </div>
+
+        <!-- Last heightmap status + view button -->
+        <template v-if="ps.heightmap">
+          <p class="text-xs text-center text-emerald-600 dark:text-emerald-400">
+            {{ ps.heightmap.colCount }}×{{ ps.heightmap.rowCount }} grid complete
+          </p>
+          <button
+            @click="showHeightmapModal = true"
+            class="w-full py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors"
+          >
+            View Heightmap
+          </button>
+        </template>
       </template>
 
     </div>
 
-    <!-- Set Stock dialog -->
+    <!-- ── Set Stock dialog ──────────────────────────────────────────────────── -->
     <Teleport to="body">
       <div
         v-if="showStockDialog"
@@ -277,7 +358,6 @@
                 </button>
               </div>
             </div>
-
             <div class="space-y-2">
               <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Dimensions</p>
               <template v-if="dialogStock.shape === 'rect'">
@@ -294,7 +374,6 @@
                 </div>
               </template>
             </div>
-
             <div class="flex gap-2.5 pt-1">
               <button
                 @click="showStockDialog = false"
@@ -314,10 +393,10 @@
       </div>
     </Teleport>
 
-    <!-- Heightmap result modal -->
+    <!-- ── Heightmap result modal ─────────────────────────────────────────────── -->
     <Teleport to="body">
       <div
-        v-if="showHeightmapModal"
+        v-if="showHeightmapModal && ps.heightmap"
         class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
         @click.self="showHeightmapModal = false"
       >
@@ -334,39 +413,41 @@
             </button>
           </div>
           <div class="p-5">
-            <div class="grid gap-1 w-full" :style="`grid-template-columns: repeat(${heightmap.gridX}, 1fr)`">
+            <div
+              class="grid gap-1 w-full"
+              :style="`grid-template-columns: repeat(${ps.heightmap.colCount}, 1fr)`"
+            >
               <div
-                v-for="i in heightmap.gridX * heightmap.gridY"
+                v-for="(val, i) in ps.heightmap.values"
                 :key="i"
                 class="rounded aspect-square"
-                :style="{ backgroundColor: cellColor(i) }"
+                :style="{ backgroundColor: heightmapCellColor(val, heightmapMinMax) }"
               />
             </div>
             <div class="flex justify-between mt-3 text-xs text-gray-400 dark:text-slate-500">
-              <span>-0.35 mm</span>
+              <span>{{ heightmapMinMax[0].toFixed(3) }} mm</span>
               <span class="font-medium">Z deviation</span>
-              <span>+0.35 mm</span>
+              <span>{{ heightmapMinMax[1].toFixed(3) }} mm</span>
             </div>
             <p class="text-xs text-gray-400 dark:text-slate-500 mt-1 text-center">
-              {{ heightmap.gridX }}×{{ heightmap.gridY }} grid · {{ heightmap.gridX * heightmap.gridY }} points
+              {{ ps.heightmap.colCount }}×{{ ps.heightmap.rowCount }} grid ·
+              {{ ps.heightmap.values.filter(v => v !== null).length }} / {{ ps.heightmap.values.length }} points
             </p>
           </div>
         </div>
       </div>
     </Teleport>
 
-    <!-- Probing wizard modal -->
+    <!-- ── Wizard config modal (initiating client only) ───────────────────────── -->
     <Teleport to="body">
       <div
-        v-if="activeWizard"
+        v-if="activeWizard && !isProbing && resultDismissed"
         class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
         @click.self="activeWizard = null"
       >
-        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-md">
+        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-3xl">
           <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-slate-700">
-            <h3 class="text-base font-semibold text-gray-900 dark:text-slate-100">
-              {{ wizardTitle }}
-            </h3>
+            <h3 class="text-base font-semibold text-gray-900 dark:text-slate-100">{{ wizardTitles[activeWizard] ?? '' }}</h3>
             <button
               @click="activeWizard = null"
               class="p-1 text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 rounded-md transition-colors"
@@ -377,49 +458,158 @@
             </button>
           </div>
           <div class="p-5 space-y-4">
-            <div class="flex items-center gap-1">
-              <template v-for="(step, i) in wizardSteps" :key="i">
-                <div class="flex flex-col items-center gap-0.5 shrink-0">
-                  <div
-                    :class="i <= wizardStep ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-slate-700 text-gray-500 dark:text-slate-400'"
-                    class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors"
-                  >{{ i + 1 }}</div>
-                  <span class="text-xs text-center text-gray-500 dark:text-slate-400 leading-tight max-w-10">{{ step }}</span>
-                </div>
-                <div
-                  v-if="i < wizardSteps.length - 1"
-                  class="flex-1 h-px bg-gray-200 dark:bg-slate-700 mb-4"
-                />
-              </template>
-            </div>
+            <ProbingWizardCornerConfig    v-if="activeWizard === 'corner'"     :cfg="cornerCfg"    :stock-shape="machine.stock?.shape ?? 'rect'" />
+            <ProbingWizardCenterOutConfig v-if="activeWizard === 'center-out'" :cfg="centerOutCfg" :stock-shape="machine.stock?.shape ?? 'rect'" />
+            <ProbingWizardCenterInConfig  v-if="activeWizard === 'center-in'"  :cfg="centerInCfg"  :stock-shape="machine.stock?.shape ?? 'rect'" />
+            <ProbingWizardRotationConfig  v-if="activeWizard === 'rotation'"   :cfg="rotationCfg"  :stock-shape="machine.stock?.shape ?? 'rect'" />
+            <ProbingWizardHeightmapConfig v-if="activeWizard === 'heightmap'"  :cfg="heightmapCfg" />
 
-            <div class="bg-gray-50 dark:bg-slate-900 rounded-lg p-4 text-sm text-gray-700 dark:text-slate-300">
-              {{ wizardInstructions[wizardStep] }}
-            </div>
+            <template v-if="activeWizard !== 'rotation' && activeWizard !== 'heightmap'">
+              <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-slate-300 cursor-pointer">
+                <input type="checkbox" v-model="probePositioned" class="rounded" />
+                I have positioned the probe as shown above
+              </label>
+            </template>
 
-            <div class="flex gap-2.5">
+            <p
+              v-if="activeWizard === 'rotation' && ps.measuredWidth === null && ps.measuredHeight === null"
+              class="text-xs text-amber-600 dark:text-amber-400 px-1"
+            >
+              Stock has not been measured yet — probing positions will be based on entered dimensions.
+            </p>
+
+            <button
+              @click="startWizard"
+              :disabled="activeWizard !== 'rotation' && activeWizard !== 'heightmap' && !probePositioned"
+              class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Start Probing
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ── Progress overlay (all clients, bottom-anchored) ───────────────────── -->
+    <Teleport to="body">
+      <div
+        v-if="ps.phase === 'running' && ps.wizardKey"
+        class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-lg px-4"
+      >
+        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl p-4 space-y-3">
+          <p class="text-sm font-semibold text-gray-900 dark:text-slate-100">{{ wizardTitles[ps.wizardKey] ?? ps.wizardKey }}</p>
+          <ProbingProgressBar :ps="ps" @abort="wsSend({ t: 'probing:abort' })" />
+          <template v-if="ps.wizardKey === 'center-in' && ps.currentStepLabel?.includes('Continue')">
+            <p class="text-xs text-center text-amber-600 dark:text-amber-400">
+              Jog probe inside pocket, then click Continue
+            </p>
+            <button
+              @click="wsSend({ t: 'probing:continue' })"
+              class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Continue
+            </button>
+          </template>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ── Result / abort overlay (all clients, centered modal) ─────────────── -->
+    <Teleport to="body">
+      <div
+        v-if="(ps.phase === 'completed' || ps.phase === 'aborted') && ps.wizardKey && !resultDismissed"
+        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
+        @click.self="closeResult"
+      >
+        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-3xl">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-slate-700">
+            <h3 class="text-base font-semibold text-gray-900 dark:text-slate-100">{{ wizardTitles[ps.wizardKey] ?? ps.wizardKey }}</h3>
+            <button
+              @click="closeResult"
+              class="p-1 text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 rounded-md transition-colors"
+            >
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="p-5 space-y-4">
+
+            <!-- Completed -->
+            <template v-if="ps.phase === 'completed'">
+              <div class="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg p-3 space-y-1.5">
+                <p class="text-xs font-semibold text-emerald-800 dark:text-emerald-300 uppercase tracking-wide">Probing Complete</p>
+                <template v-if="ps.measuredWidth !== null">
+                  <p class="text-xs text-emerald-700 dark:text-emerald-400">Width: {{ ps.measuredWidth!.toFixed(3) }} mm</p>
+                </template>
+                <template v-if="ps.measuredHeight !== null">
+                  <p class="text-xs text-emerald-700 dark:text-emerald-400">Height: {{ ps.measuredHeight!.toFixed(3) }} mm</p>
+                </template>
+                <template v-if="ps.measuredDiameter !== null">
+                  <p class="text-xs text-emerald-700 dark:text-emerald-400">Diameter: {{ ps.measuredDiameter!.toFixed(3) }} mm</p>
+                </template>
+                <template v-for="r in ps.stepResults" :key="`${r.axis}${r.direction}`">
+                  <p class="text-xs text-emerald-700 dark:text-emerald-400">{{ r.axis }}{{ r.direction }}: {{ r.edgeWpos.toFixed(3) }} mm</p>
+                </template>
+                <template v-if="ps.rotation">
+                  <p class="text-xs text-emerald-700 dark:text-emerald-400">Rotation: {{ ps.rotation.rotationDeg.toFixed(3) }}°</p>
+                  <p class="text-xs text-emerald-700 dark:text-emerald-400">Bow: {{ ps.rotation.bowMm.toFixed(3) }} mm</p>
+                </template>
+                <template v-if="ps.wizardKey === 'heightmap' && ps.heightmap">
+                  <p class="text-xs text-emerald-700 dark:text-emerald-400">
+                    {{ ps.heightmap.colCount }}×{{ ps.heightmap.rowCount }} grid · {{ ps.heightmap.values.filter(v => v !== null).length }} / {{ ps.heightmap.values.length }} points
+                  </p>
+                </template>
+              </div>
+
               <button
-                v-if="wizardStep > 0"
-                @click="wizardStep--"
-                class="flex-1 py-2.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors"
+                v-if="ps.wizardKey === 'heightmap' && ps.heightmap"
+                @click="viewHeightmap"
+                class="w-full py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors"
               >
-                Back
+                View Heightmap
               </button>
-              <button
-                v-if="wizardStep < wizardSteps.length - 1"
-                @click="wizardStep++"
-                class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
-              >
-                Next
-              </button>
-              <button
-                v-else
-                @click="runProbe"
-                class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium transition-colors"
-              >
-                Start Probing
-              </button>
-            </div>
+
+              <div class="flex gap-2">
+                <button
+                  @click="repeatWizard"
+                  class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  Repeat
+                </button>
+                <button
+                  @click="closeResult"
+                  class="flex-1 py-2.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </template>
+
+            <!-- Aborted / error -->
+            <template v-if="ps.phase === 'aborted'">
+              <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-3">
+                <p class="text-xs font-semibold text-red-800 dark:text-red-300 uppercase tracking-wide">
+                  {{ ps.errorMessage ? 'Probing Failed' : 'Probing Stopped' }}
+                </p>
+                <p v-if="ps.errorMessage" class="text-xs text-red-700 dark:text-red-400 mt-1">{{ ps.errorMessage }}</p>
+              </div>
+              <div class="flex gap-2">
+                <button
+                  @click="repeatWizard"
+                  class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  Retry
+                </button>
+                <button
+                  @click="closeResult"
+                  class="flex-1 py-2.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </template>
+
           </div>
         </div>
       </div>
@@ -429,29 +619,189 @@
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
-import { useNav } from '~/composables/useNav'
+import { DEFAULT_PROBE_COMPENSATION } from '~~/server/utils/tool/types'
+import { useSyncStore } from '~/stores/sync'
 import { useModals } from '~/composables/useModals'
 import { wsSend } from '~/composables/useWsSend'
 
 const machine = useMachineStore()
+const syncStore = useSyncStore()
 const modals = useModals()
-const { probingTab: activeTab, activeWizard, wizardStep } = useNav()
+const ps = syncStore.probingState
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
 
 const tabs = [
-  { key: 'stock', label: 'Stock' },
-  { key: 'xyz', label: 'XYZ' },
-  { key: 'edges', label: 'Edges' },
-  { key: 'rotation', label: 'Rotation' },
-  { key: 'heightmap', label: 'Heightmap' },
+  { key: 'stock',      label: 'Stock' },
+  { key: 'xyz',        label: 'XYZ' },
+  { key: 'edges',      label: 'Edges' },
+  { key: 'correction', label: 'Correction' },
 ]
 
-const measured = reactive({
-  width: null as number | null,
-  depth: null as number | null,
-  diameter: null as number | null,
+const activeTab = ref('stock')
+function setTab(key: string) {
+  activeTab.value = key
+}
+
+const isProbing = computed(() => ps.phase === 'running')
+
+// ── Probe tool resolution ─────────────────────────────────────────────────────
+
+const probeTool = computed(() => {
+  const all = [...(machine.toolLibrary?.machine ?? []), ...(machine.toolLibrary?.app ?? [])]
+  const loaded = machine.loadedToolNumber
+  if (loaded !== null) {
+    const t = all.find(e => e.number === loaded && e.type === 'probe')
+    if (t) return t
+  }
+  return all.find(e => e.type === 'probe') ?? null
 })
 
-// Open/close synced via the modal stack; dialog field values stay local.
+const tipRadius = computed(() => (probeTool.value?.diameter ?? 3) / 2)
+
+const probeConfig = computed(() => probeTool.value?.probeConfig ?? {
+  wiggleEnabled: true,
+  fastFeedMmPerMin: 500,
+  slowFeedMmPerMin: 5,
+  cycles: 3,
+  averageN: 2,
+})
+
+const probeCompensation = computed(() => probeTool.value?.probeCompensation ?? DEFAULT_PROBE_COMPENSATION)
+
+// ── Per-wizard config objects ─────────────────────────────────────────────────
+
+const cornerCfg = reactive({
+  safeHeightMm: 20,
+  buffer: 10,
+  skipX: false,
+  skipY: false,
+  skipZ: false,
+  corner: 'front-left' as 'front-left' | 'front-right' | 'back-left' | 'back-right',
+})
+
+const centerOutCfg = reactive({
+  safeHeightMm: 20,
+  buffer: 10,
+  skipX: false,
+  skipY: false,
+  skipZ: false,
+})
+
+const centerInCfg = reactive({
+  buffer: 10,
+})
+
+const rotationCfg = reactive({
+  safeHeightMm: 20,
+  insideOffset: 20,
+  edge: 'top' as 'top' | 'bottom' | 'left' | 'right',
+})
+
+const heightmapCfg = reactive({
+  safeHeightMm: 20,
+  buffer: 10,
+  edgeOffset: 5,
+  resolution: 10,
+})
+
+// ── Edge probing ──────────────────────────────────────────────────────────────
+
+function probeEdge(axis: 'X' | 'Y' | 'Z', direction: '+' | '-') {
+  wsSend({
+    t: 'probing:edge',
+    payload: {
+      axis,
+      direction,
+      tipRadius: tipRadius.value,
+      probeConfig: probeConfig.value,
+      compensation: probeCompensation.value,
+      buffer: 10,
+    },
+  })
+}
+
+const lastEdgeResult = computed(() => {
+  if (ps.phase !== 'completed' || ps.wizardKey !== 'edge') return null
+  return ps.stepResults[0] ?? null
+})
+
+// ── Wizard ────────────────────────────────────────────────────────────────────
+
+const activeWizard = ref<string | null>(null)
+const probePositioned = ref(false)
+
+// resultDismissed starts true so no stale result shows on page load.
+// It flips false when a run completes (watcher below) and true again
+// when the user closes/repeats or a new run begins.
+const resultDismissed = ref(true)
+
+const wizardTitles: Record<string, string> = {
+  'corner':     'Corner Probing (XYZ)',
+  'center-out': 'Center Probing — Outside In',
+  'center-in':  'Center Probing — Pocket/Hole',
+  'rotation':   'Stock Rotation Probe',
+  'heightmap':  'Surface Heightmap',
+}
+
+function openWizard(key: string) {
+  activeWizard.value = key
+  probePositioned.value = false
+}
+
+function repeatWizard() {
+  activeWizard.value = ps.wizardKey
+  probePositioned.value = false
+  resultDismissed.value = true
+}
+
+function closeResult() {
+  resultDismissed.value = true
+  activeWizard.value = null
+}
+
+function viewHeightmap() {
+  resultDismissed.value = true
+  showHeightmapModal.value = true
+}
+
+function startWizard() {
+  if (!activeWizard.value) return
+  const key = activeWizard.value
+
+  const cfgMap: Record<string, object> = {
+    'corner':     { ...cornerCfg },
+    'center-out': { ...centerOutCfg },
+    'center-in':  { ...centerInCfg },
+    'rotation':   { ...rotationCfg },
+    'heightmap':  { ...heightmapCfg },
+  }
+  const cfg = cfgMap[key]
+  if (!cfg) return
+
+  wsSend({
+    t: 'probing:start',
+    payload: {
+      wizardKey: key,
+      config: cfg,
+      tipRadius: tipRadius.value,
+      probeConfig: probeConfig.value,
+      compensation: probeCompensation.value,
+    },
+  })
+}
+
+// Show the result overlay on all clients when a run finishes.
+// The prevPhase === 'running' guard prevents the overlay from appearing
+// for clients that connect after the run is already done.
+watch(() => ps.phase, (phase, prevPhase) => {
+  if ((phase === 'completed' || phase === 'aborted') && prevPhase === 'running') {
+    resultDismissed.value = false
+  }
+})
+
+// ── Stock dialog ──────────────────────────────────────────────────────────────
+
 const stockModal = modals.active('stock')
 const showStockDialog = computed<boolean>({
   get: () => !!stockModal.value,
@@ -461,7 +811,6 @@ const showStockDialog = computed<boolean>({
   },
 })
 
-// dialogStock field names match StockDef: height = Y-length (rect), depth = Z-thickness
 const dialogStock = reactive({ shape: 'rect' as 'rect' | 'round', width: 200, height: 150, depth: 25, diameter: 50 })
 
 function seedDialog() {
@@ -472,7 +821,6 @@ function seedDialog() {
   )
 }
 
-// Seed the local form whenever the dialog opens (including when opened remotely).
 watch(showStockDialog, (open) => { if (open) seedDialog() })
 
 function openStockDialog() {
@@ -491,119 +839,26 @@ function applyStockDialog() {
       diameter: dialogStock.diameter,
     },
   })
-  measured.width = null
-  measured.depth = null
-  measured.diameter = null
   showStockDialog.value = false
 }
 
-const rotationResult = ref<number | null>(null)
+// ── Heightmap result modal ────────────────────────────────────────────────────
 
-const edgeDirs = [
-  { key: 'x-pos', label: 'X+ Edge', icon: '→' },
-  { key: 'x-neg', label: 'X- Edge', icon: '←' },
-  { key: 'y-pos', label: 'Y+ Edge', icon: '↑' },
-  { key: 'y-neg', label: 'Y- Edge', icon: '↓' },
-  { key: 'z-neg', label: 'Z- Surface', icon: '↓Z' },
-]
+const showHeightmapModal = ref(false)
 
-
-const wizardConfigs: Record<string, { title: string; steps: string[]; instructions: string[] }> = {
-  corner: {
-    title: 'Corner Probing (XYZ)',
-    steps: ['Choose Corner', 'Position', 'Probe X', 'Probe Y', 'Probe Z', 'Done'],
-    instructions: [
-      'Select which corner of the stock to probe. The machine will find the corner and set XYZ zero at the top surface.',
-      'Jog the probe to approximately 5mm above and 5mm outside the chosen corner. Click Next when ready.',
-      'The machine will probe the X axis to find the edge. Ensure the probe can travel freely.',
-      'The machine will probe the Y axis to find the edge.',
-      'The machine will probe down to find the Z surface and set Z zero.',
-      'Probing complete. XYZ work zero has been set at the selected corner.',
-    ],
-  },
-  'center-out': {
-    title: 'Center Probing (Outside → In)',
-    steps: ['Setup', 'Position', 'Probe XY', 'Probe Z', 'Done'],
-    instructions: [
-      'This wizard finds the center of your stock by probing all four outside edges. Make sure the stock dimensions are correct in the Stock tab.',
-      'Jog the probe above the center of the stock, approx. 5mm above the surface.',
-      'The machine will probe all 4 sides to calculate the center X/Y position.',
-      'The machine will probe the top surface for Z zero.',
-      'Center XYZ work zero has been set.',
-    ],
-  },
-  'center-in': {
-    title: 'Center Probing (Pocket/Bore)',
-    steps: ['Setup', 'Position', 'Probe XY', 'Done'],
-    instructions: [
-      'This wizard finds the center of a pocket or bore by probing the inside walls.',
-      'Jog the probe inside the pocket/bore, roughly centered. The probe must not touch the walls during positioning.',
-      'The machine will probe all 4 walls to calculate the center.',
-      'XY center has been set. Probe Z separately if needed.',
-    ],
-  },
-}
-
-for (const dir of edgeDirs) {
-  wizardConfigs[`edge-${dir.key}`] = {
-    title: `${dir.label} Probing`,
-    steps: ['Position', 'Probe', 'Done'],
-    instructions: [
-      `Jog the probe to approximately 5mm outside the ${dir.label.toLowerCase()}. Ensure clearance for the probing move.`,
-      `The machine will probe in the ${dir.label.toLowerCase()} direction until the probe triggers.`,
-      `${dir.label} offset has been set in the work coordinate system.`,
-    ],
-  }
-}
-
-for (const type of ['rotation-out', 'rotation-in']) {
-  wizardConfigs[type] = {
-    title: type === 'rotation-out' ? 'Outside Edge Rotation Probe' : 'Inside Edge Rotation Probe',
-    steps: ['Point 1', 'Point 2', 'Result'],
-    instructions: [
-      'Jog the probe to the first probing point on the edge. Click Next to probe this point.',
-      'Jog the probe to the second point on the same edge, at least 20mm away. Click Next to probe.',
-      'Rotation calculated and applied to the coordinate system via G68.',
-    ],
-  }
-}
-
-const wizardTitle = computed(() => (activeWizard.value ? (wizardConfigs[activeWizard.value]?.title ?? '') : ''))
-const wizardSteps = computed(() => (activeWizard.value ? (wizardConfigs[activeWizard.value]?.steps ?? []) : []))
-const wizardInstructions = computed(() => (activeWizard.value ? (wizardConfigs[activeWizard.value]?.instructions ?? []) : []))
-
-function openWizard(key: string) {
-  // Setting the wizard also resets the step to 0 (see useNav).
-  activeWizard.value = key
-}
-
-function runProbe() {
-  machine.addConsole('info', `Starting ${wizardTitle.value}...`)
-  if (activeWizard.value?.startsWith('rotation')) {
-    rotationResult.value = 2.347
-  }
-  activeWizard.value = null
-}
-
-const hasHeightmap = ref(false)
-const heightmapModal = modals.active('heightmap')
-const showHeightmapModal = computed<boolean>({
-  get: () => !!heightmapModal.value,
-  set: (open) => {
-    if (open) modals.open('heightmap')
-    else if (heightmapModal.value) modals.resolve(heightmapModal.value.id)
-  },
+const heightmapMinMax = computed<[number, number]>(() => {
+  const vals = (ps.heightmap?.values ?? []).filter((v): v is number => v !== null)
+  if (vals.length === 0) return [0, 0]
+  return [Math.min(...vals), Math.max(...vals)]
 })
-const heightmap = reactive({ gridX: 5, gridY: 5, depth: 2, feed: 100 })
 
-function cellColor(i: number): string {
-  const total = heightmap.gridX * heightmap.gridY
-  const t = (i - 1) / (total - 1)
-  const v = Math.sin(t * Math.PI * 2.3 + 0.5) * 0.5 + 0.5
-  const r = Math.round(v * 59 + 30)
-  const g = Math.round((1 - Math.abs(v - 0.5) * 2) * 180 + 30)
-  const b = Math.round((1 - v) * 200 + 30)
+function heightmapCellColor(val: number | null, [min, max]: [number, number]): string {
+  if (val === null) return '#374151'
+  const range = max - min
+  const t = range > 0 ? (val - min) / range : 0.5
+  const r = Math.round(t * 220 + 30)
+  const g = Math.round((1 - Math.abs(t - 0.5) * 2) * 180 + 30)
+  const b = Math.round((1 - t) * 220 + 30)
   return `rgb(${r},${g},${b})`
 }
 </script>
-
