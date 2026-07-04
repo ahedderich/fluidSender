@@ -55,6 +55,7 @@ import {
   senderCycleStart,
   senderHardStop,
   getSenderStatus,
+  isJobActive,
 } from '../utils/machine/sender'
 import { sendJog, cancelJog, onJogStatusUpdate } from '../utils/machine/jogger'
 import { jobRunner } from '../utils/gcode/jobRunner'
@@ -204,6 +205,9 @@ machineConnection.on('event', (ev) => {
         break
       }
       onOk()
+      if (!isJobActive()) {
+        broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
+      }
       break
     case 'probeLine':
       probingRunner.onProbeLine(ev)
@@ -264,6 +268,10 @@ export default defineWebSocketHandler({
         break
       case 'machine:command': {
         const { cmd } = msg.payload as { cmd: string }
+        if (!machineConnection.isConnected) {
+          broadcastPatch([pushConsole({ type: 'error', text: 'Not connected', ts: Date.now() })])
+          break
+        }
         machineConnection.sendRaw(cmd)
         broadcastPatch([pushConsole({ type: 'sent', text: cmd.trim(), ts: Date.now() })])
         break

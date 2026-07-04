@@ -57,6 +57,10 @@ export function getMaxPlannerSlots(): number {
   return _maxPlannerSlots
 }
 
+export function isJobActive(): boolean {
+  return _activeChunkId !== null
+}
+
 function _makeEvent(chunk: ActiveChunk, overrides?: Partial<SenderStatusEvent>): SenderStatusEvent {
   return {
     chunkId: chunk.chunkId,
