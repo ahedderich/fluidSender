@@ -622,8 +622,12 @@ async function initThree() {
     const r = Math.sqrt(oa * oa + ob * ob)
     const startAngle = Math.atan2(pb0 - cy, pa0 - cx)
     const endAngle = Math.atan2(pb1 - cy, pa1 - cx)
+    // G17 CW (G2) carries +X→−Y = decreasing atan2 angle.
+    // G18 CW (G2) carries +X→+Z = increasing atan2 angle (opposite sense).
+    // G19 CW (G2) carries +Y→+Z = increasing atan2 angle (opposite sense).
+    const sweepCw = plane === 'G17' ? cw : !cw
     let sweep: number
-    if (cw) {
+    if (sweepCw) {
       sweep = startAngle - endAngle
       if (sweep <= 0) sweep += 2 * Math.PI
     } else {
@@ -634,7 +638,7 @@ async function initThree() {
     const pts: Array<[number, number, number]> = []
     for (let n = 1; n <= numSegs; n++) {
       const t = n / numSegs
-      const angle = cw ? startAngle - t * sweep : startAngle + t * sweep
+      const angle = sweepCw ? startAngle - t * sweep : startAngle + t * sweep
       pts.push(makePt(cx + r * Math.cos(angle), cy + r * Math.sin(angle), lin0 + (lin1 - lin0) * t))
     }
     return pts

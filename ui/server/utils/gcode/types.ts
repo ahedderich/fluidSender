@@ -67,7 +67,7 @@ export type LineVector =
 
 /** Persisted analysis result stored alongside the GCode file. */
 export interface JobAnalysis {
-  version: 1
+  version: 3
   fileId: string
   filename: string
   analyzedAt: number

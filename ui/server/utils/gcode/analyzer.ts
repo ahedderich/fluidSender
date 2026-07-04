@@ -15,7 +15,7 @@ export async function loadCachedAnalysis(fileId: string): Promise<JobAnalysis | 
   try {
     const raw = await readFile(ANALYSIS_PATH, 'utf8')
     const a = JSON.parse(raw) as JobAnalysis
-    if (a.version !== 1 || a.fileId !== fileId) return null
+    if (a.version !== 3 || a.fileId !== fileId) return null
     return a
   } catch {
     return null
@@ -27,7 +27,7 @@ export async function loadRawAnalysis(): Promise<JobAnalysis | null> {
   try {
     const raw = await readFile(ANALYSIS_PATH, 'utf8')
     const a = JSON.parse(raw) as JobAnalysis
-    if (a.version !== 1) return null
+    if (a.version !== 3) return null
     return a
   } catch {
     return null
@@ -67,7 +67,7 @@ export async function analyzeGCodeFile(
   onProgress(80)
 
   const analysis: JobAnalysis = {
-    version: 1,
+    version: 3,
     fileId,
     filename,
     analyzedAt: Date.now(),

@@ -362,10 +362,11 @@ export function analyzeGCode(
         arcLen = arcLength(state.position.x, state.position.y, tx, ty, arcI, arcJ, undefined, cw) * toMm
         helicalDelta = (tz - state.position.z) * toMm
       } else if (state.plane === 'G18') {
-        arcLen = arcLength(state.position.x, state.position.z, tx, tz, arcI, arcK, undefined, cw) * toMm
+        // G18/G19 CW sense is inverted vs G17 in atan2 space — flip cw for arcLength
+        arcLen = arcLength(state.position.x, state.position.z, tx, tz, arcI, arcK, undefined, !cw) * toMm
         helicalDelta = (ty - state.position.y) * toMm
       } else {
-        arcLen = arcLength(state.position.y, state.position.z, ty, tz, arcJ, arcK, undefined, cw) * toMm
+        arcLen = arcLength(state.position.y, state.position.z, ty, tz, arcJ, arcK, undefined, !cw) * toMm
         helicalDelta = (tx - state.position.x) * toMm
       }
       const totalLen = Math.sqrt(arcLen * arcLen + helicalDelta * helicalDelta)
