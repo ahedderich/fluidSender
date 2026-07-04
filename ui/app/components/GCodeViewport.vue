@@ -208,9 +208,9 @@ const toolDiameter = computed(() => loadedLibTool.value?.diameter ?? 8)
 const machineBounds = computed(() => {
   const axes = settings.activeMachine?.fluidncConfig?.axes
   return {
-    x: axes?.x?.maxTravelMm ?? 300,
-    y: axes?.y?.maxTravelMm ?? 200,
-    z: axes?.z?.maxTravelMm ?? 100,
+    x: axes?.x?.maxTravelMm || 300,
+    y: axes?.y?.maxTravelMm || 200,
+    z: axes?.z?.maxTravelMm || 100,
   }
 })
 
@@ -745,7 +745,7 @@ function setView(view: ViewKey) {
   if (!threeCtx) return
   const { THREE, camera, controls } = threeCtx
   const b = machineBounds.value
-  const d = Math.max(b.x, b.y) * 1.8  // orbit target is origin — scale so work volume stays visible
+  const d = Math.max(b.x, b.y, 50) * 1.8  // orbit target is origin — scale so work volume stays visible; min 50 prevents camera collapse to origin
 
   // All presets orbit around the machine home (work origin = 0,0,0)
   controls.target.set(0, 0, 0)

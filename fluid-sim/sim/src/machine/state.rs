@@ -236,6 +236,9 @@ impl MachineState {
         fluid_config.insert("axes/x/steps_per_mm".into(), "80.000".into());
         fluid_config.insert("axes/y/steps_per_mm".into(), "80.000".into());
         fluid_config.insert("axes/z/steps_per_mm".into(), "400.000".into());
+        fluid_config.insert("axes/x/max_travel_mm".into(), format!("{:.3}", travel[0]));
+        fluid_config.insert("axes/y/max_travel_mm".into(), format!("{:.3}", travel[1]));
+        fluid_config.insert("axes/z/max_travel_mm".into(), format!("{:.3}", travel[2]));
         fluid_config.insert("axes/x/max_rate_mm_per_min".into(), "5000".into());
         fluid_config.insert("axes/y/max_rate_mm_per_min".into(), "5000".into());
         fluid_config.insert("axes/z/max_rate_mm_per_min".into(), "1000".into());
