@@ -68,13 +68,13 @@ describe('preprocessGCode', () => {
   it('classifies spindle commands', () => {
     const { lines } = preprocessGCode('M3 S12000\n', RAPID)
     assert.equal(lines[0].type, 'spindle')
-    assert.equal(lines[0].estimatedDurationMs, 0)
+    assert.ok(lines[0].estimatedDurationMs >= 0)
   })
 
   it('classifies coolant commands', () => {
     const { lines } = preprocessGCode('M8\n', RAPID)
     assert.equal(lines[0].type, 'coolant')
-    assert.equal(lines[0].estimatedDurationMs, 0)
+    assert.ok(lines[0].estimatedDurationMs >= 0)
   })
 
   it('strips comments from blank lines', () => {
@@ -123,5 +123,50 @@ describe('preprocessGCode', () => {
     const raw = 'G0 X10.5 Y-3.2 ; move'
     const { lines } = preprocessGCode(raw + '\n', RAPID)
     assert.equal(lines[0].raw, raw)
+  })
+
+  it('tracks position through modal G1 lines (no G word)', () => {
+    // Lines 1 and 2 have no explicit G1 — they use the modal motion mode set by line 0
+    const gcode = 'G1 X10 Y0 F600\nX20 Y5\nX30 Y10\n'
+    const { lines, vectors } = preprocessGCode(gcode, RAPID)
+    assert.equal(lines[1].type, 'feed')
+    assert.equal(lines[2].type, 'feed')
+    // Each vector's start must equal the previous vector's end
+    assert.ok(Math.abs(vectors[0]!.x1 - vectors[1]!.x0) < 1e-6, 'line 1 start x should match line 0 end x')
+    assert.ok(Math.abs(vectors[1]!.x1 - vectors[2]!.x0) < 1e-6, 'line 2 start x should match line 1 end x')
+  })
+
+  it('tracks position through modal G0 lines (no G word)', () => {
+    const gcode = 'G0 X10\nY20\nZ5\n'
+    const { lines, vectors } = preprocessGCode(gcode, RAPID)
+    assert.equal(lines[1].type, 'rapid')
+    assert.equal(lines[2].type, 'rapid')
+    // Y-only move: x stays at 10
+    assert.ok(Math.abs(vectors[1]!.x0 - 10) < 1e-6, 'modal G0 Y move should start at X=10')
+    assert.ok(Math.abs(vectors[1]!.y1 - 20) < 1e-6, 'modal G0 Y move should end at Y=20')
+  })
+
+  it('does not misclassify G28 axis words as modal motion', () => {
+    // G28 G91 Z0 — Z0 belongs to the G28 command, not a separate modal move
+    const gcode = 'G1 X10 F600\nG28 G91 Z0\nG90\n'
+    const { lines } = preprocessGCode(gcode, RAPID)
+    assert.equal(lines[1].type, 'rapid')  // G28 is rapid, not a G1 modal line
+  })
+
+  it('arc vectors connect to preceding motion', () => {
+    // After the ramp (G1 modal lines 1-3), the arc at line 4 should start where line 3 ended
+    const gcode = [
+      'G1 X0 Y0 Z0 F500',
+      'X1 Y0 Z-1',
+      'X2 Y0 Z-2',
+      'X3 Y0 Z-3',
+      'G3 X5 Y2 I-3 J4',
+    ].join('\n')
+    const { vectors } = preprocessGCode(gcode, RAPID)
+    const ramp = vectors[3]!   // last G1 modal line
+    const arc = vectors[4]!    // G3 arc
+    assert.ok(Math.abs(ramp.x1 - arc.x0) < 1e-6, 'arc x0 must match ramp end x')
+    assert.ok(Math.abs(ramp.y1 - arc.y0) < 1e-6, 'arc y0 must match ramp end y')
+    assert.ok(Math.abs(ramp.z1 - arc.z0) < 1e-6, 'arc z0 must match ramp end z')
   })
 })

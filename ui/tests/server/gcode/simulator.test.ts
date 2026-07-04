@@ -87,4 +87,17 @@ describe('simulateToLine', () => {
     const state = simulateToLine(lines('G20\n'), 0)
     assert.equal(state.units, 'G20')
   })
+
+  it('tracks position through modal G1 lines', () => {
+    // Line 1 has no G1 word but the motion mode carries over
+    const gcode = 'G1 X10 F600\nX20\n'
+    const ls = lines(gcode)
+    const state = simulateToLine(ls, 1)
+    assert.ok(Math.abs(state.position.x - 20) < 0.001)
+  })
+
+  it('tracks motion mode field', () => {
+    const state = simulateToLine(lines('G1 X5 F600\n'), 0)
+    assert.equal(state.motionMode, 'G1')
+  })
 })

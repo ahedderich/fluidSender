@@ -74,6 +74,7 @@ export function analyzeGCode(
     coolant: 'off',
     units: 'G21',
     plane: 'G17',
+    motionMode: 'G0',
     toolNumber: 0,
   }
 
@@ -277,11 +278,31 @@ export function analyzeGCode(
 
     // ── Line classification + geometry ───────────────────────────────────────
 
+    // Detect explicit motion commands and update the persistent motion mode.
+    const hasExplicitG0 = /\bG0\b/.test(clean) || /\bG00\b/.test(clean)
+    const hasExplicitG1 = /\bG1\b/.test(clean) || /\bG01\b/.test(clean)
+    const hasExplicitG2 = /\bG0?2\b/.test(clean)
+    const hasExplicitG3 = /\bG0?3\b/.test(clean)
+    const hasExplicitMotion = hasExplicitG0 || hasExplicitG1 || hasExplicitG2 || hasExplicitG3
+
+    if (hasExplicitG0) state.motionMode = 'G0'
+    else if (hasExplicitG1) state.motionMode = 'G1'
+    else if (hasExplicitG2) state.motionMode = 'G2'
+    else if (hasExplicitG3) state.motionMode = 'G3'
+
+    // A modal motion line has axis words but no explicit G motion command and no
+    // G28/G30/G38/canned-cycle that would claim those words for their own purposes.
+    const hasG28or30 = /\bG28\b/.test(clean) || /\bG30\b/.test(clean)
+    const hasG38 = /\bG38\.[2-5]\b/.test(clean)
+    const hasCannedCycle = /\bG[78]\d\b/.test(clean)
+    const hasAxisWords = /[XYZ][+-]?\d/.test(clean)
+    const isModalMotion = !hasExplicitMotion && !hasG28or30 && !hasG38 && !hasCannedCycle && hasAxisWords
+
     let type: GCodeLineType = 'modal'
     let durationMs = 0
     let vec: LineVector | null = null
 
-    if (/\bG0\b/.test(clean) || /\bG00\b/.test(clean)) {
+    if (hasExplicitG0 || (isModalMotion && state.motionMode === 'G0')) {
       const { tx, ty, tz } = resolvePos(clean, state)
       const d = dist3(state.position.x, state.position.y, state.position.z, tx, ty, tz) * toMm
       durationMs = (d / maxRapidMmPerMin) * 60_000
@@ -293,7 +314,7 @@ export function analyzeGCode(
       state.position = { x: tx, y: ty, z: tz }
       type = 'rapid'
     }
-    else if (/\bG1\b/.test(clean) || /\bG01\b/.test(clean)) {
+    else if (hasExplicitG1 || (isModalMotion && state.motionMode === 'G1')) {
       const { tx, ty, tz } = resolvePos(clean, state)
       const feedMmPerMin = state.feedRate * toMm
       if (feedMmPerMin > 0) {
@@ -308,24 +329,53 @@ export function analyzeGCode(
       state.position = { x: tx, y: ty, z: tz }
       type = 'feed'
     }
-    else if (/\bG0?[23]\b/.test(clean)) {
-      const cw = /\bG0?2\b/.test(clean)
+    else if (hasExplicitG2 || hasExplicitG3 || (isModalMotion && (state.motionMode === 'G2' || state.motionMode === 'G3'))) {
+      const cw = hasExplicitG2 || (!hasExplicitG3 && state.motionMode === 'G2')
       const { tx, ty, tz } = resolvePos(clean, state)
       const iw = word(clean, 'I')
       const jw = word(clean, 'J')
+      const kw = word(clean, 'K')
       const rw = word(clean, 'R')
-      const arcIJ = rw !== undefined && iw === undefined && jw === undefined
-        ? rToIJ(state.position.x, state.position.y, tx, ty, rw, !cw)
-        : { i: iw ?? 0, j: jw ?? 0 }
-      const len = arcLength(state.position.x, state.position.y, tx, ty, arcIJ.i, arcIJ.j, undefined, cw) * toMm
-      const totalLen = Math.sqrt(len * len + ((tz - state.position.z) * toMm) ** 2)
+
+      // Resolve center offsets (I/J/K) based on arc plane.
+      // R-format is converted to equivalent I/J/K for the active plane.
+      let arcI: number, arcJ: number, arcK: number
+      if (rw !== undefined && iw === undefined && jw === undefined && kw === undefined) {
+        if (state.plane === 'G17') {
+          const ij = rToIJ(state.position.x, state.position.y, tx, ty, rw, !cw)
+          arcI = ij.i; arcJ = ij.j; arcK = 0
+        } else if (state.plane === 'G18') {
+          const ij = rToIJ(state.position.x, state.position.z, tx, tz, rw, !cw)
+          arcI = ij.i; arcJ = 0; arcK = ij.j
+        } else {
+          const ij = rToIJ(state.position.y, state.position.z, ty, tz, rw, !cw)
+          arcI = 0; arcJ = ij.i; arcK = ij.j
+        }
+      } else {
+        arcI = iw ?? 0; arcJ = jw ?? 0; arcK = kw ?? 0
+      }
+
+      // Arc length and helical component depend on which plane the arc sweeps through.
+      let arcLen: number
+      let helicalDelta: number
+      if (state.plane === 'G17') {
+        arcLen = arcLength(state.position.x, state.position.y, tx, ty, arcI, arcJ, undefined, cw) * toMm
+        helicalDelta = (tz - state.position.z) * toMm
+      } else if (state.plane === 'G18') {
+        arcLen = arcLength(state.position.x, state.position.z, tx, tz, arcI, arcK, undefined, cw) * toMm
+        helicalDelta = (ty - state.position.y) * toMm
+      } else {
+        arcLen = arcLength(state.position.y, state.position.z, ty, tz, arcJ, arcK, undefined, cw) * toMm
+        helicalDelta = (tx - state.position.x) * toMm
+      }
+      const totalLen = Math.sqrt(arcLen * arcLen + helicalDelta * helicalDelta)
       const feedMmPerMin = state.feedRate * toMm
       if (feedMmPerMin > 0) durationMs = (totalLen / feedMmPerMin) * 60_000
       if (durationMs === 0) durationMs = 1
       axisRanges.x.min = Math.min(axisRanges.x.min, tx); axisRanges.x.max = Math.max(axisRanges.x.max, tx)
       axisRanges.y.min = Math.min(axisRanges.y.min, ty); axisRanges.y.max = Math.max(axisRanges.y.max, ty)
       axisRanges.z.min = Math.min(axisRanges.z.min, tz); axisRanges.z.max = Math.max(axisRanges.z.max, tz)
-      vec = { t: 'A', x0: state.position.x, y0: state.position.y, z0: state.position.z, x1: tx, y1: ty, z1: tz, i: arcIJ.i, j: arcIJ.j, cw, s: sIdx }
+      vec = { t: 'A', x0: state.position.x, y0: state.position.y, z0: state.position.z, x1: tx, y1: ty, z1: tz, i: arcI, j: arcJ, k: arcK, cw, plane: state.plane, s: sIdx }
       state.position = { x: tx, y: ty, z: tz }
       type = 'arc'
     }
@@ -361,8 +411,6 @@ export function analyzeGCode(
     else if (/\bG5[4-9]\b/.test(clean) || /\bG10\b/.test(clean) || /\bG92\b/.test(clean)) {
       type = 'coord'
     }
-
-    if (durationMs === 0) durationMs = 1
 
     const classified = classifyLine(raw, getActiveFirmwareVersion())
 

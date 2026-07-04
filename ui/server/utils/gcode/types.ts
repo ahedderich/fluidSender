@@ -58,12 +58,12 @@ export interface ToolSection {
 /**
  * Per-line geometry entry for the 3D viewport. Stored in vectors.json as Array<LineVector | null>
  * indexed by line number — null when a line has no geometry.
- * Arc entries carry raw parameters (I/J/CW); tessellation is performed client-side.
+ * Arc entries carry raw parameters (I/J/K/CW/plane); tessellation is performed client-side.
  * s: index into the job's toolSections array.
  */
 export type LineVector =
   | { t: 'R' | 'F'; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; s: number }
-  | { t: 'A'; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; i: number; j: number; cw: boolean; s: number }
+  | { t: 'A'; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; i: number; j: number; k: number; cw: boolean; plane: 'G17' | 'G18' | 'G19'; s: number }
 
 /** Persisted analysis result stored alongside the GCode file. */
 export interface JobAnalysis {
@@ -101,6 +101,7 @@ export interface GCodeModalState {
   coolant: 'M7' | 'M8' | 'M9' | 'off'
   units: 'G20' | 'G21'
   plane: 'G17' | 'G18' | 'G19'
+  motionMode: 'G0' | 'G1' | 'G2' | 'G3'
   toolNumber: number
 }
 

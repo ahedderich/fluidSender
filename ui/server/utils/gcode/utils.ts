@@ -37,7 +37,7 @@ export function rToIJ(
   return { i: 0.5 * (dx - dy * h), j: 0.5 * (dy + dx * h) }
 }
 
-/** Approximate arc length from I/J center offsets or R radius. */
+/** Compute arc length from I/J center offsets or R radius. */
 export function arcLength(
   startX: number,
   startY: number,
@@ -48,21 +48,31 @@ export function arcLength(
   r: number | undefined,
   clockwise: boolean,
 ): number {
-  let radius: number
   if (r !== undefined) {
-    radius = Math.abs(r)
-  } else {
-    const cx = startX + (i ?? 0)
-    const cy = startY + (j ?? 0)
-    radius = Math.sqrt((startX - cx) ** 2 + (startY - cy) ** 2)
+    // R-format: positive R = minor arc (<180°), negative R = major arc (>180°)
+    const radius = Math.abs(r)
+    if (radius < 0.0001) return dist3(startX, startY, 0, endX, endY, 0)
+    const chord = dist3(startX, startY, 0, endX, endY, 0)
+    if (chord < 0.0001) return 2 * Math.PI * radius
+    const halfAngle = Math.asin(Math.min(chord / (2 * radius), 1))
+    return radius * (r < 0 ? 2 * Math.PI - 2 * halfAngle : 2 * halfAngle)
   }
+  // I/J format: derive exact sweep angle via atan2 (handles arcs > 180° correctly)
+  const cx = startX + (i ?? 0)
+  const cy = startY + (j ?? 0)
+  const radius = Math.sqrt((startX - cx) ** 2 + (startY - cy) ** 2)
   if (radius < 0.0001) return dist3(startX, startY, 0, endX, endY, 0)
-
   const chord = dist3(startX, startY, 0, endX, endY, 0)
-  const halfAngle = Math.asin(Math.min(chord / (2 * radius), 1))
-  let angle = 2 * halfAngle
-  if (chord < 0.0001) angle = 2 * Math.PI
-  if (r !== undefined && r < 0) angle = 2 * Math.PI - angle
-
-  return radius * angle
+  if (chord < 0.0001) return 2 * Math.PI * radius
+  const startAngle = Math.atan2(startY - cy, startX - cx)
+  const endAngle = Math.atan2(endY - cy, endX - cx)
+  let sweep: number
+  if (clockwise) {
+    sweep = startAngle - endAngle
+    if (sweep <= 0) sweep += 2 * Math.PI
+  } else {
+    sweep = endAngle - startAngle
+    if (sweep <= 0) sweep += 2 * Math.PI
+  }
+  return radius * sweep
 }

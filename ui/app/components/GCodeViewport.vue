@@ -587,15 +587,41 @@ async function initThree() {
   function tessellateArc(
     sx: number, sy: number, sz: number,
     ex: number, ey: number, ez: number,
-    i: number, j: number,
+    i: number, j: number, k: number,
     cw: boolean,
+    plane: 'G17' | 'G18' | 'G19',
     numSegs = 32,
   ): Array<[number, number, number]> {
-    const cx = sx + i
-    const cy = sy + j
-    const r = Math.sqrt(i * i + j * j)
-    const startAngle = Math.atan2(sy - cy, sx - cx)
-    const endAngle = Math.atan2(ey - cy, ex - cx)
+    // Map the arc plane to in-plane coordinates (pa, pb) and the off-plane linear axis.
+    // G17 = XY plane (Z linear), G18 = XZ plane (Y linear), G19 = YZ plane (X linear).
+    let pa0: number, pa1: number, pb0: number, pb1: number
+    let oa: number, ob: number
+    let lin0: number, lin1: number
+    let makePt: (pa: number, pb: number, lin: number) => [number, number, number]
+
+    if (plane === 'G18') {
+      pa0 = sx; pa1 = ex; pb0 = sz; pb1 = ez
+      oa = i; ob = k
+      lin0 = sy; lin1 = ey
+      makePt = (pa, pb, lin) => [pa, lin, pb]
+    } else if (plane === 'G19') {
+      pa0 = sy; pa1 = ey; pb0 = sz; pb1 = ez
+      oa = j; ob = k
+      lin0 = sx; lin1 = ex
+      makePt = (pa, pb, lin) => [lin, pa, pb]
+    } else {
+      // G17 (default)
+      pa0 = sx; pa1 = ex; pb0 = sy; pb1 = ey
+      oa = i; ob = j
+      lin0 = sz; lin1 = ez
+      makePt = (pa, pb, lin) => [pa, pb, lin]
+    }
+
+    const cx = pa0 + oa
+    const cy = pb0 + ob
+    const r = Math.sqrt(oa * oa + ob * ob)
+    const startAngle = Math.atan2(pb0 - cy, pa0 - cx)
+    const endAngle = Math.atan2(pb1 - cy, pa1 - cx)
     let sweep: number
     if (cw) {
       sweep = startAngle - endAngle
@@ -604,12 +630,12 @@ async function initThree() {
       sweep = endAngle - startAngle
       if (sweep <= 0) sweep += 2 * Math.PI
     }
-    if (Math.hypot(ex - sx, ey - sy) < 1e-6) sweep = 2 * Math.PI
+    if (Math.hypot(pa1 - pa0, pb1 - pb0) < 1e-6) sweep = 2 * Math.PI
     const pts: Array<[number, number, number]> = []
-    for (let k = 1; k <= numSegs; k++) {
-      const t = k / numSegs
+    for (let n = 1; n <= numSegs; n++) {
+      const t = n / numSegs
       const angle = cw ? startAngle - t * sweep : startAngle + t * sweep
-      pts.push([cx + r * Math.cos(angle), cy + r * Math.sin(angle), sz + (ez - sz) * t])
+      pts.push(makePt(cx + r * Math.cos(angle), cy + r * Math.sin(angle), lin0 + (lin1 - lin0) * t))
     }
     return pts
   }
@@ -626,7 +652,7 @@ async function initThree() {
       if (!vec) continue
       if (vec.t === 'A') {
         // Tessellate arc into line segments
-        const pts = tessellateArc(vec.x0, vec.y0, vec.z0, vec.x1, vec.y1, vec.z1, vec.i, vec.j, vec.cw)
+        const pts = tessellateArc(vec.x0, vec.y0, vec.z0, vec.x1, vec.y1, vec.z1, vec.i, vec.j, (vec as any).k ?? 0, vec.cw, (vec as any).plane ?? 'G17')
         let px = vec.x0, py = vec.y0, pz = vec.z0
         for (const [nx, ny, nz] of pts) {
           feedPts.push(px, py, pz, nx, ny, nz)
