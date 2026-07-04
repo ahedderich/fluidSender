@@ -5,6 +5,7 @@ import {
   broadcast,
   broadcastPatch,
   getConfig,
+  setConfig,
   getSnapshot,
   getUiState,
   getConnection,
@@ -60,6 +61,7 @@ import { jobRunner } from '../utils/gcode/jobRunner'
 import { loadRuntimeLog } from '../utils/tool/runtimeLog'
 import { probingRunner } from '../utils/probing/probingRunner'
 import type { ProbeConfig, ProbeCompensation } from '../utils/tool/types'
+import { parseFluidNCConfig } from '../utils/machine/configParser'
 
 // ─── One-time bootstrap ──────────────────────────────────────────────────────
 
@@ -79,6 +81,40 @@ jobRunner.bootRestore().then((mode) => {
 }).catch((err) => {
   console.error('[ws] bootRestore error:', err)
 })
+
+// ─── Firmware config fetch ($$ on connect) ───────────────────────────────────
+
+let _configFetch: { lines: string[]; timer: ReturnType<typeof setTimeout> } | null = null
+
+function _beginConfigFetch() {
+  if (_configFetch) return
+  _configFetch = { lines: [], timer: setTimeout(() => { _configFetch = null }, 5000) }
+  machineConnection.sendRaw('$$')
+}
+
+async function _finishConfigFetch(): Promise<void> {
+  if (!_configFetch) return
+  const lines = _configFetch.lines
+  clearTimeout(_configFetch.timer)
+  _configFetch = null
+
+  const machineId = getConnection().machineId
+  if (!machineId || lines.length === 0) return
+
+  try {
+    const fluidncConfig = parseFluidNCConfig(lines)
+    const config = await getConfig()
+    const machines = (config.machines ?? []) as { id?: string; [key: string]: unknown }[]
+    const machine = machines.find((m) => m.id === machineId)
+    if (machine) {
+      machine.fluidncConfig = fluidncConfig
+      await setConfig(config)
+      broadcastPatch([{ path: 'config', set: config as unknown as Record<string, unknown> }])
+    }
+  } catch (err) {
+    console.error('[ws] config fetch error:', err)
+  }
+}
 
 machineConnection.on('event', (ev) => {
   switch (ev.type) {
@@ -126,6 +162,11 @@ machineConnection.on('event', (ev) => {
       break
     }
     case 'responseLine': {
+      // Intercept $key=value lines during config fetch — suppress from console
+      if (_configFetch && ev.line.startsWith('$') && ev.line.includes('=')) {
+        _configFetch.lines.push(ev.line)
+        break
+      }
       broadcastPatch([pushConsole({ type: 'recv', text: ev.line, ts: Date.now() })])
       // error:N is a rejected-command acknowledgement — counts as an ack
       if (ev.line.startsWith('error:')) {
@@ -136,6 +177,7 @@ machineConnection.on('event', (ev) => {
         setActiveFirmwareVersion(ver)
         const next = setConnection({ firmwareVersion: ver })
         broadcastPatch([{ path: 'connection', set: { ...next } }])
+        _beginConfigFetch()
       }
       break
     }
@@ -157,6 +199,10 @@ machineConnection.on('event', (ev) => {
       break
     }
     case 'ok':
+      if (_configFetch) {
+        _finishConfigFetch().catch((err) => console.error('[ws] _finishConfigFetch error:', err))
+        break
+      }
       onOk()
       break
     case 'probeLine':

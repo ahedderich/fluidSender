@@ -245,6 +245,26 @@ impl MachineState {
         fluid_config.insert("axes/x/homing/cycle".into(), "2".into());
         fluid_config.insert("axes/y/homing/cycle".into(), "2".into());
         fluid_config.insert("axes/z/homing/cycle".into(), "1".into());
+        fluid_config.insert("axes/x/motor0/limit_neg_pin".into(), "gpio.1".into());
+        fluid_config.insert("axes/x/motor0/limit_pos_pin".into(), "gpio.2".into());
+        fluid_config.insert("axes/x/motor0/hard_limits".into(), "true".into());
+        fluid_config.insert("axes/x/motor0/pulloff_mm".into(), "3".into());
+        fluid_config.insert("axes/y/motor0/limit_neg_pin".into(), "gpio.3".into());
+        fluid_config.insert("axes/y/motor0/limit_pos_pin".into(), "gpio.4".into());
+        fluid_config.insert("axes/y/motor0/hard_limits".into(), "true".into());
+        fluid_config.insert("axes/y/motor0/pulloff_mm".into(), "3".into());
+        fluid_config.insert("axes/z/motor0/limit_neg_pin".into(), "gpio.5".into());
+        fluid_config.insert("axes/z/motor0/limit_pos_pin".into(), "gpio.6".into());
+        fluid_config.insert("axes/z/motor0/hard_limits".into(), "true".into());
+        fluid_config.insert("axes/z/motor0/pulloff_mm".into(), "3".into());
+        fluid_config.insert("probe/pin".into(), "gpio.22".into());
+        fluid_config.insert("probe/toolsetter_pin".into(), "gpio.23".into());
+        fluid_config.insert("probe/check_mode_start".into(), "false".into());
+        fluid_config.insert("probe/hard_stop".into(), "true".into());
+        fluid_config.insert("control/safety_door_pin".into(), "gpio.25".into());
+        fluid_config.insert("control/reset_pin".into(), "NO_PIN".into());
+        fluid_config.insert("control/feed_hold_pin".into(), "NO_PIN".into());
+        fluid_config.insert("control/cycle_start_pin".into(), "NO_PIN".into());
 
         let initial_pos = [-150.0, -100.0, 5.0, 0.0, 0.0, 0.0];
         Self {

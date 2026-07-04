@@ -228,49 +228,6 @@
             </div>
           </div>
 
-          <div class="border-t border-gray-100 dark:border-slate-700 pt-2.5">
-            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide">Spindle</div>
-            <div class="space-y-1">
-              <div class="flex items-center justify-between py-1 px-1.5 rounded">
-                <span class="text-sm text-gray-800 dark:text-slate-200">State</span>
-                <span :class="machine.spindleOn ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400'" class="text-xs px-2 py-0.5 rounded-full font-medium">
-                  {{ machine.spindleOn ? (machine.spindleDir === 'ccw' ? 'ON · CCW' : 'ON · CW') : 'OFF' }}
-                </span>
-              </div>
-              <div class="flex items-center justify-between py-1 px-1.5 rounded">
-                <span class="text-sm text-gray-800 dark:text-slate-200">Speed</span>
-                <span class="text-xs font-mono text-gray-600 dark:text-slate-300">{{ machine.spindleRpm }} RPM</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="border-t border-gray-100 dark:border-slate-700 pt-2.5">
-            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide">Coolant</div>
-            <div class="flex items-center justify-between py-1 px-1.5 rounded">
-              <span class="text-sm text-gray-800 dark:text-slate-200">Status</span>
-              <span :class="machine.coolant !== 'off' ? 'bg-cyan-500 text-white' : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400'" class="text-xs px-2 py-0.5 rounded-full font-medium">
-                {{ machine.coolant === 'off' ? 'OFF' : machine.coolant === 'flood' ? 'FLOOD' : 'MIST' }}
-              </span>
-            </div>
-          </div>
-
-          <div class="border-t border-gray-100 dark:border-slate-700 pt-2.5">
-            <div class="text-xs text-gray-500 dark:text-slate-400 font-semibold mb-1.5 uppercase tracking-wide">Overrides</div>
-            <div class="space-y-1">
-              <div class="flex items-center justify-between py-1 px-1.5 rounded">
-                <span class="text-sm text-gray-800 dark:text-slate-200">Feed</span>
-                <span :class="machine.feedOverride !== 100 ? 'bg-amber-400 text-white' : 'text-gray-600 dark:text-slate-300'" class="text-xs font-mono px-2 py-0.5 rounded-full">
-                  {{ machine.feedOverride }}%
-                </span>
-              </div>
-              <div class="flex items-center justify-between py-1 px-1.5 rounded">
-                <span class="text-sm text-gray-800 dark:text-slate-200">Spindle</span>
-                <span :class="machine.spindleOverride !== 100 ? 'bg-amber-400 text-white' : 'text-gray-600 dark:text-slate-300'" class="text-xs font-mono px-2 py-0.5 rounded-full">
-                  {{ machine.spindleOverride }}%
-                </span>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -367,16 +324,26 @@ const sensorOpen = ref(false)
 
 const fluidncCfg = computed(() => s.activeMachine?.fluidncConfig ?? null)
 
-// Derive configured axes from the last known mpos (A axis present = 4-axis machine)
+const isRealPin = (pin: string | undefined): boolean => !!pin && pin !== 'NO_PIN' && pin !== ''
+
+// Axes that have at least one limit switch pin configured; fall back to mpos-derived list
 const configuredAxes = computed(() => {
+  const cfg = fluidncCfg.value
+  if (cfg?.axes && Object.keys(cfg.axes).length > 0) {
+    const withLimits = Object.keys(cfg.axes).filter((a) => {
+      const m = cfg.axes[a]?.motor0
+      return isRealPin(m?.limitNegPin) || isRealPin(m?.limitPosPin)
+    })
+    if (withLimits.length > 0) return withLimits.map((a) => a.toUpperCase())
+  }
   const axes = ['X', 'Y', 'Z']
   if (machine.machinePos.a !== undefined) axes.push('A')
   return axes
 })
 
-const hasProbe = computed(() => !!fluidncCfg.value?.probe?.pin || machine.probe)
-const hasToolsetter = computed(() => !!fluidncCfg.value?.probe?.toolsetterPin || machine.toolsetter)
-const hasDoor = computed(() => !!fluidncCfg.value?.control?.safetyDoorPin || machine.door)
+const hasProbe = computed(() => isRealPin(fluidncCfg.value?.probe?.pin) || machine.probe)
+const hasToolsetter = computed(() => isRealPin(fluidncCfg.value?.probe?.toolsetterPin) || machine.toolsetter)
+const hasDoor = computed(() => isRealPin(fluidncCfg.value?.control?.safetyDoorPin) || machine.door)
 
 const anyTriggered = computed(() =>
   machine.limitSwitches.some((s) => s.triggered) || machine.probe || machine.toolsetter || machine.door
