@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
+import { appendExecution } from '../fileMetadata'
 import { analyzeGCode } from './analysis'
 import { getModalStateAtLine } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
@@ -69,6 +70,9 @@ class JobRunner {
   // Runtime session
   private _runtimeSession: { toolNumber: number; scope: 'M' | 'A'; startMs: number } | null = null
 
+  // Execution history tracking
+  private _execStartedAt: number | null = null
+
   // Active program-pause modal id (null when no M0 pause is in progress)
   private _programPauseModalId: string | null = null
 
@@ -89,7 +93,7 @@ class JobRunner {
     this.analyzeAbort?.abort()
     this.analyzeAbort = null
 
-    const filename = fileId.replace(/^[0-9a-f-]+-/i, '')
+    const filename = basename(fileId).replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')
 
     try {
       let analysis = await loadCachedAnalysis(fileId)
@@ -228,6 +232,7 @@ class JobRunner {
 
     jLog(`start() status=${this._status} totalLines=${this.lines.length} sections=${this._toolSections.length}`)
     this._currentSectionIndex = 0
+    this._execStartedAt = Date.now()
     this._setStatus('running', { startWallClock: Date.now(), execPtr: this._execPtr })
     this._startRuntimeSession(this._toolSections[0] ?? null)
     this._startMainSend().catch(console.error)
@@ -337,6 +342,7 @@ class JobRunner {
       }
       this._execPtr = 0
       this.sendPtr = 0
+      this._recordExecution('aborted')
       this._setStatus('loaded', {
         startWallClock: null,
         sendPtr: 0,
@@ -353,6 +359,7 @@ class JobRunner {
       setToolChangeModeActive(false)
       this._finalizeRuntimeSession().catch(() => {})
       this._mainJobChunkId = null
+      this._recordExecution('aborted')
       this._setStatus('loaded', { toolChangeRequest: null, startWallClock: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null })
       return
     }
@@ -362,6 +369,7 @@ class JobRunner {
       this._sendHandle = null
       this._execPtr = 0
       this.sendPtr = 0
+      this._recordExecution('aborted')
       this._setStatus('loaded', {
         startWallClock: null,
         sendPtr: 0,
@@ -391,6 +399,7 @@ class JobRunner {
     this._sendHandle = null
     this._execPtr = 0
     this.sendPtr = 0
+    this._recordExecution('aborted')
     this._setStatus('loaded', {
       startWallClock: null,
       sendPtr: 0,
@@ -734,6 +743,7 @@ class JobRunner {
         this._mainJobChunkId = null
         this._execPtr = 0
         this.sendPtr = 0
+        this._recordExecution('aborted')
         this._setStatus('loaded', {
           startWallClock: null,
           sendPtr: 0,
@@ -1131,6 +1141,7 @@ class JobRunner {
   private _completeJob(): void {
     this._execPtr = this.lines.length
     this.sendPtr = this.lines.length
+    this._recordExecution('success')
     this._setStatus('complete', {
       startWallClock: null,
       sendPtr: this.lines.length,
@@ -1140,6 +1151,17 @@ class JobRunner {
       programPause: null,
     })
     clearCheckpoint().catch(() => {})
+  }
+
+  private _recordExecution(status: 'success' | 'error' | 'aborted', errorMessage?: string): void {
+    const startedAt = this._execStartedAt
+    const fileId = this.fileId
+    this._execStartedAt = null
+    if (!startedAt || !fileId) return
+    const completedAt = Date.now()
+    this._getActiveMachineId()
+      .then((machineId) => appendExecution(fileId, { startedAt, completedAt, status, machineId: machineId ?? 'unknown', errorMessage }))
+      .catch(() => {})
   }
 
   private _checkpointIfDue(): void {
@@ -1200,6 +1222,7 @@ class JobRunner {
   private _broadcastError(msg: string): void {
     const closeOp = this._closeModal()
     if (closeOp) broadcastPatch([closeOp])
+    this._recordExecution('error', msg)
     this._status = 'error'
     broadcastPatch([setJobState({ status: 'error', errorMessage: msg })])
   }

@@ -1,49 +1,64 @@
 import { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { initMeta } from '../utils/fileMetadata'
 
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
 const UPLOADS_DIR = join(DATA_DIR, 'uploads')
-const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100 MB
+const MAX_FILE_SIZE = 100 * 1024 * 1024
 
 export default defineEventHandler(async (event) => {
-  await mkdir(UPLOADS_DIR, { recursive: true })
-
   const formData = await readMultipartFormData(event)
   if (!formData || formData.length === 0) {
-    throw createError({ statusCode: 400, message: 'No file provided' })
+    throw createError({ statusCode: 400, message: 'No files provided' })
   }
 
-  const filePart = formData.find((p) => p.name === 'file')
-  if (!filePart || !filePart.data || !filePart.filename) {
-    throw createError({ statusCode: 400, message: 'Field "file" with filename is required' })
+  const dirPart = formData.find((p) => p.name === 'dir')
+  const rawDir = dirPart?.data ? Buffer.from(dirPart.data).toString().trim() : ''
+
+  const targetDir = rawDir ? resolve(join(UPLOADS_DIR, rawDir)) : UPLOADS_DIR
+  if (targetDir !== UPLOADS_DIR && !targetDir.startsWith(UPLOADS_DIR + '/')) {
+    throw createError({ statusCode: 400, message: 'Invalid target directory' })
   }
 
-  if (filePart.data.length > MAX_FILE_SIZE) {
-    throw createError({ statusCode: 413, message: 'File exceeds 100 MB limit' })
+  await mkdir(targetDir, { recursive: true })
+
+  const fileParts = formData.filter((p) => p.name === 'file' && p.filename && p.data)
+  if (fileParts.length === 0) {
+    throw createError({ statusCode: 400, message: 'No file parts provided' })
   }
 
-  // Sanitise filename — strip any path components and restrict to safe chars
-  const safeName = filePart.filename
-    .replace(/.*[/\\]/, '')
-    .replace(/[^a-zA-Z0-9._-]/g, '_')
-    .slice(0, 128)
+  const results: { fileId: string; filename: string }[] = []
 
-  if (!safeName) {
-    throw createError({ statusCode: 400, message: 'Invalid filename' })
+  for (const part of fileParts) {
+    if (part.data.length > MAX_FILE_SIZE) {
+      throw createError({ statusCode: 413, message: `${part.filename} exceeds 100 MB limit` })
+    }
+
+    const safeName = part.filename!
+      .replace(/.*[/\\]/, '')
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .slice(0, 128)
+
+    if (!safeName) continue
+
+    const fileId = `${randomUUID()}-${safeName}`
+    const destPath = join(targetDir, fileId)
+    const relPath = rawDir ? `${rawDir.replace(/\/$/, '')}/${fileId}` : fileId
+    const uploadedAt = Date.now()
+
+    await new Promise<void>((res, rej) => {
+      const ws = createWriteStream(destPath)
+      ws.on('error', rej)
+      ws.on('finish', res)
+      ws.write(part.data)
+      ws.end()
+    })
+
+    await initMeta(relPath, uploadedAt)
+    results.push({ fileId: relPath, filename: safeName })
   }
 
-  const fileId = `${randomUUID()}-${safeName}`
-  const destPath = join(UPLOADS_DIR, fileId)
-
-  await new Promise<void>((resolve, reject) => {
-    const ws = createWriteStream(destPath)
-    ws.on('error', reject)
-    ws.on('finish', resolve)
-    ws.write(filePart.data)
-    ws.end()
-  })
-
-  return { fileId, filename: safeName }
+  return { files: results }
 })
