@@ -287,24 +287,23 @@ export async function buildTcContext(jobState: JobState, machineId: string): Pro
     const config = await getConfig()
     const machines = (config.machines ?? []) as Array<{
       id: string
-      magazine?: { enabled?: boolean; size?: number }
+      toolchange?: { magazineSlots?: (number | null)[] }
     }>
     const machine = machines.find((m) => m.id === machineId)
-    const magazineSize = machine?.magazine?.size ?? 0
-
-    const slots: Array<{ x: number; y: number; z: number }> = [{ x: 0, y: 0, z: 0 }]
-    for (let i = 1; i <= magazineSize; i++) {
-      slots.push({ x: 0, y: 0, z: 0 })
-    }
+    const tc = machine?.toolchange
+    const magazineSlots: (number | null)[] = (tc && 'magazineSlots' in tc) ? (tc.magazineSlots ?? []) : []
 
     const targetTool = jobState.toolChangeRequest?.toolNumber ?? 0
+    const currentTool = 0
+    const currentSlot = magazineSlots.findIndex((n) => n === currentTool) + 1
+    const targetSlot = magazineSlots.findIndex((n) => n === targetTool) + 1
 
     return {
-      currentTool: 0,
+      currentTool,
       targetTool,
-      currentSlot: 0,
-      targetSlot: 0,
-      slots,
+      currentSlot,
+      targetSlot,
+      slots: magazineSlots.map(() => ({ x: 0, y: 0, z: 0 })),
     }
   } catch {
     return null

@@ -351,6 +351,53 @@ export function settleProgramPauseModal(id: string, result: unknown): PatchOp | 
   return resolveModal(id, result)
 }
 
+// ─── Toolchange modal helpers ─────────────────────────────────────────────────
+
+export type ToolchangePhase = 'waiting_for_swap' | 'probing' | 'probe_result' | 'error'
+
+export interface ToolchangeModalProps {
+  phase: ToolchangePhase
+  currentToolNumber: number | null
+  nextToolNumber: number | null
+  isJobContext: boolean
+  operation?: 'load' | 'unload'
+  probedOffset?: number
+  errorMessage?: string
+}
+
+export function openToolchangeModal(props: ToolchangeModalProps): { id: string; op: PatchOp } {
+  const id = (globalThis.crypto?.randomUUID?.() ?? `tc-${Date.now()}-${Math.random().toString(36).slice(2)}`) as string
+  const entry: ModalEntry = { id, kind: 'toolchange', props: props as unknown as Record<string, unknown> }
+  ui.modals.push(entry)
+  return { id, op: { path: 'modals', push: entry } }
+}
+
+export function updateToolchangeModal(id: string, props: Partial<ToolchangeModalProps>): PatchOp[] {
+  const idx = ui.modals.findIndex((m) => m.id === id)
+  if (idx === -1) return []
+  const existing = ui.modals[idx]!
+  const updated: ModalEntry = { ...existing, props: { ...existing.props, ...props as unknown as Record<string, unknown> } }
+  ui.modals.splice(idx, 1, updated)
+  return [
+    { path: 'modals', removeId: id },
+    { path: 'modals', push: updated },
+  ]
+}
+
+export async function updateMagazineSlots(machineId: string, slots: (number | null)[]): Promise<PatchOp> {
+  const config = await getConfig()
+  const machines = (config.machines ?? []) as Array<Record<string, unknown>>
+  const machine = machines.find((m) => m.id === machineId)
+  if (machine && machine.toolchange && typeof machine.toolchange === 'object') {
+    const tc = machine.toolchange as Record<string, unknown>
+    if ('magazineSlots' in tc) {
+      tc.magazineSlots = slots
+      await setConfig(config)
+    }
+  }
+  return { path: 'config', set: config as unknown as Record<string, unknown> }
+}
+
 export function pushToast(toast: Toast): PatchOp {
   ui.toasts.push(toast)
   return { path: 'toasts', push: toast }

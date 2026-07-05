@@ -101,15 +101,15 @@
     </div>
 
     <!-- Tool Magazine (shown when machine has magazine configured) -->
-    <template v-if="magazine?.enabled && magazine.size > 0">
+    <template v-if="isAtcStrategy && magazineConfig?.enabled && magazineConfig.size > 0">
       <div class="px-3 pt-2.5 pb-2.5 border-b border-gray-100 dark:border-slate-700 shrink-0">
         <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">
-          Tool Magazine <span class="normal-case font-normal text-gray-400 dark:text-slate-500">({{ magazine.size }} slots)</span>
+          Tool Magazine <span class="normal-case font-normal text-gray-400 dark:text-slate-500">({{ magazineConfig!.size }} slots)</span>
           <span v-if="draggingToolId" class="ml-2 normal-case font-normal text-blue-500 dark:text-blue-400">Drop onto a slot to assign</span>
         </p>
         <div class="flex flex-wrap gap-1.5">
           <div
-            v-for="slot in magazine.size"
+            v-for="slot in magazineConfig!.size"
             :key="slot"
             :class="[
               dragOverSlot === slot
@@ -874,15 +874,26 @@ function dropOnSlot(slot: number) {
   const entry = allTools.value.find(e => e.id === draggingToolId.value)
   if (!entry) return
   machine.magazineSlots.splice(slot - 1, 1, entry.number!)
+  wsSend({ t: 'tool:magazineSlots:set', payload: { slots: [...machine.magazineSlots] } })
   draggingToolId.value = null
   dragOverSlot.value = null
 }
 
 function clearSlot(slot: number) {
   machine.magazineSlots.splice(slot - 1, 1, null)
+  wsSend({ t: 'tool:magazineSlots:set', payload: { slots: [...machine.magazineSlots] } })
 }
 
-const magazine = computed(() => settings.activeMachine?.magazine ?? null)
+const isAtcStrategy = computed(() => {
+  const tc = settings.activeMachine?.toolchange
+  return tc?.strategy === 'atc-passthrough' || tc?.strategy === 'atc-managed' || tc?.strategy === 'custom-macro'
+})
+
+const magazineConfig = computed(() => {
+  const tc = settings.activeMachine?.toolchange
+  if (!tc || !('magazine' in tc)) return null
+  return (tc as { magazine: { enabled: boolean; size: number } }).magazine
+})
 const machineName = computed(() => settings.activeMachine?.name ?? 'Machine')
 
 const TOOL_TYPES = [

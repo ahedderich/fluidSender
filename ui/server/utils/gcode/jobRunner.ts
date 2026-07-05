@@ -4,14 +4,33 @@ import { analyzeGCode } from './analysis'
 import { getModalStateAtLine } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
 import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
-import { broadcastPatch, setJobState, getConfig, setToolChangeModeActive, openProgramPauseModal, registerProgramPauseHandler, settleProgramPauseModal, type PatchOp } from '../appState'
+import {
+  broadcastPatch,
+  setJobState,
+  getConfig,
+  setToolChangeModeActive,
+  openProgramPauseModal,
+  registerProgramPauseHandler,
+  settleProgramPauseModal,
+  openToolchangeModal,
+  updateToolchangeModal,
+  setLoadedTool,
+  getLoadedToolForMachine,
+  pushToast,
+  type PatchOp,
+  type ToolchangeModalProps,
+} from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
 import { startSend, sendGCode, suspendSend, resumeChunk, stopSend, senderHardStop } from '../machine/sender'
 import { setMode } from '../machine/machineMode'
 import { toolStore } from '../tool/toolStore'
 import { appendRuntimeSession } from '../tool/runtimeLog'
+import { buildToolchangePositionSequence, buildToolsetterApproachSequence } from './toolchangeSequences'
+import { runToolsetterProbe } from '../machine/toolsetterProbe'
 import type { SendHandle, SenderStatusEvent } from '../machine/types'
 import type { GCodeLine, GCodeModalState, JobState, ToolSection } from './types'
+import type { ToolchangeConfig } from '../../../../shared/toolchange'
+import type { TcVars } from '../macro/macroRunner'
 
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
 const UPLOADS_DIR = join(DATA_DIR, 'uploads')
@@ -52,6 +71,12 @@ class JobRunner {
 
   // Active program-pause modal id (null when no M0 pause is in progress)
   private _programPauseModalId: string | null = null
+
+  // Toolchange modal id (null when no toolchange dialog is open)
+  private _toolchangeModalId: string | null = null
+
+  // Last T-word seen — used for atc-passthrough to update loadedToolNumber on M6 ack
+  private _lastSeenToolNumber: number | null = null
 
   get status() { return this._status }
 
@@ -205,7 +230,7 @@ class JobRunner {
     this._currentSectionIndex = 0
     this._setStatus('running', { startWallClock: Date.now(), execPtr: this._execPtr })
     this._startRuntimeSession(this._toolSections[0] ?? null)
-    this._startMainSend()
+    this._startMainSend().catch(console.error)
   }
 
   /** Pause — sends feed hold, waits for Hold:0, resets machine. Fires 'suspended' event when done. */
@@ -270,7 +295,7 @@ class JobRunner {
         jLog(`resume() fallback: no modal, no suspendedChunk → fresh send from execPtr=${resumePtr}`)
         this.sendPtr = resumePtr
         this._setStatus('running', { startWallClock: Date.now() })
-        this._startMainSend()
+        this._startMainSend().catch(console.error)
       }
     } catch (err) {
       jLog(`resume() ERROR: ${(err as Error).message}`)
@@ -574,14 +599,16 @@ class JobRunner {
   // ─── Private ─────────────────────────────────────────────────────────────────
 
   /** Start sending from current sendPtr as a flat chunk (single section or recovery). */
-  private _startMainSend(): void {
-    if (this._toolSections.length <= 1) {
-      // Single-section file: send everything from sendPtr
+  private async _startMainSend(): Promise<void> {
+    const tc = await this._getToolchangeConfig()
+    if (tc.strategy === 'atc-passthrough') {
       this._startFlatSend()
       return
     }
-
-    // Multi-section: start sending current section's chunk
+    if (this._toolSections.length <= 1) {
+      this._startFlatSend()
+      return
+    }
     this._sendSection(this._currentSectionIndex)
   }
 
@@ -624,6 +651,23 @@ class JobRunner {
       jLog(`progress: sent=${event.sent} exec=${event.executed} inPlanner=${inPlanner} status=${event.status} holdPhase=${event.holdPhase}`)
       this.sendPtr = event.sent
       this._execPtr = event.executed
+
+      // Track T-word and M6 for atc-passthrough: update loadedToolNumber when M6 acks
+      if (event.executed > 0) {
+        const sentLine = this.lines[event.executed - 1]?.raw?.trim() ?? ''
+        if (/^T(\d+)\s*$/i.test(sentLine)) {
+          const m = sentLine.match(/^T(\d+)/i)
+          if (m) this._lastSeenToolNumber = parseInt(m[1]!, 10)
+        } else if (/^M6\b/i.test(sentLine) && this._lastSeenToolNumber !== null) {
+          const toolNum = this._lastSeenToolNumber
+          this._getActiveMachineId().then((machineId) => {
+            if (machineId) {
+              setLoadedTool(machineId, toolNum).then((op) => broadcastPatch([op])).catch(() => {})
+            }
+          }).catch(() => {})
+        }
+      }
+
       ops.push(setJobState({
         sendPtr: this.sendPtr,
         execPtr: this._execPtr,
@@ -729,7 +773,7 @@ class JobRunner {
           // The resumed chunk fires its own events via its existing onEvent callback.
         } else {
           this._setStatus('running', { startWallClock: Date.now() })
-          this._startMainSend()
+          this._startMainSend().catch(console.error)
         }
         break
       case 'error':
@@ -742,43 +786,109 @@ class JobRunner {
 
   private async _enterToolChangeMode(sectionIndex: number): Promise<void> {
     const section = this._toolSections[sectionIndex]!
-    const toolChangeType = section.toolChangeType ?? 'T'
-
-    this._status = 'tool_change'
-    setToolChangeModeActive(true)
-    setMode('idle')
+    const tc = await this._getToolchangeConfig()
 
     const toolChangeRequest: JobState['toolChangeRequest'] = {
       sectionIndex,
       toolNumber: section.toolNumber,
-      toolChangeType,
+      toolChangeType: section.toolChangeType ?? 'T',
       macroRunning: false,
       macroError: null,
     }
 
+    this._status = 'tool_change'
+    setToolChangeModeActive(true)
+    setMode('idle')
     broadcastPatch([setJobState({ status: 'tool_change', toolChangeRequest })])
 
-    const macro = await this._getToolChangeMacro()
-    if (macro && macro.trim()) {
-      const macroLines = macro.split('\n').map((l) => l.trim()).filter(Boolean)
-      broadcastPatch([setJobState({ toolChangeRequest: { ...toolChangeRequest, macroRunning: true } })])
-      this._sendHandle = sendGCode(macroLines, (event) => this._handleMacroEvent(event, toolChangeRequest))
+    switch (tc.strategy) {
+      case 'manual-basic':
+        this._openToolchangeDialog({ phase: 'waiting_for_swap', currentToolNumber: null, nextToolNumber: section.toolNumber, isJobContext: true })
+        break
+
+      case 'manual-toolsetter':
+        await this._runToolsetterSequence(tc.position, section.toolNumber, true)
+        break
+
+      case 'atc-passthrough':
+        // Should not be reached — _startMainSend() sends flat for passthrough
+        this.resumeAfterToolChange()
+        break
+
+      case 'atc-managed': {
+        const tcVars = await this._buildTcVars(section.toolNumber, tc)
+        this._runToolchangeMacro(tc.macro, toolChangeRequest, tcVars)
+        break
+      }
+
+      case 'custom-macro': {
+        const tcVars = await this._buildTcVars(section.toolNumber, tc)
+        this._runToolchangeMacro(tc.macro, toolChangeRequest, tcVars)
+        break
+      }
     }
   }
 
-  private _handleMacroEvent(
-    event: SenderStatusEvent,
-    baseRequest: NonNullable<JobState['toolChangeRequest']>,
+  private _runToolchangeMacro(
+    macro: string,
+    toolChangeRequest: NonNullable<JobState['toolChangeRequest']>,
+    tcVars: TcVars,
   ): void {
-    if (event.status !== 'completed') return
-    this._sendHandle = null
-
-    if (event.completedMode === 'success') {
-      broadcastPatch([setJobState({ toolChangeRequest: { ...baseRequest, macroRunning: false, macroError: null } })])
-    } else {
-      const errMsg = event.errorReason ?? 'Macro failed'
-      broadcastPatch([setJobState({ toolChangeRequest: { ...baseRequest, macroRunning: false, macroError: errMsg } })])
+    if (!macro?.trim()) {
+      // No macro — open dialog for user to confirm
+      this._openToolchangeDialog({ phase: 'waiting_for_swap', currentToolNumber: null, nextToolNumber: toolChangeRequest.toolNumber, isJobContext: true })
+      return
     }
+    const macroLines = macro.split('\n').map((l) => this._substituteToolVars(l, tcVars)).filter(Boolean)
+    broadcastPatch([setJobState({ toolChangeRequest: { ...toolChangeRequest, macroRunning: true } })])
+    this._sendHandle = sendGCode(macroLines, (event) => {
+      if (event.status !== 'completed') return
+      this._sendHandle = null
+      if (event.completedMode === 'success') {
+        broadcastPatch([setJobState({ toolChangeRequest: { ...toolChangeRequest, macroRunning: false, macroError: null } })])
+        const nextToolNumber = toolChangeRequest.toolNumber
+        this._getActiveMachineId().then((machineId) => {
+          if (machineId) setLoadedTool(machineId, nextToolNumber).then((op) => broadcastPatch([op])).catch(() => {})
+        }).catch(() => {})
+        this.resumeAfterToolChange()
+      } else {
+        const errMsg = event.errorReason ?? 'Macro failed'
+        broadcastPatch([setJobState({ toolChangeRequest: { ...toolChangeRequest, macroRunning: false, macroError: errMsg } })])
+      }
+    })
+  }
+
+  private _substituteToolVars(line: string, vars: TcVars): string {
+    return line
+      .replace(/\{current_tool\}/g, String(vars.currentTool))
+      .replace(/\{next_tool\}/g, String(vars.targetTool))
+      .replace(/\{current_slot\}/g, String(vars.currentSlot))
+      .replace(/\{next_slot\}/g, String(vars.targetSlot))
+  }
+
+  private _openToolchangeDialog(props: ToolchangeModalProps): void {
+    if (this._toolchangeModalId) return
+    const { id, op } = openToolchangeModal(props)
+    this._toolchangeModalId = id
+    broadcastPatch([op])
+  }
+
+  private _updateToolchangeDialog(props: Partial<ToolchangeModalProps>): void {
+    if (!this._toolchangeModalId) return
+    const ops = updateToolchangeModal(this._toolchangeModalId, props)
+    broadcastPatch(ops)
+  }
+
+  private _closeToolchangeDialog(): void {
+    if (!this._toolchangeModalId) return
+    broadcastPatch([{ path: 'modals', removeId: this._toolchangeModalId, meta: { result: 'resolved' } }])
+    this._toolchangeModalId = null
+  }
+
+  private _broadcastToolchangeError(message: string, isJobContext: boolean): void {
+    this._updateToolchangeDialog({ phase: 'error', errorMessage: message })
+    if (!isJobContext) return
+    // Don't auto-abort job — let user use the dialog Abort button
   }
 
   private _enterProgramPause(comment: string | null): void {
@@ -845,13 +955,177 @@ class JobRunner {
     }
   }
 
-  private async _getToolChangeMacro(): Promise<string | null> {
+  private async _getToolchangeConfig(): Promise<ToolchangeConfig> {
     try {
-      const config = await getConfig() as { machines?: Array<{ toolChangeMacro?: string }> }
-      return config.machines?.[0]?.toolChangeMacro ?? null
+      const config = await getConfig() as { machines?: Array<{ id?: string; toolchange?: ToolchangeConfig }> }
+      const machineId = await this._getActiveMachineId()
+      const machine = machineId
+        ? (config.machines?.find((m) => m.id === machineId) ?? config.machines?.[0])
+        : config.machines?.[0]
+      return machine?.toolchange ?? { strategy: 'manual-basic' }
     } catch {
-      return null
+      return { strategy: 'manual-basic' }
     }
+  }
+
+  private async _buildTcVars(
+    nextToolNumber: number,
+    tc: Extract<ToolchangeConfig, { magazineSlots: (number | null)[] }>,
+  ): Promise<TcVars> {
+    const machineId = await this._getActiveMachineId() ?? ''
+    const currentTool = await getLoadedToolForMachine(machineId) ?? 0
+    const slots = tc.magazineSlots
+
+    const currentSlot = slots.findIndex((n) => n === currentTool) + 1
+    const nextSlot = slots.findIndex((n) => n === nextToolNumber) + 1
+
+    return {
+      currentTool,
+      targetTool: nextToolNumber,
+      currentSlot,
+      targetSlot: nextSlot,
+      slots: slots.map(() => ({ x: 0, y: 0, z: 0 })),
+    }
+  }
+
+  private async _runToolsetterSequence(
+    pos: import('../../../../shared/toolchange').ToolsetterConfig,
+    nextToolNumber: number,
+    isJobContext: boolean,
+  ): Promise<void> {
+    const parkSeq = buildToolchangePositionSequence(pos)
+    this._sendHandle = sendGCode(parkSeq, (ev) => {
+      if (ev.status !== 'completed') return
+      this._sendHandle = null
+      if (ev.completedMode !== 'success') {
+        this._broadcastToolchangeError('Failed to reach toolchange position', isJobContext)
+        return
+      }
+      this._openToolchangeDialog({ phase: 'waiting_for_swap', currentToolNumber: null, nextToolNumber, isJobContext })
+    })
+  }
+
+  async resumeToolsetterProbe(isJobContext: boolean): Promise<void> {
+    const tc = await this._getToolchangeConfig()
+    if (tc.strategy !== 'manual-toolsetter') return
+    const pos = tc.position
+    const approachSeq = buildToolsetterApproachSequence(pos)
+    this._updateToolchangeDialog({ phase: 'probing' })
+    this._sendHandle = sendGCode(approachSeq, async (ev) => {
+      if (ev.status !== 'completed') return
+      this._sendHandle = null
+      if (ev.completedMode !== 'success') {
+        this._updateToolchangeDialog({ phase: 'error', errorMessage: 'Failed to reach toolsetter position' })
+        return
+      }
+      try {
+        const probeResult = await runToolsetterProbe(pos)
+        const toolHeight = probeResult + pos.zOffset
+        await new Promise<void>((resolve, reject) => {
+          sendGCode(
+            [`G43.1 Z${toolHeight.toFixed(4)}`, `G53 G0 Z${pos.safeZ.toFixed(4)}`],
+            (ev2) => {
+              if (ev2.status !== 'completed') return
+              if (ev2.completedMode === 'success') resolve()
+              else reject(new Error('Failed to apply tool length offset'))
+            },
+          )
+        })
+
+        if (pos.confirmAfterProbe) {
+          this._updateToolchangeDialog({ phase: 'probe_result', probedOffset: toolHeight })
+        } else {
+          this._closeToolchangeDialog()
+          if (isJobContext) this.resumeAfterToolChange()
+        }
+      } catch (err) {
+        this._updateToolchangeDialog({ phase: 'error', errorMessage: (err as Error).message })
+      }
+    })
+  }
+
+  async finishToolchangeAndResume(): Promise<void> {
+    this._closeToolchangeDialog()
+    if (this._status === 'tool_change') {
+      this.resumeAfterToolChange()
+    }
+  }
+
+  async runReprobe(): Promise<void> {
+    const tc = await this._getToolchangeConfig()
+    if (tc.strategy !== 'manual-toolsetter') return
+    const isJobContext = this._status === 'tool_change'
+    await this.resumeToolsetterProbe(isJobContext)
+  }
+
+  async runStandaloneToolchange(targetToolNumber: number | null, operation: 'load' | 'unload'): Promise<void> {
+    const busyStatuses: JobState['status'][] = ['running', 'pausing', 'stopping', 'recovering']
+    if (busyStatuses.includes(this._status)) {
+      broadcastPatch([pushToast({ id: `tc-busy-${Date.now()}`, type: 'error', message: 'Cannot change tool while job is running', timeout: 4000 })])
+      return
+    }
+
+    const tc = await this._getToolchangeConfig()
+
+    switch (tc.strategy) {
+      case 'manual-basic':
+        this._openToolchangeDialog({ phase: 'waiting_for_swap', currentToolNumber: null, nextToolNumber: targetToolNumber, isJobContext: false, operation })
+        break
+
+      case 'manual-toolsetter':
+        if (operation === 'load' && targetToolNumber !== null) {
+          await this._runToolsetterSequence(tc.position, targetToolNumber, false)
+        } else if (operation === 'unload') {
+          const parkSeq = buildToolchangePositionSequence(tc.position)
+          this._sendHandle = sendGCode(parkSeq, (ev) => {
+            if (ev.status !== 'completed' || ev.completedMode !== 'success') return
+            this._sendHandle = null
+            this._openToolchangeDialog({ phase: 'waiting_for_swap', currentToolNumber: null, nextToolNumber: null, isJobContext: false, operation: 'unload' })
+          })
+        }
+        break
+
+      case 'atc-passthrough':
+        if (operation === 'load' && targetToolNumber !== null) {
+          sendGCode([`T${targetToolNumber}`, 'M6'], async () => {
+            const machineId = await this._getActiveMachineId() ?? ''
+            if (machineId) setLoadedTool(machineId, targetToolNumber).then((op) => broadcastPatch([op])).catch(() => {})
+          })
+        } else if (operation === 'unload') {
+          const machineId = await this._getActiveMachineId() ?? ''
+          if (machineId) setLoadedTool(machineId, null).then((op) => broadcastPatch([op])).catch(() => {})
+        }
+        break
+
+      case 'atc-managed':
+      case 'custom-macro': {
+        const tn = targetToolNumber ?? 0
+        const tcVars = await this._buildTcVars(tn, tc)
+        this._runStandaloneMacro(tc.macro, tcVars, targetToolNumber, operation)
+        break
+      }
+    }
+  }
+
+  private _runStandaloneMacro(
+    macro: string,
+    tcVars: TcVars,
+    targetToolNumber: number | null,
+    operation: 'load' | 'unload',
+  ): void {
+    if (!macro?.trim()) return
+    const macroLines = macro.split('\n').map((l) => this._substituteToolVars(l, tcVars)).filter(Boolean)
+    this._sendHandle = sendGCode(macroLines, async (event) => {
+      if (event.status !== 'completed') return
+      this._sendHandle = null
+      if (event.completedMode === 'success' && operation === 'load') {
+        const machineId = await this._getActiveMachineId() ?? ''
+        if (machineId) setLoadedTool(machineId, targetToolNumber).then((op) => broadcastPatch([op])).catch(() => {})
+      } else if (event.completedMode === 'success' && operation === 'unload') {
+        const machineId = await this._getActiveMachineId() ?? ''
+        if (machineId) setLoadedTool(machineId, null).then((op) => broadcastPatch([op])).catch(() => {})
+      }
+    })
   }
 
   private _completeJob(): void {

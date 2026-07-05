@@ -30,6 +30,7 @@ import {
   setStock,
   clearStock,
   clearMeasurements,
+  updateMagazineSlots,
   type ModalEntry,
   type Toast,
   type StockDef,
@@ -359,24 +360,45 @@ export default defineWebSocketHandler({
 
       // ── Tool library ──────────────────────────────────────────────────────
       case 'tool:load': {
-        const conn = getConnection()
-        if (!conn.connected) break
         const { toolNumber } = msg.payload as { toolNumber: number }
-        const machineId = conn.machineId ?? ''
-        setLoadedTool(machineId, toolNumber).then((op) => {
-          broadcastPatch([op])
-        }).catch((e: unknown) => {
-          console.error('[ws] tool:load persist error:', e)
+        jobRunner.runStandaloneToolchange(toolNumber, 'load').catch((e: unknown) => {
+          console.error('[ws] tool:load error:', e)
         })
-        machineConnection.sendRaw(`T${toolNumber}`)
         break
       }
       case 'tool:unload': {
+        jobRunner.runStandaloneToolchange(null, 'unload').catch((e: unknown) => {
+          console.error('[ws] tool:unload error:', e)
+        })
+        break
+      }
+      case 'toolchange:confirm': {
+        jobRunner.resumeToolsetterProbe(jobRunner.status === 'tool_change').catch((e: unknown) => {
+          console.error('[ws] toolchange:confirm error:', e)
+        })
+        break
+      }
+      case 'toolchange:resume': {
+        jobRunner.finishToolchangeAndResume().catch((e: unknown) => {
+          console.error('[ws] toolchange:resume error:', e)
+        })
+        break
+      }
+      case 'toolchange:reprobe': {
+        jobRunner.runReprobe().catch((e: unknown) => {
+          console.error('[ws] toolchange:reprobe error:', e)
+        })
+        break
+      }
+      case 'toolchange:abort': {
+        jobRunner.stop()
+        break
+      }
+      case 'tool:magazineSlots:set': {
+        const { slots } = msg.payload as { slots: (number | null)[] }
         const machineId = getConnection().machineId ?? ''
-        setLoadedTool(machineId, null).then((op) => {
-          broadcastPatch([op])
-        }).catch((e: unknown) => {
-          console.error('[ws] tool:unload persist error:', e)
+        updateMagazineSlots(machineId, slots).then((op) => broadcastPatch([op])).catch((e: unknown) => {
+          console.error('[ws] tool:magazineSlots:set error:', e)
         })
         break
       }

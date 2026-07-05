@@ -131,7 +131,7 @@ export function edgeZeroValues(
 
 // ─── Multi-speed wiggle probe ─────────────────────────────────────────────────
 
-interface EdgeProbeResult {
+export interface EdgeProbeResult {
   /** Corrected edge position in work coords (WCS in effect when probing started). */
   edgeWpos: number
   /**
@@ -146,7 +146,7 @@ interface EdgeProbeResult {
 //   • zero-at-site (single-axis touch-off): probe → `G10 L20 P0 {axis}{zeroAtSettle}`
 //     in its own flush → retreat;
 //   • move-then-zero (computed point, e.g. a center): move there → `G10 L20 P0 …`.
-async function probeEdge(
+export async function probeEdge(
   axis: 'X' | 'Y' | 'Z',
   direction: '+' | '-',
   maxDistance: number,

@@ -4,6 +4,7 @@
     <slot />
     <ConfirmDialog />
     <ProgramPauseModal />
+    <ToolchangeDialog />
     <ToastHost />
   </div>
 </template>

@@ -8,8 +8,8 @@
     type="button"
   >
     <span
-      :class="modelValue ? 'translate-x-4' : 'translate-x-0.5'"
-      class="inline-block w-4 h-4 bg-white rounded-full shadow transition-transform"
+      :class="modelValue ? 'translate-x-4' : 'translate-x-0'"
+      class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform"
     />
   </button>
 </template>

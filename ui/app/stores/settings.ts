@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia'
 import type { Macro, MacroTrigger, MacroVariable } from '~/types/macro'
 import { wsSend } from '~/composables/useWsSend'
+import type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig } from '~/../../shared/toolchange'
 
 export type { Macro, MacroTrigger, MacroVariable }
+export type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig }
 
 export type ConnectionType = 'usb' | 'tcp'
 export type MachineType = 'router' | 'laser' | 'plasma'
@@ -121,19 +123,6 @@ export interface FluidNCConfig {
 
 // ─── FluidSender-owned machine settings ──────────────────────────────────────
 
-export interface MagazineConfig {
-  enabled: boolean
-  size: number
-}
-
-export interface ProbeConfig {
-  plateThickness: number
-  toolSetterHeight: number
-  tipDiameter: number
-  xyFeed: number
-  zFeed: number
-}
-
 export interface ConnectionConfig {
   type: ConnectionType
   serialPort: string
@@ -147,13 +136,10 @@ export interface MachineProfile {
   name: string
   type: MachineType
   connection: ConnectionConfig
-  probe: ProbeConfig
   macros: Macro[]
-  magazine: MagazineConfig
+  toolchange: ToolchangeConfig
   /** null until first firmware connect — loaded fresh on each connect */
   fluidncConfig: FluidNCConfig | null
-  /** GCode to run automatically before each tool change. Empty string = no automatic macro. */
-  toolChangeMacro: string
 }
 
 // ─── App-level settings types ─────────────────────────────────────────────────
@@ -223,11 +209,9 @@ export const useSettingsStore = defineStore('settings', () => {
       name: 'New Machine',
       type: 'router',
       connection: { type: 'tcp', serialPort: '', baudRate: 115200, tcpHost: '', tcpPort: 23 },
-      probe: { plateThickness: 0, toolSetterHeight: 0, tipDiameter: 3.0, xyFeed: 200, zFeed: 100 },
       macros: [],
-      magazine: { enabled: false, size: 0 },
+      toolchange: { strategy: 'manual-basic' },
       fluidncConfig: null,
-      toolChangeMacro: '',
     })
     activeMachineId.value = id
   }
@@ -300,11 +284,23 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function applyServerState(data: PersistedConfig) {
-    machines.value = (data.machines ?? []).map((m) => ({
-      toolChangeMacro: '',
-      ...m,
-      macros: _migrateMacros(m.macros ?? []),
-    }))
+    machines.value = (data.machines ?? []).map((m) => {
+      // Migrate old shape: toolChangeMacro + magazine + probe → toolchange discriminated union
+      if ('toolChangeMacro' in m && !('toolchange' in m)) {
+        const macro = (m as Record<string, unknown>).toolChangeMacro as string
+        ;(m as Record<string, unknown>).toolchange = macro?.trim()
+          ? { strategy: 'custom-macro', macro, magazine: { enabled: false, size: 0 }, magazineSlots: [] }
+          : { strategy: 'manual-basic' }
+        delete (m as Record<string, unknown>).toolChangeMacro
+        delete (m as Record<string, unknown>).probe
+        delete (m as Record<string, unknown>).magazine
+      }
+      return {
+        toolchange: { strategy: 'manual-basic' as const },
+        ...m,
+        macros: _migrateMacros(m.macros ?? []),
+      }
+    })
     // Keep current selection if still valid; otherwise fall back to first machine
     if (!machines.value.find((m) => m.id === activeMachineId.value)) {
       activeMachineId.value = machines.value[0]?.id ?? ''
