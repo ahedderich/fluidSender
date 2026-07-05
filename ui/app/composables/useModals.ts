@@ -1,7 +1,6 @@
 import { computed } from 'vue'
 import { useSyncStore } from '~/stores/sync'
 import { wsSend } from '~/composables/useWsSend'
-export type { ModalEntry } from '~/stores/sync'
 
 // Promises returned by `open()` are settled when the server broadcasts that the
 // modal was resolved — by *any* browser. Kept at module scope so resolution

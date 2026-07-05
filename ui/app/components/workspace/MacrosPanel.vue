@@ -66,7 +66,7 @@
     </div>
 
     <!-- Input form modal -->
-    <MacroInputFormModal
+    <DialogsMacroInputForm
       v-if="formMacro"
       :macro="formMacro"
       @submit="(fv) => { settings.runMacro(formMacro!.id, fv); formMacro = null }"

@@ -25,7 +25,7 @@
           :class="hoveredParam === row.param ? 'bg-blue-50 dark:bg-blue-900/20' : ''"
           @mouseenter="hoveredParam = row.param"
           @mouseleave="hoveredParam = null">
-          <DimInput :label="row.label" v-model="cfg[row.key]" unit="mm" :min="row.min" class="flex-1" />
+          <UiDimInput :label="row.label" v-model="cfg[row.key]" unit="mm" :min="row.min" class="flex-1" />
           <div class="relative group/tip shrink-0">
             <button class="w-5 h-5 rounded-full bg-gray-200 dark:bg-slate-600 text-gray-500 dark:text-slate-400 text-xs font-bold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">?</button>
             <div class="absolute right-6 bottom-7 z-10 hidden group-hover/tip:block w-56 bg-gray-900 dark:bg-slate-700 text-white text-xs rounded-lg p-3 shadow-xl leading-relaxed">

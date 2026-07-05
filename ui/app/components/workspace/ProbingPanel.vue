@@ -142,7 +142,7 @@
       <template v-if="activeTab === 'xyz'">
         <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">XYZ Origin Probing</p>
         <div class="space-y-2">
-          <ProbeWizardButton
+          <UiProbeWizardButton
             label="Corner Probing"
             description="Find a corner and set XYZ zero"
             icon="corner"
@@ -150,14 +150,14 @@
             :disabled-reason="machine.stock?.shape === 'round' ? 'Corner probing requires rectangular stock' : undefined"
             @click="openWizard('corner')"
           />
-          <ProbeWizardButton
+          <UiProbeWizardButton
             label="Center — Outside In"
             description="Find center of stock by probing outside edges"
             icon="center-out"
             :disabled="isViewer || isProbing || !machine.connected"
             @click="openWizard('center-out')"
           />
-          <ProbeWizardButton
+          <UiProbeWizardButton
             label="Center — Pocket/Hole"
             description="Find center of a pocket, bore, or hole"
             icon="center-in"
@@ -266,7 +266,7 @@
         <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Correction Wizards</p>
 
         <div class="space-y-2">
-          <ProbeWizardButton
+          <UiProbeWizardButton
             label="Stock Rotation"
             description="Three-point edge probing to measure rotation"
             icon="rotation-out"
@@ -274,7 +274,7 @@
             :disabled-reason="machine.stock?.shape === 'round' ? 'Rotation probing requires a straight reference edge — not applicable to round stock' : undefined"
             @click="openWizard('rotation')"
           />
-          <ProbeWizardButton
+          <UiProbeWizardButton
             label="Surface Heightmap"
             description="Probe a grid across the stock surface"
             icon="heightmap"
@@ -366,15 +366,15 @@
               <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Dimensions</p>
               <template v-if="dialogStock.shape === 'rect'">
                 <div class="grid grid-cols-2 gap-2">
-                  <DimInput label="Width (X)" v-model="dialogStock.width" unit="mm" :min="0" />
-                  <DimInput label="Length (Y)" v-model="dialogStock.height" unit="mm" :min="0" />
-                  <DimInput label="Height (Z)" v-model="dialogStock.depth" unit="mm" :min="0" />
+                  <UiDimInput label="Width (X)" v-model="dialogStock.width" unit="mm" :min="0" />
+                  <UiDimInput label="Length (Y)" v-model="dialogStock.height" unit="mm" :min="0" />
+                  <UiDimInput label="Height (Z)" v-model="dialogStock.depth" unit="mm" :min="0" />
                 </div>
               </template>
               <template v-else>
                 <div class="grid grid-cols-2 gap-2">
-                  <DimInput label="Diameter" v-model="dialogStock.diameter" unit="mm" :min="0" />
-                  <DimInput label="Height (Z)" v-model="dialogStock.depth" unit="mm" :min="0" />
+                  <UiDimInput label="Diameter" v-model="dialogStock.diameter" unit="mm" :min="0" />
+                  <UiDimInput label="Height (Z)" v-model="dialogStock.depth" unit="mm" :min="0" />
                 </div>
               </template>
             </div>
@@ -502,7 +502,7 @@
       >
         <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl p-4 space-y-3">
           <p class="text-sm font-semibold text-gray-900 dark:text-slate-100">{{ wizardTitles[ps.wizardKey] ?? ps.wizardKey }}</p>
-          <ProbingProgressBar :ps="ps" @abort="wsSend({ t: 'probing:abort' })" />
+          <UiProbingProgressBar :ps="ps" @abort="wsSend({ t: 'probing:abort' })" />
           <template v-if="ps.wizardKey === 'center-in' && ps.currentStepLabel?.includes('Continue')">
             <p class="text-xs text-center text-amber-600 dark:text-amber-400">
               Jog probe inside pocket, then click Continue

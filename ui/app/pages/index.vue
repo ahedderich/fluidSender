@@ -7,7 +7,7 @@
     >
       <!-- Left column: 3D viewport + control row -->
       <div class="flex flex-col gap-2">
-        <GCodeViewport class="flex-1 min-h-64" />
+        <WorkspaceGCodeViewport class="flex-1 min-h-64" />
         <!-- Position / Navigation / Macros — disabled when disconnected -->
         <div
           v-if="machine.connected || true"
@@ -15,16 +15,16 @@
           style="grid-template-columns: 18rem auto 1fr"
           :class="!machine.connected ? 'opacity-40 pointer-events-none select-none' : ''"
         >
-          <DROPanel />
-          <NavigationPanel />
-          <MacrosPanel />
+          <WorkspaceDROPanel />
+          <WorkspaceNavigationPanel />
+          <WorkspaceMacrosPanel />
         </div>
       </div>
 
       <!-- Right column: job + probing -->
       <div class="flex flex-col gap-2 min-h-0">
-        <JobInfo class="flex-1 min-h-0" />
-        <ProbingPanel
+        <WorkspaceJobInfo class="flex-1 min-h-0" />
+        <WorkspaceProbingPanel
           class="shrink-0"
           :class="!machine.connected ? 'opacity-40 pointer-events-none select-none' : ''"
         />
@@ -43,10 +43,10 @@
           v-if="machine.connected || true"
           :class="!machine.connected ? 'opacity-40 pointer-events-none select-none' : ''"
         >
-          <SpindlePanel />
-          <CoolantPanel />
+          <WorkspaceSpindlePanel />
+          <WorkspaceCoolantPanel />
         </div>
-        <FileBrowserPanel class="flex-1 min-h-0" />
+        <WorkspaceFileBrowserPanel class="flex-1 min-h-0" />
       </div>
       <!-- Console + Tool Management — disabled when disconnected -->
       <div
@@ -54,8 +54,8 @@
         v-if="machine.connected || true"
         :class="!machine.connected ? 'opacity-40 pointer-events-none select-none' : ''"
       >
-        <ConsolePanel class="h-72 shrink-0" />
-        <ToolManagementPanel id="tool-management-panel" class="flex-1 min-h-0" />
+        <WorkspaceConsolePanel class="h-72 shrink-0" />
+        <WorkspaceToolManagementPanel id="tool-management-panel" class="flex-1 min-h-0" />
       </div>
     </div>
   </main>

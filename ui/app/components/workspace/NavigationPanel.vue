@@ -112,7 +112,7 @@
           </button>
         </div>
         <div v-else>
-          <JoystickControl :disabled="!canJog" @move="onJoystickMove" />
+          <UiJoystickControl :disabled="!canJog" @move="onJoystickMove" />
         </div>
       </div>
 

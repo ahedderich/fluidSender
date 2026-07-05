@@ -6,7 +6,7 @@ import { wsSend, wsConnected } from '~/composables/useWsSend'
 // Re-export canonical types from server utils so client and server share the same shapes
 export type { MachineStatus } from '~~/server/utils/machine/types'
 import type { MachineStatus } from '~~/server/utils/machine/types'
-export type { StockDef, ProbingState } from '~~/server/utils/appState'
+export type { StockDef } from '~~/server/utils/appState'
 import type { StockDef } from '~~/server/utils/appState'
 
 export interface LimitSwitch {

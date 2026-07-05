@@ -21,10 +21,10 @@
     <div class="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
       <!-- Config -->
       <div class="grid grid-cols-2 gap-2">
-        <DimInput label="Edge Offset" v-model="edgeOffset" unit="mm" :min="0" />
-        <DimInput label="Resolution" v-model="resolution" unit="mm" :min="1" :step="1" />
-        <DimInput label="Safe Height" v-model="safeHeight" unit="mm" :min="1" />
-        <DimInput label="Buffer" v-model="probeBuffer" unit="mm" :min="1" />
+        <UiDimInput label="Edge Offset" v-model="edgeOffset" unit="mm" :min="0" />
+        <UiDimInput label="Resolution" v-model="resolution" unit="mm" :min="1" :step="1" />
+        <UiDimInput label="Safe Height" v-model="safeHeight" unit="mm" :min="1" />
+        <UiDimInput label="Buffer" v-model="probeBuffer" unit="mm" :min="1" />
       </div>
 
       <p class="text-xs text-gray-400 dark:text-slate-500">
@@ -49,7 +49,7 @@
       </button>
 
       <!-- Progress -->
-      <ProbingProgressBar v-if="isRunning" :ps="ps" @abort="wsSend({ t: 'probing:abort' })" />
+      <UiProbingProgressBar v-if="isRunning" :ps="ps" @abort="wsSend({ t: 'probing:abort' })" />
 
       <!-- Visualization -->
       <div
