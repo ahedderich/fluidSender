@@ -379,7 +379,15 @@ fn arc_to_segments(
     let start_angle = (start[a2] - c2).atan2(start[a1] - c1);
     let end_angle = (end[a2] - c2).atan2(end[a1] - c1);
 
-    let arc_span = if clockwise {
+    // G17 CW (G2) carries +X→−Y = decreasing atan2 angle.
+    // G18 CW (G2) carries +X→+Z = increasing atan2 angle (opposite sense).
+    // G19 CW (G2) carries +Y→+Z = increasing atan2 angle (opposite sense).
+    let sweep_cw = match state.modal.plane {
+        Plane::Xy => clockwise,
+        Plane::Xz | Plane::Yz => !clockwise,
+    };
+
+    let arc_span = if sweep_cw {
         let mut span = start_angle - end_angle;
         if span < 0.0 {
             span += std::f64::consts::TAU;

@@ -1,5 +1,5 @@
 use crate::machine::coolant::CoolantState;
-use crate::machine::modal::{DistanceMode, Plane, Units};
+use crate::machine::modal::{DistanceMode, MotionMode, Plane, Units};
 use crate::machine::motion::{MoveKind, PendingMove};
 use crate::machine::spindle::SpindleState;
 use crate::machine::state::{MachineState, MachineStatus, AXIS_COUNT};
@@ -146,6 +146,32 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
             _ => {}
         }
     }
+
+    // Update persistent motion mode from any explicit G0–G3 in this line, and collect
+    // the information needed to dispatch modal motion after the loop.
+    let has_explicit_motion = gs.iter().any(|&g| g == 0.0 || g == 1.0 || g == 2.0 || g == 3.0);
+    for &g in &gs {
+        match g as u32 {
+            0 => state.modal.motion_mode = MotionMode::G0,
+            1 => state.modal.motion_mode = MotionMode::G1,
+            2 => state.modal.motion_mode = MotionMode::G2,
+            3 => state.modal.motion_mode = MotionMode::G3,
+            _ => {}
+        }
+    }
+    // G28/G30/G38 own their axis words; exclude these from modal-motion dispatch.
+    let has_blocking_g = gs.iter().any(|&g| {
+        g == 28.0
+            || (g - 28.1).abs() < 0.01
+            || g == 30.0
+            || (g - 30.1).abs() < 0.01
+            || (g - 38.2).abs() < 0.01
+            || (g - 38.3).abs() < 0.01
+            || (g - 38.4).abs() < 0.01
+            || (g - 38.5).abs() < 0.01
+    });
+    let modal_axes = extract_axes(words);
+    let has_axis_words = modal_axes.iter().any(|a| a.is_some());
 
     // Motion / coordinate G codes.
     for &g in &gs {
@@ -317,6 +343,47 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
             }
             _ => {}
         }
+    }
+
+    // Modal motion: axis words present, no explicit G0–G3, and no G28/G30/G38 that
+    // would claim those axis words for a different purpose.  Dispatch using the
+    // persistent motion mode — mirrors FluidNC's execute_line() behaviour for CAM
+    // files that omit the G word after the first occurrence.
+    if !has_explicit_motion && !has_blocking_g && has_axis_words && !pause_needed && !drain_needed {
+        let target = resolve_target(state, modal_axes);
+        if soft_limit_violated(&target, state) {
+            state.status = MachineStatus::Alarm;
+            return InterpretResult::Alarm(2);
+        }
+        state.planned_pos = target;
+        return match state.modal.motion_mode {
+            MotionMode::G0 => InterpretResult::Move(PendingMove {
+                kind: MoveKind::Linear,
+                target,
+                feed: max_rate_for_move(state, &target),
+                probe: None,
+            }),
+            MotionMode::G1 => InterpretResult::Move(PendingMove {
+                kind: MoveKind::Linear,
+                target,
+                feed: state.modal_feed,
+                probe: None,
+            }),
+            MotionMode::G2 | MotionMode::G3 => {
+                let i = word_val(words, 'I').unwrap_or(0.0);
+                let j = word_val(words, 'J').unwrap_or(0.0);
+                let k = word_val(words, 'K').unwrap_or(0.0);
+                InterpretResult::Move(PendingMove {
+                    kind: MoveKind::Arc {
+                        clockwise: state.modal.motion_mode == MotionMode::G2,
+                        offset: [i, j, k],
+                    },
+                    target,
+                    feed: state.modal_feed,
+                    probe: None,
+                })
+            }
+        };
     }
 
     if pause_needed {
@@ -521,5 +588,90 @@ mod tests {
         state.feed = 100.0;
         let result = interpret(&words, &mut state);
         assert!(matches!(result, InterpretResult::Move(_)));
+    }
+
+    #[test]
+    fn explicit_g1_sets_motion_mode() {
+        let mut state = default_state();
+        let words = parse_gcode_words("G1 X-100 F500").unwrap();
+        interpret(&words, &mut state);
+        assert_eq!(state.modal.motion_mode, MotionMode::G1);
+    }
+
+    #[test]
+    fn modal_g1_line_dispatches_move() {
+        let mut state = default_state();
+        // Set G1 mode via explicit command
+        let words = parse_gcode_words("G1 X-100 F500").unwrap();
+        interpret(&words, &mut state);
+
+        // Modal line: no G word, just axis words
+        let words = parse_gcode_words("X-120 Y-50").unwrap();
+        let result = interpret(&words, &mut state);
+        assert!(
+            matches!(result, InterpretResult::Move(ref mv) if mv.feed == 500.0 && matches!(mv.kind, MoveKind::Linear)),
+            "expected G1 modal move"
+        );
+        assert!((state.planned_pos[0] + 120.0).abs() < 1e-6);
+        assert!((state.planned_pos[1] + 50.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn modal_g0_line_dispatches_rapid() {
+        let mut state = default_state();
+        // Default motion mode is G0; no need for explicit setup
+        let words = parse_gcode_words("X-80").unwrap();
+        let result = interpret(&words, &mut state);
+        assert!(
+            matches!(result, InterpretResult::Move(ref mv) if matches!(mv.kind, MoveKind::Linear)),
+            "expected rapid modal move"
+        );
+    }
+
+    #[test]
+    fn modal_g2_arc_dispatches_arc_move() {
+        let mut state = default_state();
+        state.modal_feed = 600.0;
+        // Set G2 mode
+        let words = parse_gcode_words("G2 X-100 Y-100 I25 J0").unwrap();
+        interpret(&words, &mut state);
+        assert_eq!(state.modal.motion_mode, MotionMode::G2);
+
+        // Modal arc continuation
+        let words = parse_gcode_words("X-80 Y-120 I10 J0").unwrap();
+        let result = interpret(&words, &mut state);
+        assert!(
+            matches!(result, InterpretResult::Move(ref mv) if matches!(mv.kind, MoveKind::Arc { clockwise: true, .. })),
+            "expected G2 modal arc"
+        );
+    }
+
+    #[test]
+    fn g28_axis_words_not_treated_as_modal_motion() {
+        let mut state = default_state();
+        // Set G1 mode first
+        let words = parse_gcode_words("G1 X-50 F300").unwrap();
+        interpret(&words, &mut state);
+        // G28 with axis word must NOT dispatch a G1 modal move
+        let words = parse_gcode_words("G28 G91 Z0").unwrap();
+        let result = interpret(&words, &mut state);
+        // G28 returns a rapid Move (go to stored position), not a G1 feed move
+        assert!(
+            matches!(result, InterpretResult::Move(ref mv) if matches!(mv.kind, MoveKind::Linear)),
+            "G28 should return its own Move, not a modal G1"
+        );
+        // The target of G28 is the stored g28_pos (or [0;6] by default), not X-50
+        assert_eq!(state.modal.motion_mode, MotionMode::G1, "motion mode unchanged by G28");
+    }
+
+    #[test]
+    fn motion_mode_not_reset_on_soft_reset() {
+        let mut state = default_state();
+        let words = parse_gcode_words("G1 X-50 F300").unwrap();
+        interpret(&words, &mut state);
+        assert_eq!(state.modal.motion_mode, MotionMode::G1);
+        state.soft_reset();
+        // soft_reset must NOT clear motion_mode (matches FluidNC firmware behaviour)
+        assert_eq!(state.modal.motion_mode, MotionMode::G1);
     }
 }
