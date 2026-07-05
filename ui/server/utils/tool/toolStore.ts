@@ -111,13 +111,15 @@ class ToolStore {
       const idx = existing.findIndex((t) => t.number === tool.number && t.source === scope)
       if (idx >= 0) {
         const old = existing[idx]!
-        // Preserve lifecycle fields
+        // Preserve FluidSender-owned fields that Fusion 360 has no concept of
         existing[idx] = {
           ...tool,
           id: old.id,
           totalRuntimeMinutes: old.totalRuntimeMinutes,
           jobCount: old.jobCount,
           lastUsed: old.lastUsed,
+          probeConfig: old.probeConfig,
+          probeCompensation: old.probeCompensation,
         }
         updated++
       } else {
@@ -143,7 +145,7 @@ class ToolStore {
     machineId: string,
     minutes: number,
   ): Promise<void> {
-    if (minutes <= 0) return
+    if (minutes < 0) return
     const now = Date.now()
 
     if (scope === 'A') {

@@ -788,12 +788,14 @@ import { DEFAULT_PROBE_COMPENSATION, type ProbeCompensation } from '~~/server/ut
 import { useJobControl } from '~/composables/useJobControl'
 import { useSettingsStore } from '~/stores/settings'
 import { useModals } from '~/composables/useModals'
+import { useConfirm } from '~/composables/useConfirm'
 import { wsSend } from '~/composables/useWsSend'
 
 const machine = useMachineStore()
 const { job } = useJobControl()
 const settings = useSettingsStore()
 const modals = useModals()
+const { confirm } = useConfirm()
 
 // Flat combined library for list display
 const allTools = computed<ToolLibraryEntry[]>(() => [
@@ -1082,8 +1084,15 @@ function saveModal() {
   showToolModal.value = false
 }
 
-function deleteFromModal() {
+async function deleteFromModal() {
   if (!editingTool.value) return
+  const ok = await confirm({
+    title: 'Delete Tool',
+    message: `Delete "${editingTool.value.name}" from the library? This cannot be undone.`,
+    confirmLabel: 'Delete',
+    danger: true,
+  })
+  if (!ok) return
   const machineId = settings.activeMachineId
   wsSend({ t: 'tool:delete', payload: { id: editingTool.value.id, scope: editingTool.value.source, machineId } })
   showToolModal.value = false
@@ -1194,9 +1203,10 @@ const sortedTools = computed(() => {
 })
 
 function formatUsage(minutes: number): string {
-  if (minutes < 60) return `${minutes}m`
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
+  const total = Math.round(minutes)
+  if (total < 60) return `${total}m`
+  const h = Math.floor(total / 60)
+  const m = total % 60
   return m === 0 ? `${h}h` : `${h}h ${m}m`
 }
 

@@ -931,7 +931,7 @@ class JobRunner {
     const s = this._runtimeSession
     this._runtimeSession = null
     const endMs = Date.now()
-    const durationMin = Math.floor((endMs - s.startMs) / 60_000)
+    const durationMin = (endMs - s.startMs) / 60_000
     const machineId = await this._getActiveMachineId()
 
     const session = {
@@ -941,7 +941,7 @@ class JobRunner {
       endMs,
     }
     await appendRuntimeSession(session)
-    if (durationMin > 0 && machineId) {
+    if (machineId) {
       await toolStore.incrementRuntime(s.toolNumber, s.scope, machineId, durationMin)
     }
   }
