@@ -9,13 +9,15 @@
       <div class="flex gap-1">
         <button
           @click="zeroAll"
-          class="px-2.5 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded text-xs font-medium transition-colors"
+          :disabled="isViewer"
+          class="px-2.5 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Zero All
         </button>
         <button
           @click="machine.sendCommand('$H')"
-          class="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-medium transition-colors"
+          :disabled="isViewer"
+          class="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Home
         </button>
@@ -41,7 +43,7 @@
         <span class="text-sm font-bold text-gray-500 dark:text-slate-400 leading-none">{{ axis }}</span>
 
         <!-- Work position (editable) -->
-        <div @click="startEdit(axis)">
+        <div @click="!isViewer && startEdit(axis)">
           <input
             v-if="editingAxis === axis"
             :ref="(el) => editInputs[axis] = el as HTMLInputElement"
@@ -55,7 +57,8 @@
           />
           <div
             v-else
-            class="bg-gray-50 dark:bg-slate-900 rounded px-1.5 py-1 font-mono text-right text-sm text-gray-900 dark:text-slate-100 tabular-nums hover:bg-gray-100 dark:hover:bg-slate-700/60 transition-colors cursor-text"
+            :class="isViewer ? 'cursor-default' : 'cursor-text hover:bg-gray-100 dark:hover:bg-slate-700/60'"
+          class="bg-gray-50 dark:bg-slate-900 rounded px-1.5 py-1 font-mono text-right text-sm text-gray-900 dark:text-slate-100 tabular-nums transition-colors"
           >
             {{ machine.connected ? formatPos(workPos[axis.toLowerCase() as 'x' | 'y' | 'z']) : 'null' }}
           </div>
@@ -71,7 +74,8 @@
         <!-- Zero axis button -->
         <button
           @click="zeroAxis(axis)"
-          class="py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded text-xs font-medium transition-colors text-center"
+          :disabled="isViewer"
+          class="py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded text-xs font-medium transition-colors text-center disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {{ axis }}=0
         </button>
@@ -84,9 +88,12 @@
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
 import { useConfirm } from '~/composables/useConfirm'
+import { useCurrentUser } from '~/composables/useCurrentUser'
 
 const machine = useMachineStore()
 const { confirm } = useConfirm()
+const currentUser = useCurrentUser()
+const isViewer = computed(() => currentUser.value.isViewer)
 const editingAxis = ref<string | null>(null)
 const editValues = reactive<Record<string, string>>({ X: '', Y: '', Z: '' })
 const editInputs = reactive<Record<string, HTMLInputElement | null>>({ X: null, Y: null, Z: null })

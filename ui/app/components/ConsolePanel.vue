@@ -26,7 +26,8 @@
         </button>
         <button
           @click="machine.clearConsole()"
-          class="text-xs text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
+          :disabled="isViewer"
+          class="text-xs text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Clear
         </button>
@@ -61,12 +62,14 @@
         @keydown.enter="sendCmd"
         @keydown.up.prevent="historyUp"
         @keydown.down.prevent="historyDown"
+        :disabled="isViewer"
         placeholder="Send command..."
-        class="flex-1 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-300 dark:placeholder-slate-600"
+        class="flex-1 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-300 dark:placeholder-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
       />
       <button
         @click="sendCmd"
-        class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-md transition-colors"
+        :disabled="isViewer"
+        class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       >
         Send
       </button>
@@ -76,9 +79,12 @@
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
+import { useCurrentUser } from '~/composables/useCurrentUser'
 import type { SyncConsoleEntry } from '~/stores/sync'
 
 const machine = useMachineStore()
+const currentUser = useCurrentUser()
+const isViewer = computed(() => currentUser.value.isViewer)
 const scrollEl = ref<HTMLDivElement>()
 const inputCmd = ref('')
 const autoScroll = ref(true)

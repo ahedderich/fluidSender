@@ -156,14 +156,31 @@ export type PatchOp =
   | { path: string; removeId: string; meta?: Record<string, unknown> }
   | { path: string; clear: true }
 
+export interface UserRecord {
+  id: string
+  username: string
+  role: 'viewer' | 'operator' | 'admin'
+  passwordHash: string
+}
+
 interface AppConfig {
-  auth?: { enabled?: boolean }
+  auth?: {
+    enabled?: boolean
+    users?: UserRecord[]
+  }
   machines?: unknown[]
   app?: Record<string, unknown>
 }
 
+function stripAuthUsers(config: AppConfig): AppConfig {
+  if (!config.auth?.users?.length) return config
+  return { ...config, auth: { ...config.auth, users: undefined } }
+}
+
+export { stripAuthUsers }
+
 const DEFAULT_CONFIG: AppConfig = {
-  auth: { enabled: false },
+  auth: { enabled: false, users: [] },
   machines: [],
   app: {
     units: 'mm',
@@ -395,7 +412,7 @@ export async function updateMagazineSlots(machineId: string, slots: (number | nu
       await setConfig(config)
     }
   }
-  return { path: 'config', set: config as unknown as Record<string, unknown> }
+  return { path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }
 }
 
 export function pushToast(toast: Toast): PatchOp {
@@ -511,7 +528,7 @@ export function setConnection(state: Partial<ConnectionState>): ConnectionState 
 // ─── Full state snapshot ──────────────────────────────────────────────────────
 
 export function getFullState() {
-  return { config: cachedConfig, connection: getConnection() }
+  return { config: stripAuthUsers(cachedConfig), connection: getConnection() }
 }
 
 // getMachineStatus is injected at startup to avoid a circular dependency with the poller
@@ -529,7 +546,7 @@ export function registerToolLibraryProvider(fn: (machineId: string) => { machine
 export function getSnapshot() {
   const machineId = ui.selection.activeMachineId
   return {
-    config: cachedConfig,
+    config: stripAuthUsers(cachedConfig),
     connection: getConnection(),
     ui,
     job: getJobState(),

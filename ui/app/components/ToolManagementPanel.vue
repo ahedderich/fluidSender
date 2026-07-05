@@ -23,8 +23,9 @@
         <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Loaded Tool</p>
         <button
           v-if="loadedTool && machine.connected"
+          :disabled="isViewer"
           @click="handleUnload"
-          class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-red-600 hover:text-white text-gray-600 dark:text-slate-300 rounded transition-colors"
+          class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-red-600 hover:text-white text-gray-600 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           title="Remove tool from spindle"
         >
           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -124,9 +125,9 @@
             ]"
             class="group/slot relative border rounded-md flex flex-col items-center py-1.5 px-1 transition-all duration-100"
             style="min-width: 3.5rem; max-width: 4.5rem; flex: 1"
-            @dragover.prevent="dragOverSlot = slot"
+            @dragover.prevent="!isViewer && (dragOverSlot = slot)"
             @dragleave="dragOverSlot = null"
-            @drop.prevent="dropOnSlot(slot)"
+            @drop.prevent="!isViewer && dropOnSlot(slot)"
           >
             <span class="text-[10px] text-gray-400 dark:text-slate-500 font-medium leading-tight">S{{ slot }}</span>
             <template v-if="slotTool(slot)">
@@ -142,7 +143,7 @@
               </span>
               <!-- Clear slot button -->
               <button
-                v-if="!draggingToolId"
+                v-if="!draggingToolId && !isViewer"
                 @click.stop="clearSlot(slot)"
                 class="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-gray-400 dark:bg-slate-500 hover:bg-red-500 dark:hover:bg-red-500 text-white opacity-0 group-hover/slot:opacity-100 flex items-center justify-center transition-all"
                 title="Remove from slot"
@@ -185,8 +186,9 @@
       </div>
       <div class="flex items-center gap-1.5">
         <button
+          :disabled="isViewer"
           @click="triggerImport"
-          class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 rounded transition-colors"
+          class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           title="Import Fusion 360 tool library (.json)"
         >
           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -195,8 +197,9 @@
           Import
         </button>
         <button
+          :disabled="isViewer"
           @click="showExportModal = true"
-          class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 rounded transition-colors"
+          class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           title="Export Fusion 360 tool library (.json)"
         >
           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -205,8 +208,9 @@
           Export
         </button>
         <button
+          :disabled="isViewer"
           @click="openAddModal"
-          class="flex items-center gap-1 text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+          class="flex items-center gap-1 text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
@@ -253,7 +257,7 @@
           <p class="text-xs text-gray-400 dark:text-slate-500">
             {{ filterText ? 'No tools match filter' : 'Library is empty — import from Fusion 360 or add tools' }}
           </p>
-          <button v-if="!filterText" @click="openAddModal" class="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline">
+          <button v-if="!filterText && !isViewer" @click="openAddModal" class="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline">
             Add first tool
           </button>
         </div>
@@ -265,11 +269,12 @@
           draggable="true"
           :class="[
             toolRowClassLib(entry),
-            'cursor-grab active:cursor-grabbing',
+            isViewer ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
             draggingToolId === entry.id ? 'opacity-50' : '',
           ]"
+          :draggable="!isViewer"
           class="group flex items-center gap-2 border rounded-lg px-2 py-2"
-          @dragstart="onDragStart($event, entry)"
+          @dragstart="!isViewer && onDragStart($event, entry)"
           @dragend="onDragEnd"
         >
           <!-- Drag handle -->
@@ -306,7 +311,7 @@
             <button
               type="button"
               @click.stop="machine.loadedToolNumber === entry.number ? wsSend({ t: 'tool:unload', payload: {} }) : wsSend({ t: 'tool:load', payload: { toolNumber: entry.number } })"
-              :disabled="!machine.connected"
+              :disabled="!machine.connected || isViewer"
               :class="machine.loadedToolNumber === entry.number
                 ? 'hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-700 dark:hover:text-red-400'
                 : 'hover:bg-green-100 dark:hover:bg-green-900/30 hover:text-green-700 dark:hover:text-green-400'"
@@ -316,8 +321,9 @@
               {{ machine.loadedToolNumber === entry.number ? 'Unload' : 'Load' }}
             </button>
             <button
+              :disabled="isViewer"
               @click.stop="openEditModal(entry)"
-              class="p-1 rounded border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+              class="p-1 rounded border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               title="Edit tool"
             >
               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -790,12 +796,15 @@ import { useSettingsStore } from '~/stores/settings'
 import { useModals } from '~/composables/useModals'
 import { useConfirm } from '~/composables/useConfirm'
 import { wsSend } from '~/composables/useWsSend'
+import { useCurrentUser } from '~/composables/useCurrentUser'
 
 const machine = useMachineStore()
 const { job } = useJobControl()
 const settings = useSettingsStore()
 const modals = useModals()
 const { confirm } = useConfirm()
+const currentUser = useCurrentUser()
+const isViewer = computed(() => currentUser.value.isViewer)
 
 // Flat combined library for list display
 const allTools = computed<ToolLibraryEntry[]>(() => [

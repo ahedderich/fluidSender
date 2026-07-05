@@ -66,6 +66,7 @@ export const useSyncStore = defineStore('sync', () => {
   const consoleLog = ref<SyncConsoleEntry[]>([])
   const job = ref<JobState | null>(null)
   const macroRun = ref<MacroRunState | null>(null)
+  const session = ref<{ username: string; role: 'viewer' | 'operator' | 'admin' } | null>(null)
   const probingState = reactive<ProbingState>({
     phase: 'idle', wizardKey: null, currentStepLabel: '',
     stepIndex: 0, totalSteps: 0, stepResults: [],
@@ -77,7 +78,7 @@ export const useSyncStore = defineStore('sync', () => {
 
   // Always mutate the array refs in place (never reassign), so references held by
   // useModals()/useToast() stay valid across snapshots and patches.
-  function applySnapshot(ui: UiSnapshot) {
+  function applySnapshot(ui: UiSnapshot & { session?: { username: string; role: 'viewer' | 'operator' | 'admin' } | null }) {
     Object.assign(nav, ui.nav)
     Object.assign(selection, ui.selection)
     jogActive.value = ui.jogActive
@@ -86,6 +87,7 @@ export const useSyncStore = defineStore('sync', () => {
     consoleLog.value.splice(0, consoleLog.value.length, ...ui.console)
     macroRun.value = ui.macroRun ?? null
     if (ui.probingState) Object.assign(probingState, ui.probingState)
+    if ('session' in ui) session.value = ui.session ?? null
   }
 
   // Apply a single patch op to the precise reactive slice it targets, so only
@@ -131,6 +133,9 @@ export const useSyncStore = defineStore('sync', () => {
       case 'probingState':
         if ('set' in op) Object.assign(probingState, op.set)
         break
+      case 'session':
+        if ('set' in op) session.value = (op.set as { session: typeof session.value }).session
+        break
     }
   }
 
@@ -138,5 +143,5 @@ export const useSyncStore = defineStore('sync', () => {
     job.value = { ...state }
   }
 
-  return { nav, selection, jogActive, modals, toasts, consoleLog, job, macroRun, probingState, applySnapshot, applyOp, applyJobState }
+  return { nav, selection, jogActive, modals, toasts, consoleLog, job, macroRun, probingState, session, applySnapshot, applyOp, applyJobState }
 })

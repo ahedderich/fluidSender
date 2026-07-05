@@ -24,8 +24,8 @@
 
     <!-- Controls (disabled while a job is active) -->
     <div
-      :class="{ 'opacity-50 pointer-events-none': jobActive }"
-      :title="jobActive ? 'Spindle control is disabled while a job is running' : undefined"
+      :class="{ 'opacity-50 pointer-events-none': jobActive || isViewer }"
+      :title="isViewer ? 'Viewers cannot control spindle' : jobActive ? 'Spindle control is disabled while a job is running' : undefined"
     >
 
     <!-- ── Spindle (router / plasma) ── -->
@@ -152,10 +152,13 @@
 import { useMachineStore } from '~/stores/machine'
 import { useSettingsStore } from '~/stores/settings'
 import { useSyncStore } from '~/stores/sync'
+import { useCurrentUser } from '~/composables/useCurrentUser'
 
 const machine = useMachineStore()
 const settings = useSettingsStore()
 const sync = useSyncStore()
+const currentUser = useCurrentUser()
+const isViewer = computed(() => currentUser.value.isViewer)
 
 const isLaser = computed(() => settings.activeMachine?.type === 'laser')
 const jobActive = computed(() => {

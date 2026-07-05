@@ -1,6 +1,7 @@
 import { useSettingsStore } from '~/stores/settings'
 import { useMachineStore } from '~/stores/machine'
 import { useSyncStore, type PatchOp, type UiSnapshot } from '~/stores/sync'
+import { useUiStore } from '~/stores/ui'
 import { settleModal } from '~/composables/useModals'
 import { setWsSend, wsConnected } from '~/composables/useWsSend'
 import type { ServerConnectionState, MachineStatus, StockDef, ToolLibraryEntry } from '~/stores/machine'
@@ -11,10 +12,17 @@ interface ServerMessage {
   payload: unknown
 }
 
+declare module '#app' {
+  interface NuxtApp {
+    $reconnectWs: () => void
+  }
+}
+
 export default defineNuxtPlugin((nuxtApp) => {
   const settingsStore = useSettingsStore()
   const machineStore = useMachineStore()
   const syncStore = useSyncStore()
+  const uiStore = useUiStore()
 
   let ws: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -88,10 +96,13 @@ export default defineNuxtPlugin((nuxtApp) => {
           machine: MachineStatus | null
           stock: StockDef | null
           toolLibrary: { machine: ToolLibraryEntry[]; app: ToolLibraryEntry[] } | null
+          authEnabled: boolean
+          session: { username: string; role: 'viewer' | 'operator' | 'admin' } | null
         }
         settingsStore.applyServerState(p.config)
         machineStore.applyServerStatus(p.connection)
-        syncStore.applySnapshot(p.ui)
+        uiStore.authEnabled = p.authEnabled ?? false
+        syncStore.applySnapshot({ ...p.ui, session: p.session ?? null })
         if (p.job) syncStore.applyJobState(p.job)
         if (p.machine) machineStore.applyMachineStatus(p.machine)
         else if (p.connection.connected) send({ t: 'machine:status:request' })
@@ -107,6 +118,10 @@ export default defineNuxtPlugin((nuxtApp) => {
       }
       case 'patch': {
         for (const op of (msg.payload as { ops: PatchOp[] }).ops) applyPatchOp(op)
+        break
+      }
+      case 'auth:required': {
+        navigateTo('/login')
         break
       }
       case 'machine:status': {
@@ -133,6 +148,14 @@ export default defineNuxtPlugin((nuxtApp) => {
     })
     ws.addEventListener('error', () => ws?.close())
   }
+
+  function reconnectWs() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+    ws?.close()
+    connectWs()
+  }
+
+  nuxtApp.provide('reconnectWs', reconnectWs)
 
   // app:mounted fires before Suspense async hydration completes; a snapshot arriving mid-hydration causes mismatches.
   nuxtApp.hook('app:suspense:resolve', () => {

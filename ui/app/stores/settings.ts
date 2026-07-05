@@ -144,11 +144,6 @@ export interface MachineProfile {
 
 // ─── App-level settings types ─────────────────────────────────────────────────
 
-export interface UserAccount {
-  id: string
-  username: string
-  role: UserRole
-}
 
 export interface JogSettings {
   slowSpeed: number
@@ -258,7 +253,6 @@ export const useSettingsStore = defineStore('settings', () => {
     } as KeyboardShortcuts,
     auth: {
       enabled: false,
-      users: [] as UserAccount[],
     },
   })
 
@@ -317,10 +311,10 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  async function hydrate() {
+  async function hydrate(fetchFn: typeof $fetch = $fetch) {
     if (initialized.value) return
     try {
-      const data = await $fetch<PersistedConfig>('/api/config')
+      const data = await fetchFn<PersistedConfig>('/api/config')
       applyServerState(data)
     } finally {
       initialized.value = true
@@ -381,15 +375,6 @@ export const useSettingsStore = defineStore('settings', () => {
     wsSend({ t: 'macro:run', payload: { macroId, formValues } })
   }
 
-  function addUser(username: string, role: UserRole) {
-    app.auth.users.push({ id: `user-${Date.now()}`, username, role })
-  }
-
-  function removeUser(id: string) {
-    const idx = app.auth.users.findIndex((u) => u.id === id)
-    if (idx !== -1) app.auth.users.splice(idx, 1)
-  }
-
   return {
     initialized,
     saving,
@@ -410,8 +395,6 @@ export const useSettingsStore = defineStore('settings', () => {
     updateMachineMacro,
     removeMachineMacro,
     runMacro,
-    addUser,
-    removeUser,
     app,
   }
 })

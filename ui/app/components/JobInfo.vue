@@ -14,7 +14,8 @@
       </div>
       <button
         v-if="job && job.status !== 'idle'"
-        class="text-xs px-2 py-0.5 text-gray-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 rounded transition-colors shrink-0"
+        :disabled="isViewer"
+        class="text-xs px-2 py-0.5 text-gray-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 rounded transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
         title="Clear loaded file"
         @click="clearJob"
       >
@@ -41,10 +42,10 @@
       </div>
       <div class="space-y-1.5">
         <button
-          :disabled="!machine.connected"
+          :disabled="!machine.connected || isViewer"
           :title="!machine.connected ? 'Connect to machine before resuming' : undefined"
           class="w-full py-1.5 rounded-md text-xs font-semibold transition-colors"
-          :class="machine.connected
+          :class="machine.connected && !isViewer
             ? 'bg-amber-600 hover:bg-amber-500 text-white'
             : 'bg-amber-200/60 dark:bg-amber-900/40 text-amber-400 dark:text-amber-700 cursor-not-allowed'"
           @click="doRecover()"
@@ -53,13 +54,15 @@
         </button>
         <div class="flex gap-1.5">
           <button
-            class="flex-1 py-1.5 bg-white dark:bg-slate-700 border border-amber-200 dark:border-slate-600 hover:bg-amber-50 dark:hover:bg-slate-600 text-amber-900 dark:text-slate-200 rounded-md text-xs font-medium transition-colors"
+            :disabled="isViewer"
+            class="flex-1 py-1.5 bg-white dark:bg-slate-700 border border-amber-200 dark:border-slate-600 hover:bg-amber-50 dark:hover:bg-slate-600 text-amber-900 dark:text-slate-200 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             @click="doLoadFresh()"
           >
             Restart from beginning
           </button>
           <button
-            class="flex-1 py-1.5 bg-white dark:bg-slate-700 border border-red-200 dark:border-slate-600 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors"
+            :disabled="isViewer"
+            class="flex-1 py-1.5 bg-white dark:bg-slate-700 border border-red-200 dark:border-slate-600 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             @click="clearJob()"
           >
             Clear job
@@ -130,13 +133,14 @@
       <div v-else-if="job?.toolChangeRequest?.macroError === null && !job?.toolChangeRequest?.macroRunning" class="mb-2 text-xs text-green-600 dark:text-green-400"></div>
       <div class="flex gap-1.5">
         <button
-          class="flex-1 py-1.5 bg-white dark:bg-slate-700 border border-amber-200 dark:border-slate-600 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors"
+          :disabled="isViewer"
+          class="flex-1 py-1.5 bg-white dark:bg-slate-700 border border-amber-200 dark:border-slate-600 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           @click="wsSend({ t: 'job:stop' })"
         >
           Cancel Job
         </button>
         <button
-          :disabled="job?.toolChangeRequest?.macroRunning ?? false"
+          :disabled="(job?.toolChangeRequest?.macroRunning ?? false) || isViewer"
           class="flex-1 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-md text-xs font-semibold transition-colors"
           @click="wsSend({ t: 'job:resumeToolChange' })"
         >
@@ -206,7 +210,7 @@
               <!-- Load / Unload text button -->
               <button
                 type="button"
-                :disabled="!machine.connected"
+                :disabled="!machine.connected || isViewer"
                 :class="machine.loadedToolNumber === section.toolNumber
                   ? 'hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-700 dark:hover:text-red-400'
                   : 'hover:bg-green-100 dark:hover:bg-green-900/30 hover:text-green-700 dark:hover:text-green-400'"
@@ -245,7 +249,7 @@
           max="200"
           step="1"
           :style="{ '--val': localFeed }"
-          :disabled="!machine.connected"
+          :disabled="!machine.connected || isViewer"
           class="override-slider flex-1 disabled:opacity-40"
           @mousedown="isDraggingFeed = true"
           @touchstart="isDraggingFeed = true"
@@ -254,7 +258,7 @@
         <div
           v-if="!editingFeed"
           class="w-11 text-right text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none shrink-0"
-          :class="{ 'opacity-40 pointer-events-none': !machine.connected }"
+          :class="{ 'opacity-40 pointer-events-none': !machine.connected || isViewer }"
           @click="startEditFeed"
         >
           {{ localFeed }}%
@@ -272,7 +276,7 @@
           @keydown.escape="cancelFeedEdit"
         />
         <button
-          :disabled="!machine.connected"
+          :disabled="!machine.connected || isViewer"
           class="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none shrink-0 transition-colors disabled:opacity-40"
           title="Reset to 100%"
           @click="resetFeed"
@@ -289,7 +293,7 @@
           max="200"
           step="1"
           :style="{ '--val': localSpindle }"
-          :disabled="!machine.connected"
+          :disabled="!machine.connected || isViewer"
           class="override-slider flex-1 disabled:opacity-40"
           @mousedown="isDraggingSpindle = true"
           @touchstart="isDraggingSpindle = true"
@@ -298,7 +302,7 @@
         <div
           v-if="!editingSpindle"
           class="w-11 text-right text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none shrink-0"
-          :class="{ 'opacity-40 pointer-events-none': !machine.connected }"
+          :class="{ 'opacity-40 pointer-events-none': !machine.connected || isViewer }"
           @click="startEditSpindle"
         >
           {{ localSpindle }}%
@@ -316,7 +320,7 @@
           @keydown.escape="cancelSpindleEdit"
         />
         <button
-          :disabled="!machine.connected"
+          :disabled="!machine.connected || isViewer"
           class="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none shrink-0 transition-colors disabled:opacity-40"
           title="Reset to 100%"
           @click="resetSpindle"
@@ -330,10 +334,13 @@
 import { useMachineStore } from '~/stores/machine'
 import { useJobControl } from '~/composables/useJobControl'
 import { wsSend } from '~/composables/useWsSend'
+import { useCurrentUser } from '~/composables/useCurrentUser'
 import type { ToolSection } from '~/types/job'
 
 const machine = useMachineStore()
 const { job, clearJob, confirmRecovery } = useJobControl()
+const currentUser = useCurrentUser()
+const isViewer = computed(() => currentUser.value.isViewer)
 
 function doRecover() {
   const resumePtr = job.value?.recovery?.resumePtr

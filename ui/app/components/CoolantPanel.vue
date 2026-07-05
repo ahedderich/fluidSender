@@ -17,8 +17,8 @@
     <!-- Three-state buttons -->
     <div
       class="flex flex-col gap-2 flex-1 justify-center"
-      :class="{ 'opacity-50 pointer-events-none': jobActive }"
-      :title="jobActive ? 'Coolant control is disabled while a job is running' : undefined"
+      :class="{ 'opacity-50 pointer-events-none': jobActive || isViewer }"
+      :title="isViewer ? 'Viewers cannot control coolant' : jobActive ? 'Coolant control is disabled while a job is running' : undefined"
     >
       <button
         @click="machine.sendCommand('M9')"
@@ -55,9 +55,12 @@
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
 import { useSyncStore } from '~/stores/sync'
+import { useCurrentUser } from '~/composables/useCurrentUser'
 
 const machine = useMachineStore()
 const sync = useSyncStore()
+const currentUser = useCurrentUser()
+const isViewer = computed(() => currentUser.value.isViewer)
 
 const jobActive = computed(() => {
   const s = sync.job?.status

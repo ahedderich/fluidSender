@@ -955,7 +955,7 @@
             <SettingsCard title="Users">
               <div class="divide-y divide-gray-100 dark:divide-slate-700/60">
                 <div
-                  v-for="user in s.app.auth.users"
+                  v-for="user in users"
                   :key="user.id"
                   class="flex items-center gap-3 px-3 py-2.5"
                 >
@@ -973,7 +973,7 @@
                   <button
                     type="button"
                     @click="removeUser(user)"
-                    :disabled="user.role === 'admin' && s.app.auth.users.filter(u => u.role === 'admin').length <= 1"
+                    :disabled="user.role === 'admin' && users.filter(u => u.role === 'admin').length <= 1"
                     class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                     title="Remove user"
                   >
@@ -983,7 +983,7 @@
                   </button>
                 </div>
 
-                <div v-if="s.app.auth.users.length === 0" class="px-3 py-4 text-center text-xs text-gray-400 dark:text-slate-500">
+                <div v-if="users.length === 0" class="px-3 py-4 text-center text-xs text-gray-400 dark:text-slate-500">
                   No users configured
                 </div>
               </div>
@@ -1116,6 +1116,7 @@ import { useSettingsStore } from '~/stores/settings'
 import { useUiStore } from '~/stores/ui'
 import { useMachineStore } from '~/stores/machine'
 import { useConfirm } from '~/composables/useConfirm'
+import { useCurrentUser } from '~/composables/useCurrentUser'
 import type { UserRole } from '~/stores/settings'
 import type { Macro } from '~/types/macro'
 import type { ToolchangeConfig } from '~/../../shared/toolchange'
@@ -1124,6 +1125,7 @@ const s = useSettingsStore()
 const ui = useUiStore()
 const machine = useMachineStore()
 const { confirm } = useConfirm()
+const currentUser = useCurrentUser()
 
 // Which sidebar panel is shown: a machine id or 'app'
 const panel = ref<string>(s.activeMachineId || (s.machines[0]?.id ?? ''))
@@ -1246,13 +1248,14 @@ async function writeToFluidNC() {
 
 async function removeUser(user: { id: string; username: string }) {
   const ok = await confirm({
-    title: `Remove user "${user.username}"?`,
-    message: 'The user will immediately lose access to this application.',
+    title: `Remove "${user.username}"?`,
+    message: 'The user will immediately lose access.',
     confirmLabel: 'Remove',
     danger: true,
   })
   if (!ok) return
-  s.removeUser(user.id)
+  await $fetch(`/api/auth/users/${user.id}`, { method: 'DELETE' })
+  await loadUsers()
 }
 
 // ─── Machine tabs ─────────────────────────────────────────────────────────────
@@ -1266,13 +1269,16 @@ const machineTab = ref<'fluidSender' | 'toolchange' | 'firmware'>('fluidSender')
 
 // ─── App tabs ─────────────────────────────────────────────────────────────────
 
-const appTabs = [
-  { key: 'interface', label: 'Interface' },
-  { key: 'jog', label: 'Jog & Motion' },
-  { key: 'macros', label: 'Macros' },
-  { key: 'auth', label: 'Authentication' },
-  { key: 'shortcuts', label: 'Shortcuts' },
-]
+const appTabs = computed(() => {
+  const tabs: { key: string; label: string }[] = [
+    { key: 'interface', label: 'Interface' },
+    { key: 'jog', label: 'Jog & Motion' },
+    { key: 'macros', label: 'Macros' },
+    { key: 'shortcuts', label: 'Shortcuts' },
+  ]
+  if (currentUser.value.isAdmin) tabs.splice(3, 0, { key: 'auth', label: 'Authentication' })
+  return tabs
+})
 const appTab = ref<'interface' | 'jog' | 'macros' | 'auth' | 'shortcuts'>('interface')
 
 // ─── User management ──────────────────────────────────────────────────────────
@@ -1293,32 +1299,34 @@ function openMacroEditor(macro: Macro | null, scope: 'app' | 'machine', machineI
 
 // ─── User management ──────────────────────────────────────────────────────────
 
+const users = ref<{ id: string; username: string; role: 'viewer' | 'operator' | 'admin' }[]>([])
+
+async function loadUsers() {
+  if (!currentUser.value.isAdmin) return
+  users.value = await $fetch<typeof users.value>('/api/auth/users')
+}
+
+watch(() => appTab.value, (tab) => { if (tab === 'auth') loadUsers() })
+
 const newUser = reactive({ username: '', role: 'operator' as UserRole, password: '', confirm: '' })
 const newUserError = ref('')
 
-function submitNewUser() {
+async function submitNewUser() {
   newUserError.value = ''
-  if (!newUser.username.trim()) {
-    newUserError.value = 'Username is required.'
-    return
+  if (!newUser.username.trim()) { newUserError.value = 'Username is required.'; return }
+  if (!newUser.password) { newUserError.value = 'Password is required.'; return }
+  if (newUser.password.length < 8) { newUserError.value = 'Password must be at least 8 characters.'; return }
+  if (newUser.password !== newUser.confirm) { newUserError.value = 'Passwords do not match.'; return }
+  try {
+    await $fetch('/api/auth/users', {
+      method: 'POST',
+      body: { username: newUser.username.trim(), role: newUser.role, password: newUser.password },
+    })
+    await loadUsers()
+    newUser.username = ''; newUser.password = ''; newUser.confirm = ''; newUser.role = 'operator'
+  } catch (e: unknown) {
+    newUserError.value = (e as { data?: { message?: string } })?.data?.message ?? 'Failed to add user.'
   }
-  if (s.app.auth.users.some((u) => u.username === newUser.username.trim())) {
-    newUserError.value = 'Username already exists.'
-    return
-  }
-  if (!newUser.password) {
-    newUserError.value = 'Password is required.'
-    return
-  }
-  if (newUser.password !== newUser.confirm) {
-    newUserError.value = 'Passwords do not match.'
-    return
-  }
-  s.addUser(newUser.username.trim(), newUser.role)
-  newUser.username = ''
-  newUser.password = ''
-  newUser.confirm = ''
-  newUser.role = 'operator'
 }
 
 const roleDescriptions = [

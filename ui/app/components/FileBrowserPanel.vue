@@ -5,19 +5,25 @@
       <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">File Browser</h2>
       <div class="flex items-center gap-1">
         <button
-          class="text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 rounded transition-colors"
+          :disabled="isViewer"
+          class="text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           title="New folder"
           @click="toggleFolderForm"
         >
           + Folder
         </button>
-        <label class="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium cursor-pointer" title="Upload files">
+        <label
+          :class="isViewer ? 'opacity-40 cursor-not-allowed pointer-events-none' : 'cursor-pointer'"
+          class="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium"
+          title="Upload files"
+        >
           Upload
           <input
             ref="uploadInput"
             type="file"
             multiple
             class="hidden"
+            :disabled="isViewer"
             @change="onFilesSelected"
           />
         </label>
@@ -158,7 +164,8 @@
             <td class="px-3 py-2 text-right">
               <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
                 <button
-                  class="p-1 text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded"
+                  :disabled="isViewer"
+                  class="p-1 text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded disabled:opacity-40 disabled:cursor-not-allowed"
                   title="Delete folder"
                   @click="confirmDelete(folder.path, 'folder', folder.name)"
                 >
@@ -220,7 +227,8 @@
               <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   v-if="file.isNc"
-                  class="p-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors rounded"
+                  :disabled="isViewer"
+                  class="p-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors rounded disabled:opacity-40 disabled:cursor-not-allowed"
                   title="Load job"
                   @click="loadFile(file.path)"
                 >
@@ -238,7 +246,8 @@
                   </svg>
                 </a>
                 <button
-                  class="p-1 text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded"
+                  :disabled="isViewer"
+                  class="p-1 text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded disabled:opacity-40 disabled:cursor-not-allowed"
                   title="Delete file"
                   @click="confirmDelete(file.path, 'file', file.name)"
                 >
@@ -285,6 +294,7 @@
 
 <script setup lang="ts">
 import { useJobControl } from '~/composables/useJobControl'
+import { useCurrentUser } from '~/composables/useCurrentUser'
 
 // ----- types -----
 
@@ -321,6 +331,8 @@ type SortCol = 'name' | 'size' | 'uploadedAt' | 'lastRun' | 'success' | 'failed'
 // ----- state -----
 
 const { loadJob, abortAnalysis, job } = useJobControl()
+const currentUser = useCurrentUser()
+const isViewer = computed(() => currentUser.value.isViewer)
 
 const currentDir = ref('')
 const filter = ref('')

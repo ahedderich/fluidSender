@@ -25,7 +25,8 @@
             <p class="text-sm text-gray-400 dark:text-slate-500">No stock defined</p>
             <button
               @click="openStockDialog"
-              class="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
+              :disabled="isViewer"
+              class="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Set Stock
             </button>
@@ -46,13 +47,15 @@
             <div class="flex gap-1.5">
               <button
                 @click="openStockDialog"
-                class="px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg transition-colors"
+                :disabled="isViewer"
+                class="px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Edit
               </button>
               <button
                 @click="wsSend({ t: 'ui:stock:clear', payload: {} })"
-                class="px-3 py-1.5 text-xs font-medium bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400 rounded-lg transition-colors"
+                :disabled="isViewer"
+                class="px-3 py-1.5 text-xs font-medium bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Clear
               </button>
@@ -127,7 +130,8 @@
           <button
             v-if="ps.measuredWidth !== null || ps.measuredHeight !== null || ps.measuredDiameter !== null || ps.rotation !== null || ps.heightmap !== null"
             @click="wsSend({ t: 'ui:stock:clearMeasurements', payload: {} })"
-            class="w-full py-1.5 text-xs font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-500 dark:text-slate-400 rounded-lg transition-colors"
+            :disabled="isViewer"
+            class="w-full py-1.5 text-xs font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-500 dark:text-slate-400 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Clear Measurements
           </button>
@@ -142,7 +146,7 @@
             label="Corner Probing"
             description="Find a corner and set XYZ zero"
             icon="corner"
-            :disabled="isProbing || !machine.connected || machine.stock?.shape === 'round'"
+            :disabled="isViewer || isProbing || !machine.connected || machine.stock?.shape === 'round'"
             :disabled-reason="machine.stock?.shape === 'round' ? 'Corner probing requires rectangular stock' : undefined"
             @click="openWizard('corner')"
           />
@@ -150,14 +154,14 @@
             label="Center — Outside In"
             description="Find center of stock by probing outside edges"
             icon="center-out"
-            :disabled="isProbing || !machine.connected"
+            :disabled="isViewer || isProbing || !machine.connected"
             @click="openWizard('center-out')"
           />
           <ProbeWizardButton
             label="Center — Pocket/Hole"
             description="Find center of a pocket, bore, or hole"
             icon="center-in"
-            :disabled="isProbing || !machine.connected"
+            :disabled="isViewer || isProbing || !machine.connected"
             @click="openWizard('center-in')"
           />
         </div>
@@ -171,7 +175,7 @@
         <div class="grid grid-cols-3 gap-2 text-center">
           <div />
           <button
-            :disabled="isProbing || !machine.connected"
+            :disabled="isViewer || isProbing || !machine.connected"
             @click="probeEdge('Y', '+')"
             class="flex flex-col items-center gap-0.5 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-gray-700 dark:text-slate-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -179,21 +183,21 @@
           </button>
           <div />
           <button
-            :disabled="isProbing || !machine.connected"
+            :disabled="isViewer || isProbing || !machine.connected"
             @click="probeEdge('X', '-')"
             class="flex flex-col items-center gap-0.5 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-gray-700 dark:text-slate-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <span class="text-lg leading-none">←</span>X-
           </button>
           <button
-            :disabled="isProbing || !machine.connected"
+            :disabled="isViewer || isProbing || !machine.connected"
             @click="probeEdge('Z', '-')"
             class="flex flex-col items-center gap-0.5 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-gray-700 dark:text-slate-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <span class="text-lg leading-none">↓</span>Z
           </button>
           <button
-            :disabled="isProbing || !machine.connected"
+            :disabled="isViewer || isProbing || !machine.connected"
             @click="probeEdge('X', '+')"
             class="flex flex-col items-center gap-0.5 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-gray-700 dark:text-slate-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -201,7 +205,7 @@
           </button>
           <div />
           <button
-            :disabled="isProbing || !machine.connected"
+            :disabled="isViewer || isProbing || !machine.connected"
             @click="probeEdge('Y', '-')"
             class="flex flex-col items-center gap-0.5 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 text-gray-700 dark:text-slate-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -222,7 +226,7 @@
               <span class="ml-1.5 font-mono text-gray-900 dark:text-slate-100">{{ ps.edgeHistoryX[1] !== null ? ps.edgeHistoryX[1]!.toFixed(3) : '—' }}</span>
             </div>
             <button
-              :disabled="ps.edgeHistoryX[0] === null || ps.edgeHistoryX[1] === null || isProbing || !machine.connected"
+              :disabled="isViewer || ps.edgeHistoryX[0] === null || ps.edgeHistoryX[1] === null || isProbing || !machine.connected"
               @click="wsSend({ t: 'probing:setCenter', payload: { axis: 'X' } })"
               class="px-2 py-1 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-500 text-white transition-colors"
             >
@@ -239,7 +243,7 @@
               <span class="ml-1.5 font-mono text-gray-900 dark:text-slate-100">{{ ps.edgeHistoryY[1] !== null ? ps.edgeHistoryY[1]!.toFixed(3) : '—' }}</span>
             </div>
             <button
-              :disabled="ps.edgeHistoryY[0] === null || ps.edgeHistoryY[1] === null || isProbing || !machine.connected"
+              :disabled="isViewer || ps.edgeHistoryY[0] === null || ps.edgeHistoryY[1] === null || isProbing || !machine.connected"
               @click="wsSend({ t: 'probing:setCenter', payload: { axis: 'Y' } })"
               class="px-2 py-1 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-500 text-white transition-colors"
             >
@@ -266,7 +270,7 @@
             label="Stock Rotation"
             description="Three-point edge probing to measure rotation"
             icon="rotation-out"
-            :disabled="isProbing || !machine.connected || machine.stock?.shape === 'round'"
+            :disabled="isViewer || isProbing || !machine.connected || machine.stock?.shape === 'round'"
             :disabled-reason="machine.stock?.shape === 'round' ? 'Rotation probing requires a straight reference edge — not applicable to round stock' : undefined"
             @click="openWizard('rotation')"
           />
@@ -274,7 +278,7 @@
             label="Surface Heightmap"
             description="Probe a grid across the stock surface"
             icon="heightmap"
-            :disabled="isProbing || !machine.connected || !machine.stock"
+            :disabled="isViewer || isProbing || !machine.connected || !machine.stock"
             @click="openWizard('heightmap')"
           />
         </div>
@@ -623,11 +627,14 @@ import { DEFAULT_PROBE_COMPENSATION } from '~~/server/utils/tool/types'
 import { useSyncStore } from '~/stores/sync'
 import { useModals } from '~/composables/useModals'
 import { wsSend } from '~/composables/useWsSend'
+import { useCurrentUser } from '~/composables/useCurrentUser'
 
 const machine = useMachineStore()
 const syncStore = useSyncStore()
 const modals = useModals()
 const ps = syncStore.probingState
+const currentUser = useCurrentUser()
+const isViewer = computed(() => currentUser.value.isViewer)
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 

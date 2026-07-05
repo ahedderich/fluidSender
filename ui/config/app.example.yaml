@@ -3,7 +3,8 @@
 
 auth:
   enabled: false          # set to true to require login
-  # password is managed via the Settings > Authentication UI
+  # users are managed via the Settings > Authentication UI
+  # passwords are stored as bcrypt hashes — never edit manually
 
 machines: []              # populated via Settings > Add Machine
 

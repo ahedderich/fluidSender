@@ -1,16 +1,23 @@
 import { useSettingsStore } from '~/stores/settings'
 
 export default defineNuxtRouteMiddleware(async (to) => {
-  const s = useSettingsStore()
+  if (to.path === '/login') return
 
-  if (!s.initialized) {
-    await s.hydrate()
+  // useRequestFetch forwards the browser's cookie header during SSR so the
+  // JWT in fs_session is visible to the server-side auth middleware.
+  const fetchWithCookies = useRequestFetch()
+  const { authenticated } = await fetchWithCookies<{ authenticated: boolean }>('/api/auth/session').catch(() => ({ authenticated: false }))
+  if (!authenticated) {
+    return navigateTo('/login')
   }
 
-  // Always allow the settings page
+  const s = useSettingsStore()
+  if (!s.initialized) {
+    await s.hydrate(fetchWithCookies)
+  }
+
   if (to.path === '/settings') return
 
-  // Block dashboard access until at least one machine is configured
   if (!s.hasMachines) {
     return navigateTo('/settings')
   }

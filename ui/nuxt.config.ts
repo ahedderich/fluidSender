@@ -56,6 +56,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     configPath: process.env.NUXT_CONFIG_PATH ?? '/app/config',
     dataPath: process.env.NUXT_DATA_PATH ?? '/app/data',
+    jwtSecret: process.env.NUXT_JWT_SECRET ?? 'dev-secret-change-in-production',
   },
 
   compatibilityDate: '2026-06-23',

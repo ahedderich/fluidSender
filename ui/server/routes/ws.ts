@@ -1,4 +1,5 @@
 import { defineWebSocketHandler } from 'h3'
+import type { Peer } from 'crossws'
 import {
   registerPeer,
   removePeer,
@@ -31,10 +32,22 @@ import {
   clearStock,
   clearMeasurements,
   updateMagazineSlots,
+  stripAuthUsers,
   type ModalEntry,
   type Toast,
   type StockDef,
 } from '../utils/appState'
+import type { SessionPayload } from '../utils/auth'
+import { verifySession, parseCookie } from '../utils/auth'
+
+const peerSessions = new Map<string, SessionPayload>()
+
+function requireRole(peer: Peer, minRole: 'operator' | 'admin'): boolean {
+  const session = peerSessions.get(peer.id)
+  if (!session) return false
+  const levels: Record<string, number> = { viewer: 0, operator: 1, admin: 2 }
+  return (levels[session.role] ?? 0) >= (levels[minRole] ?? 0)
+}
 import { macroRunner, buildTcContext, type Macro } from '../utils/macro/macroRunner'
 import { toolStore } from '../utils/tool/toolStore'
 import { machineConnection } from '../utils/machine/connection'
@@ -111,7 +124,7 @@ async function _finishConfigFetch(): Promise<void> {
     if (machine) {
       machine.fluidncConfig = fluidncConfig
       await setConfig(config)
-      broadcastPatch([{ path: 'config', set: config as unknown as Record<string, unknown> }])
+      broadcastPatch([{ path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }])
     }
   } catch (err) {
     console.error('[ws] config fetch error:', err)
@@ -225,10 +238,34 @@ interface ClientMessage {
 
 export default defineWebSocketHandler({
   async open(peer) {
+    const cookieHeader = peer.request?.headers?.get?.('cookie') ?? ''
+    const runtimeConfig = useRuntimeConfig()
+    const token = parseCookie(cookieHeader, 'fs_session')
+
+    const config = await getConfig()
+    const authEnabled = config.auth?.enabled ?? false
+
+    let session: SessionPayload
+    if (!authEnabled) {
+      session = { userId: 'local', username: 'local', role: 'admin' }
+    } else {
+      const verified = token ? await verifySession(token, runtimeConfig.jwtSecret as string) : null
+      if (!verified) {
+        peer.send(JSON.stringify({ t: 'auth:required' }))
+        peer.close()
+        return
+      }
+      session = verified
+    }
+
+    peerSessions.set(peer.id, session)
     registerPeer(peer)
+
     try {
-      await getConfig()
-      peer.send(JSON.stringify({ t: 'snapshot', payload: getSnapshot() }))
+      peer.send(JSON.stringify({
+        t: 'snapshot',
+        payload: { ...getSnapshot(), authEnabled, session: { username: session.username, role: session.role } },
+      }))
     } catch (err) {
       console.error('[WS] error during open handler', err)
     }
@@ -256,6 +293,7 @@ export default defineWebSocketHandler({
 
       // ── Machine connection ────────────────────────────────────────────────
       case 'machine:connect': {
+        if (!requireRole(peer, 'operator')) break
         const { machineId } = msg.payload as { machineId: string }
         const config = await getConfig()
         setConnection({ machineId })
@@ -265,9 +303,11 @@ export default defineWebSocketHandler({
         break
       }
       case 'machine:disconnect':
+        if (!requireRole(peer, 'operator')) break
         machineConnection.disconnect()
         break
       case 'machine:command': {
+        if (!requireRole(peer, 'operator')) break
         const { cmd } = msg.payload as { cmd: string }
         if (!machineConnection.isConnected) {
           broadcastPatch([pushConsole({ type: 'error', text: 'Not connected', ts: Date.now() })])
@@ -280,6 +320,7 @@ export default defineWebSocketHandler({
 
       // ── Real-time overrides ───────────────────────────────────────────────
       case 'machine:override': {
+        if (!requireRole(peer, 'operator')) break
         const { bytes } = msg.payload as { bytes: number[] }
         for (const b of bytes) machineConnection.sendByte(b)
         break
@@ -287,22 +328,27 @@ export default defineWebSocketHandler({
 
       // ── Jog ───────────────────────────────────────────────────────────────
       case 'machine:jog:move': {
+        if (!requireRole(peer, 'operator')) break
         const { cmd } = msg.payload as { cmd: string }
         sendJog(cmd)
         break
       }
       case 'machine:jog:cancel':
+        if (!requireRole(peer, 'operator')) break
         cancelJog()
         break
 
       // ── Sender control ────────────────────────────────────────────────────
       case 'sender:softStop':
+        if (!requireRole(peer, 'operator')) break
         senderSoftStop((msg.payload as { chunkId?: string } | undefined)?.chunkId)
         break
       case 'sender:cycleStart':
+        if (!requireRole(peer, 'operator')) break
         senderCycleStart((msg.payload as { chunkId?: string } | undefined)?.chunkId)
         break
       case 'sender:hardStop':
+        if (!requireRole(peer, 'operator')) break
         senderHardStop((msg.payload as { chunkId?: string } | undefined)?.chunkId)
         break
       case 'sender:status': {
@@ -314,45 +360,57 @@ export default defineWebSocketHandler({
 
       // ── Job control ───────────────────────────────────────────────────────
       case 'job:analyze:abort':
+        if (!requireRole(peer, 'operator')) break
         jobRunner.abortAnalysis()
         break
       case 'job:start':
+        if (!requireRole(peer, 'operator')) break
         jobRunner.start()
         break
       case 'job:pause':
+        if (!requireRole(peer, 'operator')) break
         jobRunner.pause()
         break
       case 'job:resume':
+        if (!requireRole(peer, 'operator')) break
         jobRunner.resume()
         break
       case 'job:stop':
+        if (!requireRole(peer, 'operator')) break
         jobRunner.stop()
         break
       case 'job:emergency-stop':
+        if (!requireRole(peer, 'operator')) break
         jobRunner.emergencyStop()
         break
       case 'job:cancel':
-        // Kept as alias for emergency-stop to avoid breaking any existing callers
+        if (!requireRole(peer, 'operator')) break
         jobRunner.emergencyStop()
         break
       case 'job:clear':
+        if (!requireRole(peer, 'operator')) break
         jobRunner.clear()
         break
       case 'job:recover:confirm':
+        if (!requireRole(peer, 'operator')) break
         jobRunner.confirmRecovery((msg.payload as { resumePtr: number }).resumePtr)
         break
       case 'job:recover:fresh':
+        if (!requireRole(peer, 'operator')) break
         jobRunner.loadJobFresh().catch((err: unknown) => {
           console.error('[ws] loadJobFresh error:', err)
         })
         break
       case 'job:resumeToolChange':
+        if (!requireRole(peer, 'operator')) break
         jobRunner.resumeAfterToolChange()
         break
       case 'job:resumeProgramPause':
+        if (!requireRole(peer, 'operator')) break
         jobRunner.resumeFromProgramPause()
         break
       case 'job:setToolPreference': {
+        if (!requireRole(peer, 'operator')) break
         const { toolNumber, scope } = msg.payload as { toolNumber: number; scope: 'M' | 'A' }
         jobRunner.setToolPreference(toolNumber, scope)
         break
@@ -360,6 +418,7 @@ export default defineWebSocketHandler({
 
       // ── Tool library ──────────────────────────────────────────────────────
       case 'tool:load': {
+        if (!requireRole(peer, 'operator')) break
         const { toolNumber } = msg.payload as { toolNumber: number }
         jobRunner.runStandaloneToolchange(toolNumber, 'load').catch((e: unknown) => {
           console.error('[ws] tool:load error:', e)
@@ -367,34 +426,40 @@ export default defineWebSocketHandler({
         break
       }
       case 'tool:unload': {
+        if (!requireRole(peer, 'operator')) break
         jobRunner.runStandaloneToolchange(null, 'unload').catch((e: unknown) => {
           console.error('[ws] tool:unload error:', e)
         })
         break
       }
       case 'toolchange:confirm': {
+        if (!requireRole(peer, 'operator')) break
         jobRunner.resumeToolsetterProbe(jobRunner.status === 'tool_change').catch((e: unknown) => {
           console.error('[ws] toolchange:confirm error:', e)
         })
         break
       }
       case 'toolchange:resume': {
+        if (!requireRole(peer, 'operator')) break
         jobRunner.finishToolchangeAndResume().catch((e: unknown) => {
           console.error('[ws] toolchange:resume error:', e)
         })
         break
       }
       case 'toolchange:reprobe': {
+        if (!requireRole(peer, 'operator')) break
         jobRunner.runReprobe().catch((e: unknown) => {
           console.error('[ws] toolchange:reprobe error:', e)
         })
         break
       }
       case 'toolchange:abort': {
+        if (!requireRole(peer, 'operator')) break
         jobRunner.stop()
         break
       }
       case 'tool:magazineSlots:set': {
+        if (!requireRole(peer, 'operator')) break
         const { slots } = msg.payload as { slots: (number | null)[] }
         const machineId = getConnection().machineId ?? ''
         updateMagazineSlots(machineId, slots).then((op) => broadcastPatch([op])).catch((e: unknown) => {
@@ -403,6 +468,7 @@ export default defineWebSocketHandler({
         break
       }
       case 'tool:upsert': {
+        if (!requireRole(peer, 'operator')) break
         const { machineId: mId, ...entry } = msg.payload as { machineId: string; [key: string]: unknown }
         toolStore.upsert(entry as unknown as Parameters<typeof toolStore.upsert>[0], mId).catch((e: unknown) => {
           console.error('[ws] tool:upsert error:', e)
@@ -410,6 +476,7 @@ export default defineWebSocketHandler({
         break
       }
       case 'tool:delete': {
+        if (!requireRole(peer, 'operator')) break
         const { id: tId, scope: tScope, machineId: tMachineId } = msg.payload as { id: string; scope: 'M' | 'A'; machineId: string }
         toolStore.delete(tId, tScope, tMachineId).catch((e: unknown) => {
           console.error('[ws] tool:delete error:', e)
@@ -417,6 +484,7 @@ export default defineWebSocketHandler({
         break
       }
       case 'tool:import': {
+        if (!requireRole(peer, 'operator')) break
         const { data: importData, scope: importScope, machineId: importMachineId } = msg.payload as { data: unknown; scope: 'M' | 'A'; machineId: string }
         toolStore.importFusion360(importData, importScope, importMachineId).then((result) => {
           broadcastPatch([pushToast({
@@ -431,6 +499,7 @@ export default defineWebSocketHandler({
         break
       }
       case 'tool:clearRuntime': {
+        if (!requireRole(peer, 'operator')) break
         const { id: crId, scope: crScope, machineId: crMachineId } = msg.payload as { id: string; scope: 'M' | 'A'; machineId: string }
         toolStore.clearRuntime(crId, crScope, crMachineId).catch((e: unknown) => {
           console.error('[ws] tool:clearRuntime error:', e)
@@ -486,22 +555,26 @@ export default defineWebSocketHandler({
         break
 
       case 'ui:stock:set': {
+        if (!requireRole(peer, 'operator')) break
         const op = await setStock(msg.payload as StockDef)
         broadcastPatch([op])
         break
       }
       case 'ui:stock:clear': {
+        if (!requireRole(peer, 'operator')) break
         const ops = await clearStock()
         broadcastPatch(ops)
         break
       }
       case 'ui:stock:clearMeasurements': {
+        if (!requireRole(peer, 'operator')) break
         broadcastPatch([clearMeasurements()])
         break
       }
 
       // ── Macros ────────────────────────────────────────────────────────────
       case 'macro:run': {
+        if (!requireRole(peer, 'operator')) break
         const { macroId, formValues } = msg.payload as { macroId: string; formValues: Record<string, string> }
         const config = await getConfig()
         const activeMachineId = getUiState().selection.activeMachineId
@@ -538,11 +611,13 @@ export default defineWebSocketHandler({
       }
 
       case 'macro:abort':
+        if (!requireRole(peer, 'operator')) break
         macroRunner.abort()
         break
 
       // ── Probing ───────────────────────────────────────────────────────────
       case 'probing:start': {
+        if (!requireRole(peer, 'operator')) break
         const { wizardKey, config: wzConfig, tipRadius, probeConfig, compensation } = msg.payload as {
           wizardKey: string
           config: Parameters<typeof probingRunner.startWizard>[1]
@@ -556,12 +631,15 @@ export default defineWebSocketHandler({
         break
       }
       case 'probing:abort':
+        if (!requireRole(peer, 'operator')) break
         probingRunner.abort()
         break
       case 'probing:continue':
+        if (!requireRole(peer, 'operator')) break
         probingRunner.continue()
         break
       case 'probing:edge': {
+        if (!requireRole(peer, 'operator')) break
         const { axis, direction, tipRadius: pTipRadius, probeConfig: pConfig, buffer, compensation: pComp } = msg.payload as {
           axis: 'X' | 'Y' | 'Z'
           direction: '+' | '-'
@@ -576,6 +654,7 @@ export default defineWebSocketHandler({
         break
       }
       case 'probing:setCenter': {
+        if (!requireRole(peer, 'operator')) break
         const { axis: cAxis } = msg.payload as { axis: 'X' | 'Y' }
         probingRunner.setCenterAxis(cAxis).catch((err: unknown) => {
           console.error('[ws] probing:setCenter error:', err)
@@ -589,6 +668,7 @@ export default defineWebSocketHandler({
   },
 
   close(peer) {
+    peerSessions.delete(peer.id)
     removePeer(peer)
     if (getUiState().jogActive) {
       machineConnection.sendByte(0x85)

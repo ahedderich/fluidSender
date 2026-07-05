@@ -43,7 +43,8 @@
               type="number"
               min="1"
               max="10000"
-              class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+              :disabled="isViewer"
+              class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40"
             />
             <span class="text-xs text-gray-400 shrink-0">mm/m</span>
           </div>
@@ -57,7 +58,8 @@
               min="0.001"
               max="100"
               step="0.1"
-              class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+              :disabled="isViewer"
+              class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40"
             />
             <span class="text-xs text-gray-400 shrink-0">mm</span>
           </div>
@@ -71,7 +73,8 @@
               min="0.001"
               max="100"
               step="0.1"
-              class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+              :disabled="isViewer"
+              class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40"
             />
             <span class="text-xs text-gray-400 shrink-0">mm</span>
           </div>
@@ -143,26 +146,30 @@
       <!-- Col 5: Goto / parking buttons -->
       <div class="flex flex-col gap-1 shrink-0 w-16 ml-4">
         <button
+          :disabled="isViewer"
           @click="machine.sendCommand('$H')"
-          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors truncate"
+          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors truncate disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Parking
         </button>
         <button
+          :disabled="isViewer"
           @click="machine.sendCommand('G0 G54 X0 Y0')"
-          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors"
+          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           → XY
         </button>
         <button
+          :disabled="isViewer"
           @click="machine.sendCommand('G0 G54 Z0')"
-          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors"
+          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           → Z
         </button>
         <button
+          :disabled="isViewer"
           @click="showGotoPos = !showGotoPos"
-          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors"
+          class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Goto Pos
         </button>
@@ -258,12 +265,15 @@ import { useSyncStore } from '~/stores/sync'
 import { useNav } from '~/composables/useNav'
 import { useModals } from '~/composables/useModals'
 import { wsSend } from '~/composables/useWsSend'
+import { useCurrentUser } from '~/composables/useCurrentUser'
 
 const machine = useMachineStore()
 const settings = useSettingsStore()
 const sync = useSyncStore()
 const { navMode } = useNav()
 const modals = useModals()
+const currentUser = useCurrentUser()
+const isViewer = computed(() => currentUser.value.isViewer)
 
 const isJobActive = computed(() => {
   const s = sync.job?.status
@@ -274,6 +284,7 @@ const isJobActive = computed(() => {
 const isJogging = ref(false)
 // block jog when another browser is jogging, or when job is actively sending/recovering
 const canJog = computed(() =>
+  !isViewer.value &&
   (!sync.jogActive || isJogging.value) &&
   sync.job?.status !== 'running' &&
   sync.job?.status !== 'pausing' &&
