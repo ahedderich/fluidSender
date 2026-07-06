@@ -14,6 +14,7 @@ import {
   setNav,
   setSelection,
   setJogActive,
+  setCalibrationActive,
   openModal,
   settleProgramPauseModal,
   pushToast,
@@ -615,17 +616,26 @@ export default defineWebSocketHandler({
         macroRunner.abort()
         break
 
+      // ── Probe calibration session ─────────────────────────────────────────
+      case 'calibration:start':
+        if (!requireRole(peer, 'operator')) break
+        broadcastPatch([setCalibrationActive(true)])
+        break
+      case 'calibration:end':
+        if (!requireRole(peer, 'operator')) break
+        broadcastPatch([setCalibrationActive(false)])
+        break
+
       // ── Probing ───────────────────────────────────────────────────────────
       case 'probing:start': {
         if (!requireRole(peer, 'operator')) break
-        const { wizardKey, config: wzConfig, tipRadius, probeConfig, compensation } = msg.payload as {
+        const { wizardKey, config: wzConfig, probeConfig, compensation } = msg.payload as {
           wizardKey: string
           config: Parameters<typeof probingRunner.startWizard>[1]
-          tipRadius: number
           probeConfig: ProbeConfig
           compensation?: ProbeCompensation
         }
-        probingRunner.startWizard(wizardKey, wzConfig, tipRadius, probeConfig, compensation).catch((err: unknown) => {
+        probingRunner.startWizard(wizardKey, wzConfig, probeConfig, compensation).catch((err: unknown) => {
           console.error('[ws] probing:start error:', err)
         })
         break
@@ -633,6 +643,7 @@ export default defineWebSocketHandler({
       case 'probing:abort':
         if (!requireRole(peer, 'operator')) break
         probingRunner.abort()
+        broadcastPatch([setCalibrationActive(false)])
         break
       case 'probing:continue':
         if (!requireRole(peer, 'operator')) break
@@ -640,15 +651,15 @@ export default defineWebSocketHandler({
         break
       case 'probing:edge': {
         if (!requireRole(peer, 'operator')) break
-        const { axis, direction, tipRadius: pTipRadius, probeConfig: pConfig, buffer, compensation: pComp } = msg.payload as {
+        const { axis, direction, probeConfig: pConfig, buffer, compensation: pComp, noZero } = msg.payload as {
           axis: 'X' | 'Y' | 'Z'
           direction: '+' | '-'
-          tipRadius: number
           probeConfig: ProbeConfig
           buffer: number
           compensation?: ProbeCompensation
+          noZero?: boolean
         }
-        probingRunner.probeIndividualEdge(axis, direction, pTipRadius, pConfig, buffer, pComp).catch((err: unknown) => {
+        probingRunner.probeIndividualEdge(axis, direction, pConfig, buffer, pComp, noZero).catch((err: unknown) => {
           console.error('[ws] probing:edge error:', err)
         })
         break

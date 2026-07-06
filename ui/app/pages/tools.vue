@@ -16,15 +16,10 @@
       </button>
     </div>
 
-    <!-- Tab content -->
+    <!-- Tab content — kept alive to preserve wizard state across tab switches -->
     <div class="flex-1 overflow-y-auto">
-      <ToolsSurfacingGenerator v-if="activeTab === 0" />
-      <div
-        v-else
-        class="flex flex-col items-center justify-center py-24 text-gray-400 dark:text-slate-500"
-      >
-        <p class="text-sm">Touch probe calibration coming soon.</p>
-      </div>
+      <ToolsSurfacingGenerator v-show="activeTab === 0" />
+      <ToolsProbeCalibration v-show="activeTab === 1" />
     </div>
 
   </main>
@@ -32,5 +27,17 @@
 
 <script setup lang="ts">
 const tabs = ['Surfacing Generator', 'Touch Probe Calibration']
-const activeTab = ref(0)
+
+const route = useRoute()
+const router = useRouter()
+
+const activeTab = computed({
+  get: () => {
+    const t = Number(route.query.tab)
+    return Number.isFinite(t) && t >= 0 && t < tabs.length ? t : 0
+  },
+  set: (v: number) => {
+    router.replace({ query: { ...route.query, tab: v === 0 ? undefined : String(v) } })
+  },
+})
 </script>

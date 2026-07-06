@@ -93,14 +93,14 @@
             <!-- Probe triggered ring -->
             <circle v-if="s.probe.triggered"
               :cx="s.pos.x" :cy="-s.pos.y"
-              :r="s.probe.tipDiameter / 2 + 4"
+              :r="5"
               fill="none" stroke="#f59e0b" stroke-width="1.2" />
 
             <!-- Tool crosshair -->
             <line :x1="s.pos.x - 7" :y1="-s.pos.y" :x2="s.pos.x + 7" :y2="-s.pos.y" stroke="#ef4444" stroke-width="0.8" />
             <line :x1="s.pos.x" :y1="-s.pos.y - 7" :x2="s.pos.x" :y2="-s.pos.y + 7" stroke="#ef4444" stroke-width="0.8" />
             <circle :cx="s.pos.x" :cy="-s.pos.y"
-              :r="Math.max(1, s.probe.tipDiameter / 2)"
+              :r="1.5"
               fill="#ef4444" fill-opacity="0.45" stroke="#ef4444" stroke-width="0.5" />
 
             <!-- X dimension (bottom) -->

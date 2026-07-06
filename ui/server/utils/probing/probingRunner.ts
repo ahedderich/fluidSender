@@ -66,12 +66,13 @@ async function _sendProbeCmd(
   return { mpos: prb.mpos, contact: prb.contact }
 }
 
-// ─── Deviation blending (PROBE_DEVIATION_PLAN.md §2.2 — mirror of the Rust impl) ──
+// ─── Deviation blending ──────────────────────────────────────────────────────────
 
 /**
  * Blend per-direction deviations for an arbitrary unit probe direction `dir`
  * (direction of motion into the surface): L1-normalized weights over |n_i|,
  * signed per-axis lookup; +Z probing has no defined deviation and contributes 0.
+ * Returns r_eff: the distance between tool-centre and stock surface at trigger.
  */
 export function blendDeviation(dir: [number, number, number], comp: ProbeCompensation): number {
   const [nx, ny, nz] = dir
@@ -105,9 +106,9 @@ const EDGE_RETREAT_MM = 5
 
 /**
  * Compute the corrected edge position and the zero value from raw probe readings
- * (all machine coordinates). The surface is `effective = tipRadius − deviation`
- * ahead of the reported tool-centre position, in the probing direction
- * (PROBE_DEVIATION_PLAN.md §2.4): '+' probes add, '−' probes subtract.
+ * (all machine coordinates). `effective` = deviationFor(axis, dir, comp): the
+ * distance between tool-centre and stock surface at trigger. '+' probes add
+ * effective, '−' probes subtract it.
  *
  * `zeroAtSettle = settleRaw − edgeMach` is the `G10 L20` value that makes the
  * averaged, corrected edge read exactly 0 — valid only while the machine still
@@ -150,7 +151,6 @@ export async function probeEdge(
   axis: 'X' | 'Y' | 'Z',
   direction: '+' | '-',
   maxDistance: number,
-  tipRadius: number,
   config: ProbeConfig,
   compensation: ProbeCompensation,
   wco: { x: number; y: number; z: number },
@@ -158,8 +158,7 @@ export async function probeEdge(
 ): Promise<EdgeProbeResult> {
   const readings: number[] = []
   const axisKey = axis.toLowerCase() as 'x' | 'y' | 'z'
-  const deviation = deviationFor(axis, direction, compensation)
-  const effective = tipRadius - deviation
+  const effective = deviationFor(axis, direction, compensation)
   // Machine position of the last PRB consumed ≈ where the machine physically sits
   // when the cycle ends (probes stop at their trigger; final-step decel at slow
   // feed is negligible). Updated even for a missed retract — that PRB is not a
@@ -254,6 +253,7 @@ export interface WizardConfig {
   skipX: boolean
   skipY: boolean
   skipZ: boolean
+  probeHeightMm?: number
   corner?: 'front-left' | 'front-right' | 'back-left' | 'back-right'
   edge?: 'top' | 'bottom' | 'left' | 'right'
   insideOffset?: number
@@ -307,10 +307,10 @@ class ProbingRunner {
   async probeIndividualEdge(
     axis: 'X' | 'Y' | 'Z',
     direction: '+' | '-',
-    tipRadius: number,
     config: ProbeConfig,
     buffer: number,
     compensation: ProbeCompensation = DEFAULT_PROBE_COMPENSATION,
+    noZero = false,
   ): Promise<void> {
     _assertCanProbe()
     this._aborted = false
@@ -331,13 +331,14 @@ class ProbingRunner {
       if (!status) throw new Error('No machine status available')
       const wco = status.wco
 
-      const { edgeWpos, zeroAtSettle } = await probeEdge(axis, direction, 2 * buffer, tipRadius, config, compensation, wco, () => this._aborted)
+      const { edgeWpos, zeroAtSettle } = await probeEdge(axis, direction, 2 * buffer, config, compensation, wco, () => this._aborted)
       this._checkAbort()
 
-      // Zero at the measurement site (machine still settled on the surface), then
-      // retreat. The G10 must be its own flush — it applies at receipt, so no
-      // motion may precede it in the same flush.
-      await _flush([`G10 L20 P0 ${axis}${zeroAtSettle.toFixed(4)}`])
+      // Zero at the measurement site unless the caller suppresses it (e.g. the
+      // probe calibration wizard, which needs all readings in the same WCS).
+      if (!noZero) {
+        await _flush([`G10 L20 P0 ${axis}${zeroAtSettle.toFixed(4)}`])
+      }
       const backoffSign = direction === '+' ? '-' : ''
       await _flush(['G91', `G0 ${axis}${backoffSign}${EDGE_RETREAT_MM}`, 'G90'])
 
@@ -395,7 +396,6 @@ class ProbingRunner {
   async startWizard(
     wizardKey: string,
     config: WizardConfig,
-    tipRadius: number,
     probeConfig: ProbeConfig,
     compensation: ProbeCompensation = DEFAULT_PROBE_COMPENSATION,
   ): Promise<void> {
@@ -433,19 +433,19 @@ class ProbingRunner {
     try {
       switch (wizardKey) {
         case 'center-out':
-          await this._runCenterOut(config, tipRadius, probeConfig, compensation, safeH, buf)
+          await this._runCenterOut(config, probeConfig, compensation, safeH, buf)
           break
         case 'center-in':
-          await this._runCenterIn(config, tipRadius, probeConfig, compensation, safeH, buf)
+          await this._runCenterIn(config, probeConfig, compensation, safeH, buf)
           break
         case 'corner':
-          await this._runCorner(config, tipRadius, probeConfig, compensation, safeH, buf)
+          await this._runCorner(config, probeConfig, compensation, safeH, buf)
           break
         case 'rotation':
-          await this._runRotation(config, tipRadius, probeConfig, compensation, safeH, buf)
+          await this._runRotation(config, probeConfig, compensation, safeH, buf)
           break
         case 'heightmap':
-          await this._runHeightmap(config, tipRadius, probeConfig, compensation, safeH, buf)
+          await this._runHeightmap(config, probeConfig, compensation, safeH, buf)
           break
         default:
           throw new Error(`Unknown wizard: ${wizardKey}`)
@@ -464,7 +464,6 @@ class ProbingRunner {
 
   private async _runCenterOut(
     config: WizardConfig,
-    tipRadius: number,
     probeConfig: ProbeConfig,
     compensation: ProbeCompensation,
     safeH: number,
@@ -490,7 +489,7 @@ class ProbingRunner {
 
     if (!config.skipZ) {
       this._updateStep('Probing Z surface', stepIdx++)
-      const { zeroAtSettle: zZero } = await probeEdge('Z', '-', 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)
+      const { zeroAtSettle: zZero } = await probeEdge('Z', '-', 2 * buf, probeConfig, compensation, wco, () => this._aborted)
       // Zero at the measurement site: the averaged surface becomes Z0, then retreat
       // straight up. The dwell gives the poller a beat to pick up the new WCO.
       await _flush([`G10 L20 P0 Z${zZero.toFixed(4)}`, 'G4 P0.1'])
@@ -502,7 +501,7 @@ class ProbingRunner {
       this._checkAbort()
     }
 
-    const probeHeight = -tipRadius
+    const probeHeight = config.probeHeightMm ?? -compensation.zMinus
     let leftEdgeWpos = 0
     let rightEdgeWpos = 0
     let bottomEdgeWpos = 0
@@ -514,7 +513,7 @@ class ProbingRunner {
       this._updateStep('Probing X- edge', stepIdx++)
       await _safeTravelTo(roughCenter.x - (stockWidth / 2 + buf), roughCenter.y, safeH, probeHeight)
       this._checkAbort()
-      leftEdgeWpos = (await probeEdge('X', '+', 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+      leftEdgeWpos = (await probeEdge('X', '+', 2 * buf, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
       // Clear the wall before raising Z — probeEdge leaves the tool touching it.
       await _flush(['G91', `G0 X-${EDGE_RETREAT_MM}`, 'G90', `G0 Z${safeH.toFixed(4)}`])
       stepResults.push({ axis: 'X', direction: '-', edgeWpos: leftEdgeWpos })
@@ -524,7 +523,7 @@ class ProbingRunner {
       this._updateStep('Probing X+ edge', stepIdx++)
       await _safeTravelTo(roughCenter.x + (stockWidth / 2 + buf), roughCenter.y, safeH, probeHeight)
       this._checkAbort()
-      rightEdgeWpos = (await probeEdge('X', '-', 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+      rightEdgeWpos = (await probeEdge('X', '-', 2 * buf, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
       await _flush(['G91', `G0 X${EDGE_RETREAT_MM}`, 'G90', `G0 Z${safeH.toFixed(4)}`])
       stepResults.push({ axis: 'X', direction: '+', edgeWpos: rightEdgeWpos })
       centerX = (leftEdgeWpos + rightEdgeWpos) / 2
@@ -536,7 +535,7 @@ class ProbingRunner {
       this._updateStep('Probing Y- edge', stepIdx++)
       await _safeTravelTo(centerX, roughCenter.y - (stockHeight / 2 + buf), safeH, probeHeight)
       this._checkAbort()
-      bottomEdgeWpos = (await probeEdge('Y', '+', 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+      bottomEdgeWpos = (await probeEdge('Y', '+', 2 * buf, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
       await _flush(['G91', `G0 Y-${EDGE_RETREAT_MM}`, 'G90', `G0 Z${safeH.toFixed(4)}`])
       stepResults.push({ axis: 'Y', direction: '-', edgeWpos: bottomEdgeWpos })
       broadcastPatch([setProbingState({ stepResults: [...stepResults] })])
@@ -545,7 +544,7 @@ class ProbingRunner {
       this._updateStep('Probing Y+ edge', stepIdx++)
       await _safeTravelTo(centerX, roughCenter.y + (stockHeight / 2 + buf), safeH, probeHeight)
       this._checkAbort()
-      topEdgeWpos = (await probeEdge('Y', '-', 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+      topEdgeWpos = (await probeEdge('Y', '-', 2 * buf, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
       await _flush(['G91', `G0 Y${EDGE_RETREAT_MM}`, 'G90', `G0 Z${safeH.toFixed(4)}`])
       stepResults.push({ axis: 'Y', direction: '+', edgeWpos: topEdgeWpos })
       centerY = (topEdgeWpos + bottomEdgeWpos) / 2
@@ -594,7 +593,6 @@ class ProbingRunner {
 
   private async _runCenterIn(
     config: WizardConfig,
-    tipRadius: number,
     probeConfig: ProbeConfig,
     compensation: ProbeCompensation,
     _safeH: number,
@@ -620,14 +618,14 @@ class ProbingRunner {
 
     this._updateStep('Probing X- wall', 0)
     // The return-to-center moves after each wall probe are the retreat off the wall.
-    const leftEdgeWpos = (await probeEdge('X', '-', buf * 2, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+    const leftEdgeWpos = (await probeEdge('X', '-', buf * 2, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
     await _flush([`G0 X${roughCenter.x.toFixed(4)}`])
     stepResults.push({ axis: 'X', direction: '-', edgeWpos: leftEdgeWpos })
     broadcastPatch([setProbingState({ stepResults: [...stepResults] })])
     this._checkAbort()
 
     this._updateStep('Probing X+ wall', 1)
-    const rightEdgeWpos = (await probeEdge('X', '+', buf * 2, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+    const rightEdgeWpos = (await probeEdge('X', '+', buf * 2, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
     const centerX = (leftEdgeWpos + rightEdgeWpos) / 2
     const measuredWidth = Math.abs(rightEdgeWpos - leftEdgeWpos)
     await _flush([`G0 X${centerX.toFixed(4)}`])
@@ -636,14 +634,14 @@ class ProbingRunner {
     this._checkAbort()
 
     this._updateStep('Probing Y- wall', 2)
-    const bottomEdgeWpos = (await probeEdge('Y', '-', buf * 2, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+    const bottomEdgeWpos = (await probeEdge('Y', '-', buf * 2, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
     await _flush([`G0 Y${roughCenter.y.toFixed(4)}`])
     stepResults.push({ axis: 'Y', direction: '-', edgeWpos: bottomEdgeWpos })
     broadcastPatch([setProbingState({ stepResults: [...stepResults] })])
     this._checkAbort()
 
     this._updateStep('Probing Y+ wall', 3)
-    const topEdgeWpos = (await probeEdge('Y', '+', buf * 2, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+    const topEdgeWpos = (await probeEdge('Y', '+', buf * 2, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
     const centerY = (topEdgeWpos + bottomEdgeWpos) / 2
     const measuredHeight = Math.abs(topEdgeWpos - bottomEdgeWpos)
     stepResults.push({ axis: 'Y', direction: '+', edgeWpos: topEdgeWpos })
@@ -669,7 +667,6 @@ class ProbingRunner {
 
   private async _runCorner(
     config: WizardConfig,
-    tipRadius: number,
     probeConfig: ProbeConfig,
     compensation: ProbeCompensation,
     safeH: number,
@@ -694,7 +691,7 @@ class ProbingRunner {
 
     if (!config.skipZ) {
       this._updateStep('Probing Z surface', stepIdx++)
-      const { zeroAtSettle: zZero } = await probeEdge('Z', '-', 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)
+      const { zeroAtSettle: zZero } = await probeEdge('Z', '-', 2 * buf, probeConfig, compensation, wco, () => this._aborted)
       // Zero at the measurement site: the averaged surface becomes Z0, then retreat
       // straight up. The dwell gives the poller a beat to pick up the new WCO.
       await _flush([`G10 L20 P0 Z${zZero.toFixed(4)}`, 'G4 P0.1'])
@@ -706,7 +703,7 @@ class ProbingRunner {
       this._checkAbort()
     }
 
-    const probeHeight = -tipRadius
+    const probeHeight = config.probeHeightMm ?? -compensation.zMinus
     let xEdgeWpos = 0
     let yEdgeWpos = 0
 
@@ -714,7 +711,7 @@ class ProbingRunner {
       this._updateStep(`Probing X${xDir === '+' ? '-' : '+'} edge`, stepIdx++)
       await _safeTravelTo(roughPos.x, roughPos.y, safeH, probeHeight)
       this._checkAbort()
-      xEdgeWpos = (await probeEdge('X', xDir, 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+      xEdgeWpos = (await probeEdge('X', xDir, 2 * buf, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
       const retractSign = xDir === '+' ? '-' : ''
       await _flush(['G91', `G0 X${retractSign}${buf}`, 'G90', `G0 Z${safeH.toFixed(4)}`])
       stepResults.push({ axis: 'X', direction: (xDir === '+' ? '-' : '+') as '+' | '-', edgeWpos: xEdgeWpos })
@@ -726,7 +723,7 @@ class ProbingRunner {
       this._updateStep(`Probing Y${yDir === '+' ? '-' : '+'} edge`, stepIdx++)
       await _safeTravelTo(roughPos.x, roughPos.y, safeH, probeHeight)
       this._checkAbort()
-      yEdgeWpos = (await probeEdge('Y', yDir, 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+      yEdgeWpos = (await probeEdge('Y', yDir, 2 * buf, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
       const retractSign = yDir === '+' ? '-' : ''
       await _flush(['G91', `G0 Y${retractSign}${buf}`, 'G90', `G0 Z${safeH.toFixed(4)}`])
       stepResults.push({ axis: 'Y', direction: (yDir === '+' ? '-' : '+') as '+' | '-', edgeWpos: yEdgeWpos })
@@ -750,7 +747,6 @@ class ProbingRunner {
 
   private async _runRotation(
     config: WizardConfig,
-    tipRadius: number,
     probeConfig: ProbeConfig,
     compensation: ProbeCompensation,
     safeH: number,
@@ -797,7 +793,7 @@ class ProbingRunner {
       probeAxis = 'X'; approachDir = '-'; approachStartOffset = measuredWidth / 2 + buf
     }
 
-    const probeHeight = -tipRadius
+    const probeHeight = -compensation.zMinus
     const retractSign = approachDir === '+' ? '-' : ''
     broadcastPatch([setProbingState({ totalSteps: 3 })])
 
@@ -805,7 +801,7 @@ class ProbingRunner {
     const startP1 = probeAxis === 'Y' ? { x: p1.x, y: approachStartOffset } : { x: approachStartOffset, y: p1.y }
     await _safeTravelTo(startP1.x, startP1.y, safeH, probeHeight)
     this._checkAbort()
-    const p1Wpos = (await probeEdge(probeAxis, approachDir, 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+    const p1Wpos = (await probeEdge(probeAxis, approachDir, 2 * buf, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
     await _flush(['G91', `G0 ${probeAxis}${retractSign}${buf}`, 'G90', `G0 Z${safeH.toFixed(4)}`])
     this._checkAbort()
 
@@ -813,7 +809,7 @@ class ProbingRunner {
     const startPc = probeAxis === 'Y' ? { x: pc.x, y: approachStartOffset } : { x: approachStartOffset, y: pc.y }
     await _safeTravelTo(startPc.x, startPc.y, safeH, probeHeight)
     this._checkAbort()
-    const pcWpos = (await probeEdge(probeAxis, approachDir, 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+    const pcWpos = (await probeEdge(probeAxis, approachDir, 2 * buf, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
     await _flush(['G91', `G0 ${probeAxis}${retractSign}${buf}`, 'G90', `G0 Z${safeH.toFixed(4)}`])
     this._checkAbort()
 
@@ -821,7 +817,7 @@ class ProbingRunner {
     const startP3 = probeAxis === 'Y' ? { x: p3.x, y: approachStartOffset } : { x: approachStartOffset, y: p3.y }
     await _safeTravelTo(startP3.x, startP3.y, safeH, probeHeight)
     this._checkAbort()
-    const p3Wpos = (await probeEdge(probeAxis, approachDir, 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
+    const p3Wpos = (await probeEdge(probeAxis, approachDir, 2 * buf, probeConfig, compensation, wco, () => this._aborted)).edgeWpos
     await _flush(['G91', `G0 ${probeAxis}${retractSign}${buf}`, 'G90', `G0 Z${safeH.toFixed(4)}`])
 
     let rotationDeg: number
@@ -853,7 +849,6 @@ class ProbingRunner {
 
   private async _runHeightmap(
     config: WizardConfig,
-    tipRadius: number,
     probeConfig: ProbeConfig,
     compensation: ProbeCompensation,
     safeH: number,
@@ -907,7 +902,7 @@ class ProbingRunner {
         this._checkAbort()
 
         try {
-          const { edgeWpos } = await probeEdge('Z', '-', 2 * buf, tipRadius, probeConfig, compensation, wco, () => this._aborted)
+          const { edgeWpos } = await probeEdge('Z', '-', 2 * buf, probeConfig, compensation, wco, () => this._aborted)
           values[idx] = edgeWpos
         } catch (err) {
           if (this._aborted) throw err

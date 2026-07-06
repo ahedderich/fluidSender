@@ -32,18 +32,8 @@
       {{ s.limits.door ? 'Door Open' : 'Door Sensor' }}
     </button>
 
-    <!-- Probe: tip diameter + trigger on one line -->
+    <!-- Probe trigger button -->
     <div class="flex items-center gap-2">
-      <span class="text-xs text-gray-400 dark:text-slate-500 shrink-0">Probe tip</span>
-      <input
-        v-model.number="s.probe.tipDiameter"
-        type="number"
-        step="0.1"
-        min="0.1"
-        max="25"
-        class="w-16 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 font-mono text-xs text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-      />
-      <span class="text-[10px] text-gray-400 dark:text-slate-500 shrink-0">mm</span>
       <button
         @click="s.triggerProbe()"
         :class="s.probe.triggered
@@ -76,7 +66,7 @@
         </label>
       </div>
       <p class="text-[10px] text-gray-400 dark:text-slate-500 mt-1">
-        mm; positive = triggers late (pre-travel), negative = triggers early.
+        mm; positive = trigger fires before centre reaches surface (normal); negative = trigger fires after centre has passed.
       </p>
     </div>
   </div>

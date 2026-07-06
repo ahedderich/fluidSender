@@ -93,20 +93,10 @@ impl Default for MachineConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ProbeConfig {
-    pub tip_diameter: f64,
     #[serde(default)]
     pub deviations: crate::machine::probe::ProbeDeviations,
-}
-
-impl Default for ProbeConfig {
-    fn default() -> Self {
-        Self {
-            tip_diameter: 2.0,
-            deviations: Default::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

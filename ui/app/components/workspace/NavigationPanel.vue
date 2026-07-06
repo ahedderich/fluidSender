@@ -282,10 +282,11 @@ const isJobActive = computed(() => {
 
 // true only on the browser that is actively jogging right now
 const isJogging = ref(false)
-// block jog when another browser is jogging, or when job is actively sending/recovering
+// block jog when another browser is jogging, when a job is active, or during probe calibration
 const canJog = computed(() =>
   !isViewer.value &&
   (!sync.jogActive || isJogging.value) &&
+  !sync.calibrationActive &&
   sync.job?.status !== 'running' &&
   sync.job?.status !== 'pausing' &&
   sync.job?.status !== 'recovering',

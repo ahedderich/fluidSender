@@ -33,6 +33,7 @@ export interface UiSnapshot {
   }
   selection: { activeMachineId: string; selectedToolId: string | null; selectedFile: string | null }
   jogActive: boolean
+  calibrationActive?: boolean
   modals: ModalEntry[]
   toasts: Toast[]
   console: SyncConsoleEntry[]
@@ -61,6 +62,7 @@ export const useSyncStore = defineStore('sync', () => {
     selectedFile: null as string | null,
   })
   const jogActive = ref(false)
+  const calibrationActive = ref(false)
   const modals = ref<ModalEntry[]>([])
   const toasts = ref<Toast[]>([])
   const consoleLog = ref<SyncConsoleEntry[]>([])
@@ -82,6 +84,7 @@ export const useSyncStore = defineStore('sync', () => {
     Object.assign(nav, ui.nav)
     Object.assign(selection, ui.selection)
     jogActive.value = ui.jogActive
+    calibrationActive.value = ui.calibrationActive ?? false
     modals.value.splice(0, modals.value.length, ...ui.modals)
     toasts.value.splice(0, toasts.value.length, ...ui.toasts)
     consoleLog.value.splice(0, consoleLog.value.length, ...ui.console)
@@ -102,6 +105,9 @@ export const useSyncStore = defineStore('sync', () => {
         break
       case 'jogActive':
         if ('set' in op) jogActive.value = (op.set as { jogActive: boolean }).jogActive
+        break
+      case 'calibrationActive':
+        if ('set' in op) calibrationActive.value = (op.set as { calibrationActive: boolean }).calibrationActive
         break
       case 'modals':
         if ('push' in op) modals.value.push(op.push as ModalEntry)
@@ -143,5 +149,5 @@ export const useSyncStore = defineStore('sync', () => {
     job.value = { ...state }
   }
 
-  return { nav, selection, jogActive, modals, toasts, consoleLog, job, macroRun, probingState, session, applySnapshot, applyOp, applyJobState }
+  return { nav, selection, jogActive, calibrationActive, modals, toasts, consoleLog, job, macroRun, probingState, session, applySnapshot, applyOp, applyJobState }
 })

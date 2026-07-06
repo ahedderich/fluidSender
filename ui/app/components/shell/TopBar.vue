@@ -67,6 +67,12 @@
         class="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700/50 px-2 py-1 rounded max-w-xs truncate"
         :title="machine.connectionError"
       >{{ machine.connectionError }}</span>
+
+      <span
+        v-if="sync.calibrationActive"
+        class="text-xs text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-700/50 px-2 py-1 rounded whitespace-nowrap"
+        title="Probe calibration in progress — jogging is disabled"
+      >Calibrating probe</span>
     </div>
 
     <!-- ── 2. Cycle area (65% of remaining space, content centered) ────────── -->
@@ -328,12 +334,14 @@
 import { useMachineStore } from '~/stores/machine'
 import { useSettingsStore } from '~/stores/settings'
 import { useUiStore } from '~/stores/ui'
+import { useSyncStore } from '~/stores/sync'
 import { useConfirm } from '~/composables/useConfirm'
 import { wsConnected } from '~/composables/useWsSend'
 import { useJobControl } from '~/composables/useJobControl'
 import { useCurrentUser } from '~/composables/useCurrentUser'
 
 const machine = useMachineStore()
+const sync = useSyncStore()
 const s = useSettingsStore()
 const ui = useUiStore()
 const { confirm } = useConfirm()

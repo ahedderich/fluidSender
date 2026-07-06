@@ -54,7 +54,6 @@ async fn main() {
     let mut state = MachineState::new(
         cfg.machine.axis_count,
         travel,
-        cfg.probe.tip_diameter,
         cfg.probe.deviations.clone(),
         cfg.sim.speed,
     );

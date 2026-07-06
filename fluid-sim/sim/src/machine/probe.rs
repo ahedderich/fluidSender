@@ -4,10 +4,10 @@ use crate::machine::stock::StockDefinition;
 
 /// Per-direction probe trigger deviations (mm).
 ///
-/// Sign convention (PROBE_DEVIATION_PLAN.md §2.1): deviation = extra distance the
-/// machine travels past the ideal geometric contact point before the trigger fires.
-/// Positive = triggers late (pre-travel/deflection). Negative = triggers early.
-/// Effective trigger offset from surface: r_eff = tip_radius − deviation.
+/// Sign convention: deviation = distance between tool-centre at trigger and actual
+/// stock surface. Positive = trigger fires before centre reaches the surface (normal;
+/// magnitude ≈ ball_radius). Effective correction: r_eff = blend_deviation(contact_dir, deviations).
+/// zMinus used as approach Z height when traversing laterally.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ProbeDeviations {
@@ -43,18 +43,15 @@ pub fn blend_deviation(contact_dir: [f64; 3], d: &ProbeDeviations) -> f64 {
 
 /// Check if the current probe position has made (or, for away probes, lost) contact.
 ///
-/// Trigger condition (PROBE_DEVIATION_PLAN.md §2.3): the test point
-/// `pos + contact_dir · r_eff` is checked against the stock volume, where
-/// `r_eff = tip_radius − blend_deviation(contact_dir)`. For approach probes the
-/// contact direction is the motion direction; for away probes it is the negated
-/// motion direction (the surface is behind the retracting probe) and the trigger
-/// fires when the test point *leaves* the stock volume.
-#[allow(clippy::too_many_arguments)]
+/// Trigger condition: the test point `pos + contact_dir · r_eff` is checked against
+/// the stock volume, where `r_eff = blend_deviation(contact_dir, deviations)`.
+/// For approach probes the contact direction is the motion direction; for away probes
+/// it is the negated motion direction and the trigger fires when the test point leaves
+/// the stock volume.
 pub fn check_probe_contact(
     pos: [f64; 3],
     motion_dir: [f64; 3],
     probe_away: bool,
-    tip_diameter: f64,
     deviations: &ProbeDeviations,
     manual_triggered: bool,
     stock: Option<&StockDefinition>,
@@ -74,7 +71,7 @@ pub fn check_probe_contact(
     } else {
         motion_dir
     };
-    let r_eff = tip_diameter / 2.0 - blend_deviation(contact_dir, deviations);
+    let r_eff = blend_deviation(contact_dir, deviations);
     let test_point = [
         pos[0] + contact_dir[0] * r_eff,
         pos[1] + contact_dir[1] * r_eff,
@@ -179,7 +176,6 @@ mod tests {
             pos,
             dir,
             false,
-            2.0,
             &ProbeDeviations::default(),
             true,
             None,
@@ -195,7 +191,6 @@ mod tests {
             pos,
             dir,
             false,
-            2.0,
             &ProbeDeviations::default(),
             false,
             None,
@@ -204,73 +199,73 @@ mod tests {
     }
 
     #[test]
-    fn approach_z_zero_deviation_triggers_at_top_plus_radius() {
-        // Stock top z=5, tip Ø2 (r=1), no deviation → trigger when centre z ≤ 6.0.
+    fn approach_z_zero_deviation_triggers_at_surface() {
+        // Stock top z=5, no deviation → r_eff=0 → trigger when centre z ≤ 5.0.
         let stock = make_stock();
         let d = ProbeDeviations::default();
         let dir = [0.0, 0.0, -1.0];
         let hit = check_probe_contact(
-            [100.0, 60.0, 6.05],
+            [100.0, 60.0, 5.05],
             dir,
             false,
-            2.0,
             &d,
             false,
             Some(&stock),
         );
         assert!(
             matches!(hit, ProbeHit::None),
-            "should not trigger above 6.0"
+            "should not trigger above 5.0"
         );
-        let hit = check_probe_contact([100.0, 60.0, 6.0], dir, false, 2.0, &d, false, Some(&stock));
-        assert!(matches!(hit, ProbeHit::Contact(_)), "should trigger at 6.0");
+        let hit = check_probe_contact([100.0, 60.0, 5.0], dir, false, &d, false, Some(&stock));
+        assert!(matches!(hit, ProbeHit::Contact(_)), "should trigger at 5.0");
     }
 
     #[test]
-    fn approach_z_with_deviation_triggers_late() {
-        // zMinus = +0.2 → r_eff = 0.8 → trigger when centre z ≤ 5.8.
+    fn approach_z_with_positive_deviation_triggers_early() {
+        // zMinus = +0.2 → r_eff = 0.2 → test_point.z = pos.z − 0.2
+        // → trigger when centre z ≤ 5.2 (centre is 0.2mm above surface at trigger).
         let stock = make_stock();
         let d = devs(0.0, 0.0, 0.0, 0.0, 0.2);
         let dir = [0.0, 0.0, -1.0];
-        let hit = check_probe_contact([100.0, 60.0, 5.9], dir, false, 2.0, &d, false, Some(&stock));
-        assert!(matches!(hit, ProbeHit::None), "should not trigger at 5.9");
-        let hit = check_probe_contact([100.0, 60.0, 5.8], dir, false, 2.0, &d, false, Some(&stock));
-        assert!(matches!(hit, ProbeHit::Contact(_)), "should trigger at 5.8");
+        let hit = check_probe_contact([100.0, 60.0, 5.3], dir, false, &d, false, Some(&stock));
+        assert!(matches!(hit, ProbeHit::None), "should not trigger at 5.3");
+        let hit = check_probe_contact([100.0, 60.0, 5.2], dir, false, &d, false, Some(&stock));
+        assert!(matches!(hit, ProbeHit::Contact(_)), "should trigger at 5.2");
     }
 
     #[test]
-    fn approach_x_side_with_negative_deviation_triggers_early() {
-        // +X into stock left face at x=50, xPlus = −0.1 → r_eff = 1.1
-        // → trigger when centre x ≥ 50 − 1.1 = 48.9.
+    fn approach_x_side_with_positive_deviation_triggers_early() {
+        // +X into stock left face at x=50, xPlus = +0.8 → r_eff = 0.8
+        // → test_point.x = pos.x + 0.8 → trigger when centre x ≥ 49.2.
         let stock = make_stock();
-        let d = devs(-0.1, 0.0, 0.0, 0.0, 0.0);
+        let d = devs(0.8, 0.0, 0.0, 0.0, 0.0);
         let dir = [1.0, 0.0, 0.0];
-        let hit = check_probe_contact([48.8, 60.0, 0.0], dir, false, 2.0, &d, false, Some(&stock));
+        let hit = check_probe_contact([49.1, 60.0, 0.0], dir, false, &d, false, Some(&stock));
         assert!(
             matches!(hit, ProbeHit::None),
-            "should not trigger at x=48.8"
+            "should not trigger at x=49.1"
         );
-        let hit = check_probe_contact([48.9, 60.0, 0.0], dir, false, 2.0, &d, false, Some(&stock));
+        let hit = check_probe_contact([49.2, 60.0, 0.0], dir, false, &d, false, Some(&stock));
         assert!(
             matches!(hit, ProbeHit::Contact(_)),
-            "should trigger at x=48.9"
+            "should trigger at x=49.2"
         );
     }
 
     #[test]
     fn away_probe_triggers_on_exit() {
         // Retracting in +Z after a −Z approach: contact_dir = −motion_dir = −Z.
-        // r_eff = 1 → test point stays inside while centre z ≤ 6.0, exits above.
+        // r_eff = 0 (zero deviations) → test point = pos → trigger when centre z > 5.0.
         let stock = make_stock();
         let d = ProbeDeviations::default();
         let dir = [0.0, 0.0, 1.0];
-        let hit = check_probe_contact([100.0, 60.0, 5.9], dir, true, 2.0, &d, false, Some(&stock));
+        let hit = check_probe_contact([100.0, 60.0, 4.9], dir, true, &d, false, Some(&stock));
         assert!(
             matches!(hit, ProbeHit::None),
-            "test point still inside at 5.9"
+            "test point still inside at 4.9"
         );
-        let hit = check_probe_contact([100.0, 60.0, 6.1], dir, true, 2.0, &d, false, Some(&stock));
-        assert!(matches!(hit, ProbeHit::Contact(_)), "test point out at 6.1");
+        let hit = check_probe_contact([100.0, 60.0, 5.1], dir, true, &d, false, Some(&stock));
+        assert!(matches!(hit, ProbeHit::Contact(_)), "test point out at 5.1");
     }
 
     #[test]
@@ -279,7 +274,7 @@ mod tests {
         let d = ProbeDeviations::default();
         let dir = [0.0, 0.0, 1.0];
         let pos = [100.0, 60.0, 20.0];
-        let hit = check_probe_contact(pos, dir, true, 2.0, &d, false, Some(&stock));
+        let hit = check_probe_contact(pos, dir, true, &d, false, Some(&stock));
         assert!(matches!(hit, ProbeHit::Contact(p) if p == pos));
     }
 

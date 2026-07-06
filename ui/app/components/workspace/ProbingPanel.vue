@@ -628,6 +628,7 @@ import { useSyncStore } from '~/stores/sync'
 import { useModals } from '~/composables/useModals'
 import { wsSend } from '~/composables/useWsSend'
 import { useCurrentUser } from '~/composables/useCurrentUser'
+import { useNav } from '~/composables/useNav'
 
 const machine = useMachineStore()
 const syncStore = useSyncStore()
@@ -635,6 +636,7 @@ const modals = useModals()
 const ps = syncStore.probingState
 const currentUser = useCurrentUser()
 const isViewer = computed(() => currentUser.value.isViewer)
+const nav = useNav()
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
@@ -645,7 +647,11 @@ const tabs = [
   { key: 'correction', label: 'Correction' },
 ]
 
-const activeTab = ref('stock')
+const activeTab = computed({
+  get: () => nav.probingTab.value,
+  set: (v) => { nav.probingTab.value = v },
+})
+
 function setTab(key: string) {
   activeTab.value = key
 }
@@ -658,13 +664,11 @@ const probeTool = computed(() => {
   const all = [...(machine.toolLibrary?.machine ?? []), ...(machine.toolLibrary?.app ?? [])]
   const loaded = machine.loadedToolNumber
   if (loaded !== null) {
-    const t = all.find(e => e.number === loaded && e.type === 'probe')
+    const t = all.find(e => e.number === loaded && e.type.toLowerCase().trim() === 'probe')
     if (t) return t
   }
-  return all.find(e => e.type === 'probe') ?? null
+  return all.find(e => e.type.toLowerCase().trim() === 'probe') ?? null
 })
-
-const tipRadius = computed(() => (probeTool.value?.diameter ?? 3) / 2)
 
 const probeConfig = computed(() => probeTool.value?.probeConfig ?? {
   wiggleEnabled: true,
@@ -720,7 +724,6 @@ function probeEdge(axis: 'X' | 'Y' | 'Z', direction: '+' | '-') {
     payload: {
       axis,
       direction,
-      tipRadius: tipRadius.value,
       probeConfig: probeConfig.value,
       compensation: probeCompensation.value,
       buffer: 10,
@@ -791,19 +794,18 @@ function startWizard() {
     payload: {
       wizardKey: key,
       config: cfg,
-      tipRadius: tipRadius.value,
       probeConfig: probeConfig.value,
       compensation: probeCompensation.value,
     },
   })
 }
 
-// Show the result overlay on all clients when a run finishes.
+// Show the result overlay when a run finishes, unless calibration owns the sequence.
 // The prevPhase === 'running' guard prevents the overlay from appearing
 // for clients that connect after the run is already done.
 watch(() => ps.phase, (phase, prevPhase) => {
   if ((phase === 'completed' || phase === 'aborted') && prevPhase === 'running') {
-    resultDismissed.value = false
+    if (!syncStore.calibrationActive) resultDismissed.value = false
   }
 })
 

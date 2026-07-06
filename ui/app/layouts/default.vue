@@ -6,5 +6,6 @@
     <DialogsProgramPause />
     <DialogsToolchange />
     <DialogsToastHost />
+    <DialogsProbingOverlays />
   </div>
 </template>

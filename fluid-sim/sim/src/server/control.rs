@@ -44,7 +44,6 @@ pub struct SimState {
     pub coolant: String,
     pub limits: LimitState,
     pub probe_triggered: bool,
-    pub probe_tip_diameter: f64,
     pub probe_deviations: ProbeDeviations,
     pub door: bool,
     pub sim_speed: u8,
@@ -65,7 +64,6 @@ impl SimState {
             coolant: format!("{:?}", s.coolant).to_lowercase(),
             limits: s.limits.clone(),
             probe_triggered: s.probe.triggered,
-            probe_tip_diameter: s.probe.tip_diameter,
             probe_deviations: s.probe.deviations.clone(),
             door: s.door,
             sim_speed: s.sim_speed,
@@ -270,7 +268,6 @@ async fn set_wco(State(app): State<AppState>, Json(body): Json<AxisInput>) -> St
 struct MachineConfigInput {
     travel: Option<AxisInput>,
     axis_count: Option<usize>,
-    probe_tip_diameter: Option<f64>,
     probe_deviations: Option<ProbeDeviations>,
 }
 
@@ -285,11 +282,8 @@ async fn set_machine_config(
     if let Some(n) = body.axis_count {
         state.axis_count = n.clamp(1, AXIS_COUNT);
     }
-    if let Some(d) = body.probe_tip_diameter {
-        state.probe.tip_diameter = d.max(0.1);
-    }
     if let Some(devs) = body.probe_deviations {
-        // Deviations are deliberately unclamped — negative values (early trigger) are valid.
+        // Deviations are deliberately unclamped — negative values (late trigger) are valid.
         state.probe.deviations = devs;
     }
     let _ = app.broadcast.send(());

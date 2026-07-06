@@ -8,9 +8,12 @@ export interface ProbeConfig {
 
 /**
  * Per-direction probe trigger deviations (mm).
- * Sign convention (PROBE_DEVIATION_PLAN.md §2.1): deviation = extra distance travelled
- * past the ideal geometric contact point before the trigger fires. Positive = triggers
- * late (pre-travel); negative = triggers early. Effective offset = tipRadius − deviation.
+ * Sign convention: deviation = distance between tool-centre position at trigger
+ * and the actual stock surface. Positive = trigger fires before centre reaches
+ * the surface (normal for all real probes; magnitude ≈ ball_radius − pre_travel).
+ * Negative = trigger fires after centre has passed the surface (rare fault condition).
+ * Effective correction: edgeMach = rawCentrePos + deviation (+ approach) or − deviation (− approach).
+ * zMinus is also used as the Z drop height when laterally approaching stock edges.
  */
 export interface ProbeCompensation {
   xPlus: number

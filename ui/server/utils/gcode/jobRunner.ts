@@ -15,6 +15,9 @@ import {
   settleProgramPauseModal,
   openToolchangeModal,
   updateToolchangeModal,
+  resolveModal,
+  registerToolchangeResolveHandler,
+  unregisterToolchangeResolveHandler,
   setLoadedTool,
   getLoadedToolForMachine,
   pushToast,
@@ -78,6 +81,9 @@ class JobRunner {
 
   // Toolchange modal id (null when no toolchange dialog is open)
   private _toolchangeModalId: string | null = null
+  // Pending standalone (non-job) toolchange state for manual-basic strategy
+  private _pendingStandaloneActive: boolean = false
+  private _pendingStandaloneToolNumber: number | null = null
 
   // Last T-word seen — used for atc-passthrough to update loadedToolNumber on M6 ack
   private _lastSeenToolNumber: number | null = null
@@ -880,6 +886,14 @@ class JobRunner {
     if (this._toolchangeModalId) return
     const { id, op } = openToolchangeModal(props)
     this._toolchangeModalId = id
+    registerToolchangeResolveHandler(id, () => {
+      // Fires when the client resolves (closes) the modal — clears server-side stale state.
+      if (this._toolchangeModalId === id) {
+        this._toolchangeModalId = null
+        this._pendingStandaloneActive = false
+        this._pendingStandaloneToolNumber = null
+      }
+    })
     broadcastPatch([op])
   }
 
@@ -891,8 +905,11 @@ class JobRunner {
 
   private _closeToolchangeDialog(): void {
     if (!this._toolchangeModalId) return
-    broadcastPatch([{ path: 'modals', removeId: this._toolchangeModalId, meta: { result: 'resolved' } }])
+    const id = this._toolchangeModalId
     this._toolchangeModalId = null
+    unregisterToolchangeResolveHandler(id)
+    const op = resolveModal(id, 'resolved')
+    if (op) broadcastPatch([op])
   }
 
   private _broadcastToolchangeError(message: string, isJobContext: boolean): void {
@@ -1017,6 +1034,22 @@ class JobRunner {
 
   async resumeToolsetterProbe(isJobContext: boolean): Promise<void> {
     const tc = await this._getToolchangeConfig()
+
+    if (tc.strategy === 'manual-basic') {
+      if (this._pendingStandaloneActive) {
+        const toolNum = this._pendingStandaloneToolNumber
+        this._pendingStandaloneActive = false
+        this._pendingStandaloneToolNumber = null
+        this._closeToolchangeDialog()
+        const machineId = await this._getActiveMachineId() ?? ''
+        if (machineId) setLoadedTool(machineId, toolNum).then((op) => broadcastPatch([op])).catch(() => {})
+      } else if (isJobContext) {
+        this._closeToolchangeDialog()
+        this.resumeAfterToolChange()
+      }
+      return
+    }
+
     if (tc.strategy !== 'manual-toolsetter') return
     const pos = tc.position
     const approachSeq = buildToolsetterApproachSequence(pos)
@@ -1079,6 +1112,8 @@ class JobRunner {
 
     switch (tc.strategy) {
       case 'manual-basic':
+        this._pendingStandaloneToolNumber = targetToolNumber
+        this._pendingStandaloneActive = true
         this._openToolchangeDialog({ phase: 'waiting_for_swap', currentToolNumber: null, nextToolNumber: targetToolNumber, isJobContext: false, operation })
         break
 

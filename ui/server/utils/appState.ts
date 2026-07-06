@@ -107,6 +107,7 @@ export interface UiState {
   }
   selection: { activeMachineId: string; selectedToolId: string | null; selectedFile: string | null }
   jogActive: boolean
+  calibrationActive: boolean
   modals: ModalEntry[]
   toasts: Toast[]
   console: UiConsoleEntry[]
@@ -121,6 +122,7 @@ const ui: UiState = {
   nav: { probingTab: 'stock', route: '/', wizard: { key: null, step: 0 } },
   selection: { activeMachineId: '', selectedToolId: null, selectedFile: null },
   jogActive: false,
+  calibrationActive: false,
   modals: [],
   toasts: [],
   console: [],
@@ -326,6 +328,11 @@ export function setJogActive(active: boolean): PatchOp {
   return { path: 'jogActive', set: { jogActive: active } }
 }
 
+export function setCalibrationActive(active: boolean): PatchOp {
+  ui.calibrationActive = active
+  return { path: 'calibrationActive', set: { calibrationActive: active } }
+}
+
 export function setSelection(partial: Partial<UiState['selection']>): PatchOp {
   Object.assign(ui.selection, partial)
   return { path: 'selection', set: { ...ui.selection } }
@@ -358,14 +365,31 @@ export function registerProgramPauseHandler(id: string, handler: (action: 'conti
   _programPauseHandlers.set(id, handler)
 }
 
-/** Resolves a modal, calling any registered program-pause handler first. */
+/** Resolves a modal, calling any registered program-pause or toolchange handler first. */
 export function settleProgramPauseModal(id: string, result: unknown): PatchOp | null {
-  const handler = _programPauseHandlers.get(id)
-  if (handler) {
+  const ppHandler = _programPauseHandlers.get(id)
+  if (ppHandler) {
     _programPauseHandlers.delete(id)
-    handler(result as 'continue' | 'cancel' | 'closed')
+    ppHandler(result as 'continue' | 'cancel' | 'closed')
+  }
+  const tcHandler = _toolchangeHandlers.get(id)
+  if (tcHandler) {
+    _toolchangeHandlers.delete(id)
+    tcHandler()
   }
   return resolveModal(id, result)
+}
+
+// ─── Toolchange modal resolve handler registry ────────────────────────────────
+
+const _toolchangeHandlers = new Map<string, () => void>()
+
+export function registerToolchangeResolveHandler(id: string, handler: () => void): void {
+  _toolchangeHandlers.set(id, handler)
+}
+
+export function unregisterToolchangeResolveHandler(id: string): void {
+  _toolchangeHandlers.delete(id)
 }
 
 // ─── Toolchange modal helpers ─────────────────────────────────────────────────

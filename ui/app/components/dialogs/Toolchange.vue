@@ -68,7 +68,8 @@
             <p class="text-sm text-gray-600 dark:text-slate-400">
               <template v-if="props.operation === 'unload'">Remove the current tool from the spindle and confirm when done.</template>
               <template v-else-if="isToolsetterStrategy">Move machine to toolchange position is complete. Install the new tool and click continue to probe its length.</template>
-              <template v-else>Install T{{ props.nextToolNumber }} in the spindle and click continue to resume.</template>
+              <template v-else-if="!props.isJobContext">Install T{{ props.nextToolNumber }} in the spindle and re-zero Z manually, then confirm. The tool will be set as active without sending any GCode.</template>
+              <template v-else>Install T{{ props.nextToolNumber }} in the spindle, re-zero Z manually, then click continue to resume the job.</template>
             </p>
           </template>
 
@@ -124,6 +125,7 @@
             >
               <template v-if="props.operation === 'unload'">Confirm</template>
               <template v-else-if="isToolsetterStrategy">Tool installed — Probe Length</template>
+              <template v-else-if="!props.isJobContext">Tool loaded — Confirm</template>
               <template v-else>Tool installed — Continue</template>
             </button>
           </template>

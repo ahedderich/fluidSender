@@ -420,7 +420,7 @@
             </div>
 
             <!-- Probe config (shown only for type === 'probe') -->
-            <template v-if="modalForm.type.trim() === 'probe'">
+            <template v-if="modalForm.type.toLowerCase().trim() === 'probe'">
               <div class="border-t border-gray-200 dark:border-slate-700 pt-3 mt-1">
                 <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">Probe Configuration</p>
                 <label class="flex items-center gap-2 cursor-pointer mb-2">
@@ -1052,7 +1052,7 @@ function saveModal() {
     id: editingTool.value?.id ?? `user-${Date.now()}`,
     number: Number(modalForm.number),
     name: modalForm.name.trim(),
-    type: modalForm.type.trim(),
+    type: modalForm.type.toLowerCase().trim(),
     source: modalForm.source,
     vendor: modalForm.vendor.trim() || undefined,
     comment: modalForm.comment.trim() || undefined,
@@ -1069,14 +1069,14 @@ function saveModal() {
     rightHanded: modalForm.rightHanded !== false ? undefined : false,
     lengthOffset: modalForm.lengthOffset !== undefined ? Number(modalForm.lengthOffset) : undefined,
     diameterOffset: modalForm.diameterOffset !== undefined ? Number(modalForm.diameterOffset) : undefined,
-    probeConfig: modalForm.type.trim() === 'probe' ? {
+    probeConfig: modalForm.type.toLowerCase().trim() === 'probe' ? {
       wiggleEnabled: modalForm.wiggleEnabled,
       fastFeedMmPerMin: Number(modalForm.fastFeedMmPerMin),
       slowFeedMmPerMin: Number(modalForm.slowFeedMmPerMin),
       cycles: Number(modalForm.probeCycles),
       averageN: Number(modalForm.averageN),
     } : undefined,
-    probeCompensation: modalForm.type.trim() === 'probe' ? {
+    probeCompensation: modalForm.type.toLowerCase().trim() === 'probe' ? {
       xPlus: Number(modalForm.probeCompensation.xPlus) || 0,
       xMinus: Number(modalForm.probeCompensation.xMinus) || 0,
       yPlus: Number(modalForm.probeCompensation.yPlus) || 0,

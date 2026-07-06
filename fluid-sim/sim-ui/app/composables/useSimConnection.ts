@@ -14,7 +14,6 @@ interface SimStateMsg {
     zMin: boolean; zMax: boolean
   }
   probeTriggered: boolean
-  probeTipDiameter: number
   probeDeviations: {
     xPlus: number; xMinus: number
     yPlus: number; yMinus: number
@@ -44,7 +43,6 @@ export function useSimConnection() {
     store.machineState = msg.machineState
     store.axisCount = msg.axisCount
     store.simSpeed = msg.simSpeed
-    store.probe.tipDiameter = msg.probeTipDiameter
     store.probe.triggered = msg.probeTriggered
     if (msg.probeDeviations) Object.assign(store.probe.deviations, msg.probeDeviations)
     store.limits.xMin = msg.limits.xMin

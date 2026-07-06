@@ -32,7 +32,6 @@ async fn start_sim_with_speed(speed: u8) -> (u16, u16) {
     let state = fluidsim::machine::state::MachineState::new(
         cfg.machine.axis_count,
         travel,
-        cfg.probe.tip_diameter,
         cfg.probe.deviations.clone(),
         cfg.sim.speed,
     );
@@ -269,7 +268,7 @@ async fn probe_hits_stock_and_reports_trigger_position() {
 
     control_post(control_port, "/api/stock", STOCK_JSON).await;
 
-    // Probe down from z=5. Tip Ø2, zero deviations → trigger at centre z = top + 1 = -9.
+    // Probe down from z=5. Zero deviations → r_eff=0, trigger at centre z = stock top = -10.
     // Tick step at F600 / 100 Hz / speed 1 = 0.1 mm.
     writer.write_all(b"G38.2 Z-40 F600\n").await.unwrap();
     let lines = read_until(&mut reader, "PRB").await;
@@ -283,8 +282,8 @@ async fn probe_hits_stock_and_reports_trigger_position() {
     let (pos, success) = parse_prb(prb);
     assert!(success, "probe should trigger: {}", prb);
     assert!(
-        (pos[2] - (-9.0)).abs() <= 0.11,
-        "trigger z={} expected ≈ -9.0",
+        (pos[2] - (-10.0)).abs() <= 0.11,
+        "trigger z={} expected ≈ -10.0",
         pos[2]
     );
     let ok = read_line(&mut reader).await;
@@ -297,14 +296,14 @@ async fn probe_hits_stock_and_reports_trigger_position() {
     let (rpos, rsuccess) = parse_prb(lines.last().unwrap());
     assert!(rsuccess, "retract should report contact loss");
     assert!(
-        (rpos[2] - (-9.0)).abs() <= 0.21,
-        "retract z={} expected ≈ -9.0",
+        (rpos[2] - (-10.0)).abs() <= 0.21,
+        "retract z={} expected ≈ -10.0",
         rpos[2]
     );
     let ok = read_line(&mut reader).await;
     assert_eq!(ok, "ok");
 
-    // With zMinus deviation +0.2 the trigger fires late: centre z = top + (1 − 0.2) = -9.2.
+    // With zMinus deviation +0.2 the trigger fires early: centre z = top + 0.2 = -9.8.
     control_post(
         control_port,
         "/api/machine/config",
@@ -316,8 +315,8 @@ async fn probe_hits_stock_and_reports_trigger_position() {
     let (dpos, dsuccess) = parse_prb(lines.last().unwrap());
     assert!(dsuccess);
     assert!(
-        (dpos[2] - (-9.2)).abs() <= 0.11,
-        "trigger z={} expected ≈ -9.2",
+        (dpos[2] - (-9.8)).abs() <= 0.11,
+        "trigger z={} expected ≈ -9.8",
         dpos[2]
     );
     read_line(&mut reader).await;
@@ -401,7 +400,7 @@ async fn wiggle_probe_sequence_acks_every_line_and_backs_off_upward() {
 
     control_post(control_port, "/api/stock", STOCK_JSON).await;
 
-    // Machine starts at z=5; stock top -10, tip Ø2 → trigger plane z ≈ -9.
+    // Machine starts at z=5; stock top -10, zero deviations → trigger plane z ≈ -10.
     let script = "G90\nG21\nG91\nG38.3 F500 Z-20.0000\nG90\nG91\nG38.5 F401 Z4.0100\nG90\n\
                   G91\nG38.3 F302 Z-4.6115\nG90\nG91\nG38.5 F203 Z2.0300\nG90\n\
                   G91\nG38.3 F104 Z-2.3345\nG90\nG91\nG38.5 F5 Z0.3000\nG90\n\
@@ -426,8 +425,8 @@ async fn wiggle_probe_sequence_acks_every_line_and_backs_off_upward() {
     for (pos, success) in &prbs {
         assert!(success, "every probe should trigger: {:?}", prbs);
         assert!(
-            (-10.2..=-8.0).contains(&pos[2]),
-            "contact z={} not near trigger plane -9",
+            (-11.0..=-9.0).contains(&pos[2]),
+            "contact z={} not near trigger plane -10",
             pos[2]
         );
     }
@@ -452,7 +451,7 @@ async fn wiggle_probe_sequence_acks_every_line_and_backs_off_upward() {
         sleep(Duration::from_millis(100)).await;
     }
     assert!(
-        (-5.5..=-2.8).contains(&final_z),
+        (-6.5..=-3.5).contains(&final_z),
         "final z={} — expected ≈ contact + 5",
         final_z
     );

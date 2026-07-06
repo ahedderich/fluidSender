@@ -86,10 +86,10 @@ export const useSimStore = defineStore('sim', () => {
   // Simulation speed multiplier (1–10×)
   const simSpeed = ref(1)
 
-  // Touch probe. Deviation sign convention: positive = triggers late (pre-travel),
-  // negative = triggers early; effective trigger offset = tipRadius − deviation.
+  // Touch probe. Deviation sign convention: positive = trigger fires before centre
+  // reaches the surface (normal; ≈ ball radius); negative = trigger fires after centre
+  // has passed the surface.
   const probe = reactive({
-    tipDiameter: 2.0,
     triggered: false,
     deviations: { xPlus: 0, xMinus: 0, yPlus: 0, yMinus: 0, zMinus: 0 },
   })
@@ -219,18 +219,16 @@ export const useSimStore = defineStore('sim', () => {
     await $fetch('/api/sim/machine/config', {
       method: 'POST',
       body: {
-        probeTipDiameter: probe.tipDiameter,
         probeDeviations: { ...probe.deviations },
       },
     }).catch(() => {})
   }
 
   // Debounced push of probe edits to the sim — without it, local edits never reach
-  // the sim and the next WS state message silently reverts them. The sim echoing
-  // back the just-written values re-triggers this watch idempotently (same values).
+  // the sim and the next WS state message silently reverts them.
   let probePushTimer: ReturnType<typeof setTimeout> | null = null
   watch(
-    () => [probe.tipDiameter, { ...probe.deviations }],
+    () => [{ ...probe.deviations }],
     () => {
       if (probePushTimer) clearTimeout(probePushTimer)
       probePushTimer = setTimeout(() => {

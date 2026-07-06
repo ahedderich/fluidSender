@@ -17,14 +17,6 @@
     </div>
 
     <div class="space-y-2.5">
-      <DimInput
-        label="Tip Diameter"
-        v-model="s.probe.tipDiameter"
-        unit="mm"
-        :step="0.1"
-        :min="0.1"
-        :max="25"
-      />
       <div>
         <h3 class="text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5">
           Trigger Deviations
@@ -72,7 +64,7 @@
           />
         </div>
         <p class="text-[10px] text-gray-400 dark:text-slate-500 mt-1.5">
-          Positive = triggers late (pre-travel past the surface); negative = triggers early.
+          Positive = trigger fires before centre reaches the surface (normal; ≈ ball radius). Negative = trigger fires after centre has passed the surface.
         </p>
       </div>
       <button

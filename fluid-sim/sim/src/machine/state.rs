@@ -93,23 +93,11 @@ impl LimitState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProbeState {
     pub triggered: bool,
-    #[serde(rename = "tipDiameter")]
-    pub tip_diameter: f64,
     #[serde(default)]
     pub deviations: ProbeDeviations,
-}
-
-impl Default for ProbeState {
-    fn default() -> Self {
-        Self {
-            triggered: false,
-            tip_diameter: 2.0,
-            deviations: ProbeDeviations::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,7 +213,6 @@ impl MachineState {
     pub fn new(
         axis_count: usize,
         travel: [f64; AXIS_COUNT],
-        tip_diameter: f64,
         deviations: ProbeDeviations,
         sim_speed: u8,
     ) -> Self {
@@ -281,7 +268,6 @@ impl MachineState {
             limits: LimitState::default(),
             probe: ProbeState {
                 triggered: false,
-                tip_diameter,
                 deviations,
             },
             door: false,

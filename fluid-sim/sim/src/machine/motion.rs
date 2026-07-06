@@ -266,13 +266,11 @@ async fn execute_linear(
                         let dir3 = [nd[0], nd[1], nd[2]];
                         let pos3 = [state.pos[0], state.pos[1], state.pos[2]];
                         let manual = state.probe.triggered;
-                        let tip = state.probe.tip_diameter;
 
                         let probe_hit = check_probe_contact(
                             pos3,
                             dir3,
                             probe_cfg.probe_away,
-                            tip,
                             &state.probe.deviations,
                             manual,
                             state.stock.as_ref(),
