@@ -276,8 +276,31 @@
         </div>
       </div>
 
+      <!-- Tools button: wrench normally; back arrow when on /tools -->
       <NuxtLink
-        v-if="isSettings && s.hasMachines"
+        v-if="route.path !== '/tools'"
+        to="/tools"
+        class="p-1.5 rounded-md transition-colors text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700"
+        title="Tools"
+      >
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-6.837m5.041-.241c.658-.479 1.363-.904 2.076-1.255L21 4.5l-3.75 3.75L15 7.5l-1.5-1.5 3.75-3.75L12.75 3l-.75 3.75-.879 3.879" />
+        </svg>
+      </NuxtLink>
+      <NuxtLink
+        v-else
+        to="/"
+        class="p-1.5 rounded-md transition-colors text-blue-500 bg-blue-50 dark:bg-blue-900/30"
+        title="Back to main"
+      >
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+        </svg>
+      </NuxtLink>
+
+      <!-- Settings button: gear normally; back arrow when on /settings (with machines configured) -->
+      <NuxtLink
+        v-if="route.path === '/settings' && s.hasMachines"
         to="/"
         class="p-1.5 rounded-md transition-colors text-blue-500 bg-blue-50 dark:bg-blue-900/30"
         title="Back to main"
@@ -287,7 +310,7 @@
         </svg>
       </NuxtLink>
       <NuxtLink
-        v-else-if="!isSettings"
+        v-else-if="route.path !== '/settings'"
         to="/settings"
         class="p-1.5 rounded-md transition-colors text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700"
         title="Settings"
@@ -349,7 +372,6 @@ function cycleStartAction() {
   else startJob()
 }
 const route = useRoute()
-const isSettings = computed(() => route.path === '/settings')
 const isMounted = ref(false)
 onMounted(() => { isMounted.value = true })
 

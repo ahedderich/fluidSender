@@ -520,8 +520,8 @@ async function initThree() {
     const pts: number[] = []
 
     if (s.shape === 'rect') {
-      const hw = (s.width ?? 100) / 2
-      const hh = (s.height ?? 100) / 2
+      const hw = (s.measuredWidth ?? s.width ?? 100) / 2
+      const hh = (s.measuredHeight ?? s.height ?? 100) / 2
       const rad = ((s.rotation ?? 0) * Math.PI) / 180
       const cos = Math.cos(rad), sin = Math.sin(rad)
       const corners = ([ [-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh] ] as [number,number][])
@@ -533,7 +533,7 @@ async function initThree() {
         pts.push(ax,ay,zTop, ax,ay,zBot)   // vertical
       }
     } else {
-      const r = (s.diameter ?? 100) / 2
+      const r = (s.measuredDiameter ?? s.diameter ?? 100) / 2
       const segs = 64
       for (let i = 0; i < segs; i++) {
         const a0 = (i / segs) * Math.PI * 2, a1 = ((i+1) / segs) * Math.PI * 2
