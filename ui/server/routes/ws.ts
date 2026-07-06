@@ -104,7 +104,11 @@ let _configFetch: { lines: string[]; timer: ReturnType<typeof setTimeout> } | nu
 
 function _beginConfigFetch() {
   if (_configFetch) return
-  _configFetch = { lines: [], timer: setTimeout(() => { _configFetch = null }, 5000) }
+  console.log('[ws] sending $$ for firmware config fetch')
+  _configFetch = { lines: [], timer: setTimeout(() => {
+    console.warn('[ws] config fetch timed out after 10 s')
+    _configFetch = null
+  }, 10000) }
   machineConnection.sendRaw('$$')
 }
 
@@ -117,6 +121,7 @@ async function _finishConfigFetch(): Promise<void> {
   const machineId = getConnection().machineId
   if (!machineId || lines.length === 0) return
 
+  console.log(`[ws] config fetch complete — ${lines.length} lines`)
   try {
     const fluidncConfig = parseFluidNCConfig(lines)
     const config = await getConfig()
@@ -125,10 +130,14 @@ async function _finishConfigFetch(): Promise<void> {
     if (machine) {
       machine.fluidncConfig = fluidncConfig
       await setConfig(config)
-      broadcastPatch([{ path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }])
+      broadcastPatch([
+        { path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> },
+        pushToast({ id: `fw-cfg-${Date.now()}`, type: 'success', message: 'Firmware configuration loaded', timeout: 3000 }),
+      ])
     }
   } catch (err) {
     console.error('[ws] config fetch error:', err)
+    broadcastPatch([pushToast({ id: `fw-cfg-err-${Date.now()}`, type: 'error', message: 'Failed to parse firmware configuration', timeout: 5000 })])
   }
 }
 
@@ -216,7 +225,17 @@ machineConnection.on('event', (ev) => {
     }
     case 'ok':
       if (_configFetch) {
-        _finishConfigFetch().catch((err) => console.error('[ws] _finishConfigFetch error:', err))
+        if (_configFetch.lines.length > 0) {
+          // Received ok after $$ lines — config response is complete
+          _finishConfigFetch().catch((err) => console.error('[ws] _finishConfigFetch error:', err))
+        } else {
+          // Spurious ok from a prior in-flight command that arrived before $$ lines — pass through
+          console.log('[ws] spurious ok before $$ lines, passing to sender')
+          onOk()
+          if (!isJobActive()) {
+            broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
+          }
+        }
         break
       }
       onOk()
@@ -289,6 +308,20 @@ export default defineWebSocketHandler({
         } else if (getConnection().connected) {
           machineConnection.sendRaw('?')
         }
+        break
+      }
+
+      // ── Firmware config reload ────────────────────────────────────────────
+      case 'machine:firmware:reload': {
+        if (!requireRole(peer, 'operator')) break
+        if (!machineConnection.isConnected) {
+          broadcastPatch([pushToast({ id: `fw-reload-nc-${Date.now()}`, type: 'error', message: 'Not connected to machine', timeout: 4000 })])
+          break
+        }
+        console.log('[ws] manual firmware config reload requested, sending $$')
+        if (_configFetch) { clearTimeout(_configFetch.timer); _configFetch = null }
+        _beginConfigFetch()
+        broadcastPatch([pushToast({ id: `fw-reload-${Date.now()}`, type: 'info', message: 'Loading firmware configuration…', timeout: 3000 })])
         break
       }
 

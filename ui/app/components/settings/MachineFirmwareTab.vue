@@ -1,6 +1,14 @@
 <template>
-  <div v-if="!machine.fluidncConfig" class="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 px-4 py-8 text-center">
+  <div v-if="!machine.fluidncConfig" class="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 px-4 py-8 text-center space-y-3">
     <p class="text-sm text-gray-400 dark:text-slate-500">Connect to load firmware configuration</p>
+    <button
+      v-if="isConnected"
+      type="button"
+      @click="machineStore.reloadFirmwareConfig()"
+      class="px-4 py-1.5 rounded-lg text-sm font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 transition-colors"
+    >
+      Load from FluidNC
+    </button>
   </div>
 
   <template v-else>
@@ -308,6 +316,7 @@
       <button
         type="button"
         :disabled="!isConnected"
+        @click="machineStore.reloadFirmwareConfig()"
         class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
         :class="isConnected
           ? 'bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300'
@@ -321,6 +330,7 @@
 
 <script setup lang="ts">
 import { useConfirm } from '~/composables/useConfirm'
+import { useMachineStore } from '~/stores/machine'
 import type { MachineProfile } from '~/stores/settings'
 
 defineProps<{
@@ -329,6 +339,7 @@ defineProps<{
 }>()
 
 const { confirm } = useConfirm()
+const machineStore = useMachineStore()
 
 async function writeToFluidNC() {
   const ok = await confirm({

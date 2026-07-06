@@ -169,6 +169,10 @@ export const useMachineStore = defineStore('machine', () => {
     wsSend({ t: 'machine:override', payload: { bytes } })
   }
 
+  function reloadFirmwareConfig() {
+    wsSend({ t: 'machine:firmware:reload', payload: {} })
+  }
+
   return {
     connected,
     connecting,
@@ -208,5 +212,6 @@ export const useMachineStore = defineStore('machine', () => {
     sendCommand,
     sendOverride,
     setToolLibrary,
+    reloadFirmwareConfig,
   }
 })
