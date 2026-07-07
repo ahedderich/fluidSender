@@ -1,0 +1,12 @@
+name: Status Gate
+
+on:
+  pull_request:
+    branches: [test, main]
+
+jobs:
+  gate:
+    name: Status Gate
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "OK"
