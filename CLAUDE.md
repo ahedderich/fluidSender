@@ -171,13 +171,13 @@ Authentication is **optional** and controlled by a config flag (`auth.enabled` i
 ```
 main               ← current production release candidate
 test               ← quality testing stage; features merged here before main
-test/feature-xyz   ← individual feature branches, always cut from `test`
-test/bugfix-xyz    ← bug fix branches, cut from `test` (normal release cycle)
-main/hotfix-xyz    ← urgent post-release fixes, cut from `main`
+feat/xyz           ← individual feature branches, always cut from `test`
+fix/xyz            ← bug fix branches, cut from `test` (normal release cycle)
+hotfix/xyz         ← urgent post-release fixes, cut from `main`
 ```
 
 **Rules:**
-- Before starting any file changes on a new feature, Claude must prompt the user with a question to create a new `test/feature-xyz` branch.
+- Before starting any file changes on a new feature, Claude must prompt the user with a question to create a new `feat/xyz` branch.
 - PRs into `test` require at least one approving review and green CI.
 - PRs into `main` require green CI + passing integration tests.
 - Delete feature/bugfix branches after merging.
@@ -278,5 +278,5 @@ Cycle area and Emergency area share the remaining width after the two fixed sect
 - **Vue:** Composition API (`<script setup>`) only. Options API is not permitted for new code.
 - **Comments:** Only when the *why* is non-obvious. No docblocks or what-comments.
 - **PRs:** Small and focused. One logical change per PR. Imperative commit messages ("Add jog panel", not "Added jog panel").
-- **Commits:** Never add a `Co-Authored-By` trailer or any Claude/AI attribution to commit messages.
+- **Commits:** Never commit automatically. Only commit when the user explicitly asks, or ask the user whether to commit after completing a logical unit of work. Never add a `Co-Authored-By` trailer or any Claude/AI attribution to commit messages.
 - **Tests:** ≥ 80 % coverage on business logic. Simulator Rust code: `cargo test` must pass before any PR merge.
