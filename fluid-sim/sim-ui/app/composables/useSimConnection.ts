@@ -1,4 +1,4 @@
-import { useSimStore, type MachineState, type LimitKey, type AxisKey, type ConsoleLine, AXES } from '~/stores/sim'
+import { useSimStore, type MachineState, type AxisKey, type ConsoleLine, AXES } from '~/stores/sim'
 
 interface SimStateMsg {
   machineState: MachineState
