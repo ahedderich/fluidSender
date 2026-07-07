@@ -24,7 +24,7 @@ export function startPoller() {
   if (pollTimer) return
   pollTimer = setInterval(() => {
     if (machineConnection.isConnected) {
-      machineConnection.sendRaw('?')
+      machineConnection.sendByte(0x3F)
     }
   }, POLL_INTERVAL_MS)
 }

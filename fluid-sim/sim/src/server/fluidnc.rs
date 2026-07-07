@@ -13,7 +13,7 @@ use crate::machine::state::{
 use crate::protocol::parser::{parse_line, ParsedLine};
 use crate::protocol::realtime::classify;
 use crate::protocol::realtime::RealtimeCmd;
-use crate::protocol::response::{self, GREETING};
+use crate::protocol::response::{self, BUILD_INFO_RESPONSE, GREETING, SIM_CONFIG_YAML, STARTUP_LOG};
 
 /// Distinguishes what to do when an async operation's receiver fires.
 enum PendingKind {
@@ -534,6 +534,9 @@ async fn dispatch(
                 None,
             )
         }
+        ParsedLine::BuildInfo => (BUILD_INFO_RESPONSE.to_string(), None),
+        ParsedLine::StartupShow => (STARTUP_LOG.to_string(), None),
+        ParsedLine::LocalFsShow(_path) => (SIM_CONFIG_YAML.to_string(), None),
         ParsedLine::DumpSettings => {
             let state = shared.read().await;
             let mut out = String::new();

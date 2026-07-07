@@ -142,7 +142,7 @@ function normaliseState(raw: string): MachineStatus['state'] {
 }
 
 export function parseGreetingVersion(line: string): string | null {
-  const m = line.match(/\[FluidNC\s+v([^\]]+)\]/)
+  const m = line.match(/FluidNC\s+v([\d.]+(?:\.\d+)*)/)
   if (m) return m[1]!.trim()
   const m2 = line.match(/Grbl\s+([\d.]+)/)
   return m2 ? m2[1]!.trim() : null

@@ -115,11 +115,17 @@ class MachineConnection extends EventEmitter {
   }
 
   private _handleLine(raw: string): void {
-    const line = raw.trim()
-    if (!line) return
+    const trimmed = raw.trim()
+    // Strip only trailing \r so leading whitespace (YAML indentation) is preserved in emissions
+    const line = raw.replace(/\r$/, '')
+    if (!trimmed) {
+      // Empty line — emit as responseLine so consumers (e.g. YAML fetch) can preserve blank lines
+      this.emit('event', { type: 'responseLine', line } satisfies ConnectionEvent)
+      return
+    }
 
-    if (line.startsWith('[PRB:') && line.endsWith(']')) {
-      const inner = line.slice(5, -1)
+    if (trimmed.startsWith('[PRB:') && trimmed.endsWith(']')) {
+      const inner = trimmed.slice(5, -1)
       const colonIdx = inner.lastIndexOf(':')
       const coords = inner.slice(0, colonIdx).split(',').map(Number)
       const contact = inner.slice(colonIdx + 1) === '1'
@@ -131,16 +137,16 @@ class MachineConnection extends EventEmitter {
       return
     }
 
-    if (line.startsWith('<') && line.endsWith('>')) {
-      this.emit('event', { type: 'statusLine', line } satisfies ConnectionEvent)
+    if (trimmed.startsWith('<') && trimmed.endsWith('>')) {
+      this.emit('event', { type: 'statusLine', line: trimmed } satisfies ConnectionEvent)
       return
     }
 
-    if (line === 'ok') {
+    if (trimmed === 'ok') {
       if (this._suppressNextOk) {
         this._suppressNextOk = false
         // Greeting's terminating ok — not a command ack; show in console but don't call onOk
-        this.emit('event', { type: 'responseLine', line } satisfies ConnectionEvent)
+        this.emit('event', { type: 'responseLine', line: trimmed } satisfies ConnectionEvent)
         return
       }
       this.emit('event', { type: 'ok' } satisfies ConnectionEvent)
@@ -150,11 +156,11 @@ class MachineConnection extends EventEmitter {
     this.emit('event', { type: 'responseLine', line } satisfies ConnectionEvent)
 
     // Firmware greeting banner — the ok that follows is firmware-ready, not a command ack
-    if (line.startsWith('Grbl') || line.includes('[FluidNC')) {
+    if (trimmed.startsWith('Grbl') || trimmed.includes('[FluidNC')) {
       this._suppressNextOk = true
     }
-    if (line.startsWith('ALARM:')) {
-      const code = line.slice(6).trim()
+    if (trimmed.startsWith('ALARM:')) {
+      const code = trimmed.slice(6).trim()
       this.emit('event', { type: 'alarm', code } satisfies ConnectionEvent)
     }
   }

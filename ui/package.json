@@ -21,6 +21,7 @@
     "bcryptjs": "^3.0.3",
     "expr-eval": "^2.0.2",
     "jose": "^6.2.3",
+    "js-yaml": "^5.2.1",
     "nuxt": "^4.4.8",
     "three": "^0.184.0"
   },
@@ -29,6 +30,7 @@
     "@nuxt/test-utils": "^4.0.3",
     "@tailwindcss/vite": "^4.3.1",
     "@types/bcryptjs": "^3.0.0",
+    "@types/js-yaml": "^4.0.9",
     "@vue/test-utils": "^2.4.11",
     "eslint": "^10.5.0",
     "happy-dom": "^20.10.6",

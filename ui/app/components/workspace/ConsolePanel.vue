@@ -8,21 +8,14 @@
       </h2>
       <div class="flex items-center gap-3">
         <button
-          @click="suppressPoll = !suppressPoll"
+          @click="toggleFollow"
           class="text-xs transition-colors"
-          :class="suppressPoll
+          :class="autoScroll
             ? 'text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300'
             : 'text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300'"
-          title="Toggle visibility of ? status poll messages"
+          title="Toggle auto-scroll to latest"
         >
-          {{ suppressPoll ? 'Poll hidden' : 'Poll shown' }}
-        </button>
-        <button
-          @click="scrollToBottom"
-          class="text-xs text-gray-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-          title="Jump to latest"
-        >
-          ↓ Latest
+          {{ autoScroll ? '↓ Following' : '↓ Paused' }}
         </button>
         <button
           @click="machine.clearConsole()"
@@ -41,7 +34,7 @@
       class="flex-1 overflow-y-auto px-2 py-1.5 font-mono text-xs space-y-px min-h-0"
     >
       <div
-        v-for="entry in visibleLog"
+        v-for="entry in machine.consoleLog"
         :key="entry.id"
         class="flex gap-1.5 leading-5 rounded px-1"
         :class="{
@@ -88,19 +81,8 @@ const isViewer = computed(() => currentUser.value.isViewer)
 const scrollEl = ref<HTMLDivElement>()
 const inputCmd = ref('')
 const autoScroll = ref(true)
-const suppressPoll = ref(true)
 const cmdHistory = ref<string[]>([])
 const historyIndex = ref(-1)
-
-function isPollEntry(e: SyncConsoleEntry): boolean {
-  if (e.type === 'sent' && e.text.trim() === '?') return true
-  if (e.type === 'recv' && e.text.startsWith('<') && e.text.endsWith('>')) return true
-  return false
-}
-
-const visibleLog = computed(() =>
-  suppressPoll.value ? machine.consoleLog.filter((e) => !isPollEntry(e)) : machine.consoleLog,
-)
 
 function prefixChar(type: SyncConsoleEntry['type']): string {
   if (type === 'sent') return '>'
@@ -133,12 +115,20 @@ async function scrollToBottom() {
   await nextTick()
   if (scrollEl.value) {
     scrollEl.value.scrollTop = scrollEl.value.scrollHeight
+  }
+}
+
+async function toggleFollow() {
+  if (autoScroll.value) {
+    autoScroll.value = false
+  } else {
     autoScroll.value = true
+    await scrollToBottom()
   }
 }
 
 watch(
-  () => visibleLog.value.length,
+  () => machine.consoleLog.length,
   async () => {
     if (autoScroll.value) await scrollToBottom()
   },

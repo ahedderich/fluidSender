@@ -72,6 +72,12 @@ export default defineNuxtPlugin((nuxtApp) => {
           }
         }
         break
+      case 'selection':
+        syncStore.applyOp(op)
+        if ('set' in op && (op.set as { activeMachineId?: string }).activeMachineId !== undefined) {
+          settingsStore.setActiveMachineId((op.set as { activeMachineId: string }).activeMachineId)
+        }
+        break
       default:
         syncStore.applyOp(op)
         if (op.path === 'modals' && 'removeId' in op) settleModal(op.removeId, op.meta?.result)
@@ -103,6 +109,9 @@ export default defineNuxtPlugin((nuxtApp) => {
         machineStore.applyServerStatus(p.connection)
         uiStore.authEnabled = p.authEnabled ?? false
         syncStore.applySnapshot({ ...p.ui, session: p.session ?? null })
+        if (p.ui?.selection?.activeMachineId) {
+          settingsStore.setActiveMachineId(p.ui.selection.activeMachineId)
+        }
         if (p.job) syncStore.applyJobState(p.job)
         if (p.machine) machineStore.applyMachineStatus(p.machine)
         else if (p.connection.connected) send({ t: 'machine:status:request' })

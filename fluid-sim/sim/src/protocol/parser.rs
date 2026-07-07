@@ -30,6 +30,12 @@ pub enum ParsedLine {
     Restart,
     /// `$$` — dump all settings
     DumpSettings,
+    /// `$I` — build info
+    BuildInfo,
+    /// `$SS` — startup log show
+    StartupShow,
+    /// `$LocalFS/Show=<path>` — read a local filesystem file
+    LocalFsShow(String),
     /// `$G` — report active GCode modal state
     GCodeQuery,
     /// `$Config/key` — read a single config key
@@ -93,6 +99,12 @@ fn parse_dollar(rest: &str) -> ParsedLine {
     if rest.is_empty() || rest == "$" {
         return ParsedLine::DumpSettings;
     }
+    if rest == "I" {
+        return ParsedLine::BuildInfo;
+    }
+    if rest == "SS" {
+        return ParsedLine::StartupShow;
+    }
     if rest == "G" {
         return ParsedLine::GCodeQuery;
     }
@@ -104,6 +116,9 @@ fn parse_dollar(rest: &str) -> ParsedLine {
     }
     if rest.starts_with("RS") {
         return ParsedLine::Restart;
+    }
+    if let Some(path) = rest.strip_prefix("LocalFS/Show=") {
+        return ParsedLine::LocalFsShow(path.to_string());
     }
 
     // $J=<gcode>

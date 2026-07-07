@@ -14,88 +14,22 @@ export type UserRole = 'viewer' | 'operator' | 'admin'
 
 // ─── FluidNC firmware config interfaces ──────────────────────────────────────
 
-export interface FluidNCHomingConfig {
-  cycle: number
-  allowSingleAxis: boolean
-  positiveDirection: boolean
-  mpos: number
-  feedRate: number
-  seekRate: number
-  settleMs: number
-  seekScaler: number
-  feedScaler: number
-}
-
-export interface FluidNCMotorConfig {
-  limitNegPin: string
-  limitPosPin: string
-  hardLimits: boolean
-  pulloffMm: number
-}
-
 export interface FluidNCAxisConfig {
-  stepsPerMm: number
-  maxRateMmPerMin: number
-  accelerationMmPerSec2: number
-  maxTravelMm: number
-  softLimits: boolean
-  idleDisable: boolean
-  homing: FluidNCHomingConfig
-  motor0: FluidNCMotorConfig
-}
-
-export interface FluidNCSpindleConfig {
-  type: 'PWMSpindle' | 'Laser' | 'NoSpindle' | 'BESC' | '10V' | 'DAC'
-  outputPin: string
-  enablePin: string
-  directionPin: string
-  pwmFreq: number
-  spinupMs: number
-  spindownMs: number
-  minRpm: number
-  maxRpm: number
-  disableWithZeroSpeed: boolean
-}
-
-export interface FluidNCProbeConfig {
-  pin: string
-  toolsetterPin: string
-  checkModeStart: boolean
-  hardStop: boolean
-}
-
-export interface FluidNCCoolantConfig {
-  floodPin: string
-  mistPin: string
-  delayMs: number
-}
-
-export interface FluidNCControlConfig {
-  safetyDoorPin: string
-  resetPin: string
-  feedHoldPin: string
-  cycleStartPin: string
-}
-
-export interface FluidNCSteppingConfig {
-  engine: 'RMT' | 'I2S_STREAM' | 'I2S_STATIC' | 'STEPSTICK' | 'NONE'
-  idleMs: number
-  pulseUs: number
-  dirDelayUs: number
-  disableDelayUs: number
-}
-
-export interface FluidNCStartConfig {
-  mustHome: boolean
-  checkLimits: boolean
-}
-
-export interface FluidNCMacrosConfig {
-  startupLine0: string
-  startupLine1: string
-  afterHoming: string
-  afterReset: string
-  afterUnlock: string
+  steps_per_mm?: number
+  max_rate_mm_per_min?: number
+  acceleration?: number
+  max_travel_mm?: number
+  soft_limits?: boolean
+  homing?: {
+    cycle?: number
+    positive_direction?: boolean
+    mpos?: number
+    feed_rate?: number
+    seek_rate?: number
+    settle_ms?: number
+  }
+  motor0?: Record<string, unknown>
+  motor1?: Record<string, unknown>
 }
 
 export interface MacroButton {
@@ -105,20 +39,16 @@ export interface MacroButton {
 }
 
 export interface FluidNCConfig {
-  name: string
-  board: string
-  reportInches: boolean
-  arcToleranceMm: number
-  junctionDeviationMm: number
-  plannerBlocks: number
-  stepping: FluidNCSteppingConfig
-  axes: Record<string, FluidNCAxisConfig>
-  spindle: FluidNCSpindleConfig
-  probe: FluidNCProbeConfig
-  coolant: FluidNCCoolantConfig
-  control: FluidNCControlConfig
-  start: FluidNCStartConfig
-  macros: FluidNCMacrosConfig
+  /** Raw YAML string exactly as fetched from firmware filesystem */
+  rawYaml: string
+  /** Filename on the controller filesystem (e.g. "config.yaml") — used as upload target */
+  configFilename: string
+  /** Parsed top-level fields — subset used by UI */
+  name?: string
+  board?: string
+  axes?: Record<string, FluidNCAxisConfig>
+  /** Any other top-level YAML keys, stored as-is */
+  [key: string]: unknown
 }
 
 // ─── FluidSender-owned machine settings ──────────────────────────────────────
@@ -140,6 +70,8 @@ export interface MachineProfile {
   toolchange: ToolchangeConfig
   /** null until first firmware connect — loaded fresh on each connect */
   fluidncConfig: FluidNCConfig | null
+  /** IP of the FluidNC machine, populated from $SS on connect — null for USB connections */
+  fluidncIp?: string | null
 }
 
 // ─── App-level settings types ─────────────────────────────────────────────────
@@ -195,6 +127,11 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function selectMachine(id: string) {
     activeMachineId.value = id
+    wsSend({ t: 'ui:selection', payload: { activeMachineId: id } })
+  }
+
+  function setActiveMachineId(id: string) {
+    activeMachineId.value = id
   }
 
   function addMachine() {
@@ -209,6 +146,7 @@ export const useSettingsStore = defineStore('settings', () => {
       fluidncConfig: null,
     })
     activeMachineId.value = id
+    wsSend({ t: 'ui:selection', payload: { activeMachineId: id } })
   }
 
   function removeMachine(id: string) {
@@ -216,7 +154,9 @@ export const useSettingsStore = defineStore('settings', () => {
     if (idx === -1) return
     machines.value.splice(idx, 1)
     if (activeMachineId.value === id) {
-      activeMachineId.value = machines.value[0]?.id ?? ''
+      const newId = machines.value[0]?.id ?? ''
+      activeMachineId.value = newId
+      wsSend({ t: 'ui:selection', payload: { activeMachineId: newId } })
     }
   }
 
@@ -295,10 +235,6 @@ export const useSettingsStore = defineStore('settings', () => {
         macros: _migrateMacros(m.macros ?? []),
       }
     })
-    // Keep current selection if still valid; otherwise fall back to first machine
-    if (!machines.value.find((m) => m.id === activeMachineId.value)) {
-      activeMachineId.value = machines.value[0]?.id ?? ''
-    }
     if (data.auth) {
       app.auth.enabled = data.auth.enabled ?? false
     }
@@ -383,6 +319,7 @@ export const useSettingsStore = defineStore('settings', () => {
     activeMachine,
     hasMachines,
     selectMachine,
+    setActiveMachineId,
     addMachine,
     removeMachine,
     hydrate,

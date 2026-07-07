@@ -208,9 +208,9 @@ const toolDiameter = computed(() => loadedLibTool.value?.diameter ?? 8)
 const machineBounds = computed(() => {
   const axes = settings.activeMachine?.fluidncConfig?.axes
   return {
-    x: axes?.x?.maxTravelMm || 300,
-    y: axes?.y?.maxTravelMm || 200,
-    z: axes?.z?.maxTravelMm || 100,
+    x: axes?.x?.max_travel_mm || 300,
+    y: axes?.y?.max_travel_mm || 200,
+    z: axes?.z?.max_travel_mm || 100,
   }
 })
 

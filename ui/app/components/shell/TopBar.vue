@@ -57,6 +57,12 @@
       </div>
 
       <span
+        v-if="machine.simulatorMode"
+        class="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-600/50 px-2 py-1 rounded whitespace-nowrap font-medium"
+        title="FluidNC is running in simulator mode — check your config.yaml"
+      >Simulator mode</span>
+
+      <span
         v-if="!wsConnected"
         class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 px-2 py-1 rounded whitespace-nowrap"
         title="Lost connection to server — reconnecting…"
@@ -394,8 +400,8 @@ const configuredAxes = computed(() => {
   const cfg = fluidncCfg.value
   if (cfg?.axes && Object.keys(cfg.axes).length > 0) {
     const withLimits = Object.keys(cfg.axes).filter((a) => {
-      const m = cfg.axes[a]?.motor0
-      return isRealPin(m?.limitNegPin) || isRealPin(m?.limitPosPin)
+      const m = cfg.axes[a]?.motor0 as Record<string, string | undefined> | undefined
+      return isRealPin(m?.limit_neg_pin) || isRealPin(m?.limit_pos_pin)
     })
     if (withLimits.length > 0) return withLimits.map((a) => a.toUpperCase())
   }
@@ -404,9 +410,11 @@ const configuredAxes = computed(() => {
   return axes
 })
 
-const hasProbe = computed(() => isRealPin(fluidncCfg.value?.probe?.pin) || machine.probe)
-const hasToolsetter = computed(() => isRealPin(fluidncCfg.value?.probe?.toolsetterPin) || machine.toolsetter)
-const hasDoor = computed(() => isRealPin(fluidncCfg.value?.control?.safetyDoorPin) || machine.door)
+const probeCfg = computed(() => fluidncCfg.value?.probe as Record<string, string> | undefined)
+const controlCfg = computed(() => fluidncCfg.value?.control as Record<string, string> | undefined)
+const hasProbe = computed(() => isRealPin(probeCfg.value?.pin) || machine.probe)
+const hasToolsetter = computed(() => isRealPin(probeCfg.value?.toolsetter_pin) || machine.toolsetter)
+const hasDoor = computed(() => isRealPin(controlCfg.value?.safety_door_pin) || machine.door)
 
 const anyTriggered = computed(() =>
   machine.limitSwitches.some((s) => s.triggered) || machine.probe || machine.toolsetter || machine.door

@@ -67,6 +67,7 @@ export interface ConnectionState {
   connected: boolean
   status: string
   firmwareVersion: string
+  simulatorMode: boolean
 }
 
 // ─── Shared UI state (server-authoritative, pushed to every client) ─────────────
@@ -290,6 +291,7 @@ const connection: ConnectionState = {
   connected: false,
   status: 'DISCONNECTED',
   firmwareVersion: '',
+  simulatorMode: false,
 }
 
 // ─── Peer registry ────────────────────────────────────────────────────────────
@@ -527,8 +529,16 @@ export async function getConfig(): Promise<AppConfig> {
     }
   }
   stockDef = (cachedConfig.app?.stock as StockDef | null | undefined) ?? null
+  const savedMachineId = cachedConfig.app?.lastMachineId as string | undefined
+  if (savedMachineId) ui.selection.activeMachineId = savedMachineId
   configLoaded = true
   return cachedConfig
+}
+
+export async function persistLastMachineId(machineId: string): Promise<void> {
+  const config = await getConfig()
+  config.app = { ...(config.app ?? {}), lastMachineId: machineId }
+  await setConfig(config)
 }
 
 export async function setConfig(config: AppConfig): Promise<void> {

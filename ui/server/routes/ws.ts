@@ -35,6 +35,7 @@ import {
   updateMagazineSlots,
   stripAuthUsers,
   getProbingState,
+  persistLastMachineId,
   type ModalEntry,
   type Toast,
   type StockDef,
@@ -79,7 +80,7 @@ import { loadRuntimeLog } from '../utils/tool/runtimeLog'
 import { probingRunner } from '../utils/probing/probingRunner'
 import { modeFromFlags as _modeFromFlags } from '../utils/gcode/types'
 import type { ProbeConfig, ProbeCompensation } from '../utils/tool/types'
-import { parseFluidNCConfig } from '../utils/machine/configParser'
+import { load as loadYaml } from 'js-yaml'
 
 // ─── One-time bootstrap ──────────────────────────────────────────────────────
 
@@ -100,46 +101,150 @@ jobRunner.bootRestore().then((mode) => {
   console.error('[ws] bootRestore error:', err)
 })
 
-// ─── Firmware config fetch ($$ on connect) ───────────────────────────────────
+// ─── Firmware config fetch ($I → $SS → $LocalFS/Show) ────────────────────────
 
-let _configFetch: { lines: string[]; timer: ReturnType<typeof setTimeout> } | null = null
+type ConfigFetchPhase = 'version' | 'startup-log' | 'config-file'
 
-function _beginConfigFetch() {
-  if (_configFetch) return
-  console.log('[ws] sending $$ for firmware config fetch')
-  _configFetch = { lines: [], timer: setTimeout(() => {
-    console.warn('[ws] config fetch timed out after 10 s')
-    _configFetch = null
-  }, 10000) }
-  machineConnection.sendRaw('$$')
+interface ConfigFetchState {
+  phase: ConfigFetchPhase
+  lines: string[]
+  timer: ReturnType<typeof setTimeout>
+  firmwareVersion?: string
+  configFilename?: string
+  machineIp?: string
+  manual?: boolean
 }
 
-async function _finishConfigFetch(): Promise<void> {
-  if (!_configFetch) return
-  const lines = _configFetch.lines
-  clearTimeout(_configFetch.timer)
-  _configFetch = null
+let _fetch: ConfigFetchState | null = null
+
+function _startConfigFetch(manual = false) {
+  if (_fetch) {
+    clearTimeout(_fetch.timer)
+    _fetch = null
+  }
+  _fetch = {
+    phase: 'version',
+    lines: [],
+    timer: setTimeout(() => {
+      broadcastPatch([pushToast({ id: `fw-cfg-timeout-${Date.now()}`, type: 'error', message: 'Firmware configuration fetch timed out', timeout: 5000 })])
+      _fetch = null
+    }, 15000),
+    manual,
+  }
+  machineConnection.sendRaw('$I')
+}
+
+function _onFetchLine(line: string) {
+  if (!_fetch) return
+  _fetch.lines.push(line)
+}
+
+async function _onFetchOk() {
+  if (!_fetch) return
+  const { phase, lines } = _fetch
+  if (phase === 'version') {
+    const verLine = lines.find((l) => l.startsWith('[VER:'))
+    if (!verLine) {
+      // Spurious ok (e.g. from firmware startup GCode) before $I has responded — discard and keep waiting
+      _fetch.lines = []
+      onOk()
+      if (!isJobActive()) broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
+      return
+    }
+    // Prefer "FluidNC v3.9.8" within the VER line; fall back to the leading token
+    const match = verLine.match(/FluidNC\s+v([\d.]+)/) ?? verLine.match(/\[VER:([\d.]+)/)
+    const version = match?.[1] ?? ''
+    _fetch.firmwareVersion = version
+    if (version) {
+      setActiveFirmwareVersion(version)
+      const next = setConnection({ firmwareVersion: version })
+      broadcastPatch([{ path: 'connection', set: { ...next } }])
+    }
+    _fetch.phase = 'startup-log'
+    _fetch.lines = []
+    machineConnection.sendRaw('$SS')
+    return
+  }
+
+  if (phase === 'startup-log') {
+    const cfgLine = lines.find((l) => /Configuration file:/i.test(l))
+    if (!cfgLine) {
+      // Spurious ok before $SS has responded — discard and keep waiting
+      _fetch.lines = []
+      onOk()
+      if (!isJobActive()) broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
+      return
+    }
+    const cfgMatch = cfgLine.match(/Configuration file:\s*([^\]\s]+)/)
+    const filename = cfgMatch?.[1]?.trim() ?? 'config.yaml'
+
+    const ipLine = lines.find((l) => /Connected - IP is/i.test(l))
+    const ipMatch = ipLine?.match(/Connected - IP is\s*([\d.]+)/)
+    const machineIp = ipMatch?.[1] ?? null
+
+    _fetch.configFilename = filename
+    _fetch.machineIp = machineIp ?? undefined
+
+    const simulatorMode = lines.some((l) => /Simulator SDK/i.test(l))
+    const connWithSim = setConnection({ simulatorMode })
+    broadcastPatch([{ path: 'connection', set: { ...connWithSim } }])
+
+    const errLine = lines.find((l) => l.includes('MSG:ERR') && /config/i.test(l))
+    if (errLine) {
+      console.warn('[ws] config fetch: startup log indicates config load error:', errLine)
+      broadcastPatch([pushToast({ id: `fw-cfg-warn-${Date.now()}`, type: 'warning', message: `Config load warning: ${errLine.replace(/\[MSG:ERR:\s*/i, '')}`, timeout: 7000 })])
+    }
+
+    _fetch.phase = 'config-file'
+    _fetch.lines = []
+    machineConnection.sendRaw(`$LocalFS/Show=${filename}`)
+    return
+  }
+
+  if (phase === 'config-file') {
+    if (!lines.length) {
+      // Spurious ok before $LocalFS/Show has responded — discard and keep waiting
+      onOk()
+      if (!isJobActive()) broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
+      return
+    }
+    await _finishConfigFetch(lines)
+  }
+}
+
+async function _finishConfigFetch(lines: string[]) {
+  if (!_fetch) return
+  const { machineIp, configFilename, manual } = _fetch
+  clearTimeout(_fetch.timer)
+  _fetch = null
 
   const machineId = getConnection().machineId
-  if (!machineId || lines.length === 0) return
+  if (!machineId) return
 
-  console.log(`[ws] config fetch complete — ${lines.length} lines`)
+  const rawYaml = lines.join('\n')
+  if (!rawYaml.trim()) {
+    broadcastPatch([pushToast({ id: `fw-cfg-empty-${Date.now()}`, type: 'error', message: 'Config file was empty or unreadable', timeout: 5000 })])
+    return
+  }
+
   try {
-    const fluidncConfig = parseFluidNCConfig(lines)
+    const parsed = loadYaml(rawYaml) as Record<string, unknown>
+    const fluidncConfig: Record<string, unknown> = { rawYaml, configFilename: configFilename ?? 'config.yaml', ...parsed }
+
     const config = await getConfig()
-    const machines = (config.machines ?? []) as { id?: string; [key: string]: unknown }[]
+    const machines = (config.machines ?? []) as { id?: string; fluidncConfig?: unknown; fluidncIp?: string | null; [key: string]: unknown }[]
     const machine = machines.find((m) => m.id === machineId)
     if (machine) {
       machine.fluidncConfig = fluidncConfig
+      machine.fluidncIp = machineIp ?? null
       await setConfig(config)
-      broadcastPatch([
-        { path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> },
-        pushToast({ id: `fw-cfg-${Date.now()}`, type: 'success', message: 'Firmware configuration loaded', timeout: 3000 }),
-      ])
+      const ops: ReturnType<typeof pushToast>[] = []
+      if (manual) ops.push(pushToast({ id: `fw-cfg-ok-${Date.now()}`, type: 'success', message: 'Firmware configuration loaded', timeout: 3000 }))
+      broadcastPatch([{ path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }, ...ops])
     }
   } catch (err) {
-    console.error('[ws] config fetch error:', err)
-    broadcastPatch([pushToast({ id: `fw-cfg-err-${Date.now()}`, type: 'error', message: 'Failed to parse firmware configuration', timeout: 5000 })])
+    console.error('[ws] config fetch: YAML parse error:', err)
+    broadcastPatch([pushToast({ id: `fw-cfg-err-${Date.now()}`, type: 'error', message: 'Failed to parse firmware YAML configuration', timeout: 5000 })])
   }
 }
 
@@ -153,6 +258,7 @@ machineConnection.on('event', (ev) => {
       ])
       startPoller()
       const connMachineId = getConnection().machineId ?? ''
+      persistLastMachineId(connMachineId).catch((err) => console.error('[ws] persistLastMachineId error:', err))
       // Load machine-specific tool library from disk then restore persisted loaded tool
       toolStore.loadMachineLibrary(connMachineId).then(() => {
         const { machine: mTools, app: aTools } = toolStore.getAll(connMachineId)
@@ -163,15 +269,17 @@ machineConnection.on('event', (ev) => {
         uiState.loadedToolNumber = toolNumber
         broadcastPatch([{ path: 'ui', set: { loadedToolNumber: toolNumber } }])
       }).catch(() => {})
+      _startConfigFetch()
       break
     }
     case 'disconnected': {
+      if (_fetch) { clearTimeout(_fetch.timer); _fetch = null }
       stopPoller()
       setActiveFirmwareVersion(null)
       // jobRunner must update status before sender fires its terminal event
       jobRunner.onMachineDisconnected()
       senderDisconnected()
-      const next = setConnection({ machineId: null, connected: false, status: 'DISCONNECTED', firmwareVersion: '' })
+      const next = setConnection({ machineId: null, connected: false, status: 'DISCONNECTED', firmwareVersion: '', simulatorMode: false })
       broadcastPatch([
         { path: 'connection', set: { ...next } },
         clearLoadedToolDisplay(),
@@ -189,12 +297,19 @@ machineConnection.on('event', (ev) => {
       break
     }
     case 'responseLine': {
-      // Intercept $key=value lines during config fetch — suppress from console
-      if (_configFetch && ev.line.startsWith('$') && ev.line.includes('=')) {
-        _configFetch.lines.push(ev.line)
+      // Intercept lines during config fetch — suppress from console (too noisy)
+      if (_fetch) {
+        _onFetchLine(ev.line)
+        if (ev.line.startsWith('error:')) {
+          broadcastPatch([pushConsole({ type: 'recv', text: ev.line, ts: Date.now() })])
+          onOk()
+          clearTimeout(_fetch.timer)
+          _fetch = null
+          broadcastPatch([pushToast({ id: `fw-cfg-err-${Date.now()}`, type: 'warning', message: 'Failed to read firmware configuration file', timeout: 4000 })])
+        }
         break
       }
-      broadcastPatch([pushConsole({ type: 'recv', text: ev.line, ts: Date.now() })])
+      if (ev.line) broadcastPatch([pushConsole({ type: 'recv', text: ev.line, ts: Date.now() })])
       // error:N is a rejected-command acknowledgement — counts as an ack
       if (ev.line.startsWith('error:')) {
         onOk()
@@ -204,7 +319,6 @@ machineConnection.on('event', (ev) => {
         setActiveFirmwareVersion(ver)
         const next = setConnection({ firmwareVersion: ver })
         broadcastPatch([{ path: 'connection', set: { ...next } }])
-        _beginConfigFetch()
       }
       break
     }
@@ -226,18 +340,8 @@ machineConnection.on('event', (ev) => {
       break
     }
     case 'ok':
-      if (_configFetch) {
-        if (_configFetch.lines.length > 0) {
-          // Received ok after $$ lines — config response is complete
-          _finishConfigFetch().catch((err) => console.error('[ws] _finishConfigFetch error:', err))
-        } else {
-          // Spurious ok from a prior in-flight command that arrived before $$ lines — pass through
-          console.log('[ws] spurious ok before $$ lines, passing to sender')
-          onOk()
-          if (!isJobActive()) {
-            broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
-          }
-        }
+      if (_fetch) {
+        _onFetchOk().catch((err) => console.error('[ws] _onFetchOk error:', err))
         break
       }
       onOk()
@@ -320,9 +424,8 @@ export default defineWebSocketHandler({
           broadcastPatch([pushToast({ id: `fw-reload-nc-${Date.now()}`, type: 'error', message: 'Not connected to machine', timeout: 4000 })])
           break
         }
-        console.log('[ws] manual firmware config reload requested, sending $$')
-        if (_configFetch) { clearTimeout(_configFetch.timer); _configFetch = null }
-        _beginConfigFetch()
+        console.log('[ws] manual firmware config reload requested')
+        _startConfigFetch(true)
         broadcastPatch([pushToast({ id: `fw-reload-${Date.now()}`, type: 'info', message: 'Loading firmware configuration…', timeout: 3000 })])
         break
       }
@@ -556,9 +659,14 @@ export default defineWebSocketHandler({
       case 'ui:nav':
         broadcastPatch([setNav(msg.payload as Parameters<typeof setNav>[0])])
         break
-      case 'ui:selection':
-        broadcastPatch([setSelection(msg.payload as Parameters<typeof setSelection>[0])])
+      case 'ui:selection': {
+        const sel = msg.payload as Parameters<typeof setSelection>[0]
+        broadcastPatch([setSelection(sel)])
+        if (sel.activeMachineId) {
+          persistLastMachineId(sel.activeMachineId).catch((err) => console.error('[ws] persistLastMachineId error:', err))
+        }
         break
+      }
       case 'ui:jog:start':
         broadcastPatch([setJogActive(true)])
         break
