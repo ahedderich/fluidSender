@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@pinia/nuxt": "^0.11.3",
-    "nuxt": "^4.4.8"
+    "nuxt": "^4.4.8",
+    "pinia": "^3.0.4"
   },
   "devDependencies": {
     "@nuxt/eslint": "^1.16.0",
