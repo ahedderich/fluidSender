@@ -239,14 +239,14 @@ Pipelines live in `.github/workflows/`. Minimum required workflows:
 - Unit tests for all GCode handling and state transitions
 - sim-ui wired to live simulator TCP connection (replaces mockups from Phase 2)
 
-### Phase 4 — Functional UI Development `[ ]`
-- Nuxt server routes: USB serial bridge (WebSerial via Bun serialport) + TCP/WiFi bridge
-- Real-time WebSocket stream from server routes to browser
-- FluidNC-specific features: firmware config read/write, soft-reset, unlock, homing, probing macros
-- GCode file upload, queue management, job execution with progress tracking
-- Replace all Phase 2 UI mockups with live-wired components
-- Full Vitest unit test suite for components and composables
-- Integration tests for serial/TCP bridge (using the Rust simulator as the target)
+### Phase 4 — Functional UI Development `[x]`
+- [x] Nuxt server routes: USB serial bridge (WebSerial via Bun serialport) + TCP/WiFi bridge
+- [x] Real-time WebSocket stream from server routes to browser
+- [x] FluidNC-specific features: firmware config read/write, soft-reset, unlock, homing, probing macros
+- [x] GCode file upload, queue management, job execution with progress tracking
+- [x] Replace all Phase 2 UI mockups with live-wired components
+- [x] Full Vitest unit test suite for components and composables
+- [x] Integration tests for serial/TCP bridge (using the Rust simulator as the target)
 
 ### Phase 5 — Release Cycle & Versioning `[ ]`
 - SemVer versioning applied; initial release `v0.1.0`
