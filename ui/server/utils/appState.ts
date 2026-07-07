@@ -273,6 +273,7 @@ const job: JobState = {
   programPause: null,
   toolPreferences: {},
   ambiguousTools: [],
+  transformMode: 'none',
 }
 
 export function getJobState(): JobState {

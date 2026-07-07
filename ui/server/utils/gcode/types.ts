@@ -165,12 +165,27 @@ export interface JobState {
   /** Per-job tool library preference when a tool number exists in both scopes. */
   toolPreferences: Record<number, 'M' | 'A'>
   ambiguousTools: number[]
+  transformMode: TransformMode
 }
 
 export interface JobCheckpoint {
-  version: 1
+  version: 2
   fileId: string
   filename: string
   execPtr: number
   savedAt: number
+  transformMode: TransformMode
+}
+
+export type TransformMode = 'none' | 'rotated' | 'height_adjusted' | 'rotated_height_adjusted'
+
+export function modeFromFlags(rotation: boolean, heightmap: boolean): TransformMode {
+  if (rotation && heightmap) return 'rotated_height_adjusted'
+  if (rotation) return 'rotated'
+  if (heightmap) return 'height_adjusted'
+  return 'none'
+}
+
+export function subdirForMode(mode: TransformMode): string | null {
+  return mode === 'none' ? null : mode
 }

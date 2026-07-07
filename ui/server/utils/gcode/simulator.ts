@@ -1,11 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { analyzeGCode } from './analysis'
-import type { GCodeLine, GCodeModalState } from './types'
+import type { GCodeLine, GCodeModalState, TransformMode } from './types'
+import { subdirForMode } from './types'
 
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
-const CURRENT_JOB_DIR = join(DATA_DIR, 'current_job')
-const MODAL_STATES_PATH = join(CURRENT_JOB_DIR, 'modal-states.json')
 
 /**
  * Re-analyse the raw content from `glines` and return the modal state recorded
@@ -39,9 +38,12 @@ export function simulateToLine(glines: GCodeLine[], targetIndex: number): GCodeM
  * the modal-states.json artefact written at analysis time so no in-memory
  * re-parsing is needed.
  */
-export async function getModalStateAtLine(lineIndex: number): Promise<GCodeModalState | null> {
+export async function getModalStateAtLine(lineIndex: number, mode: TransformMode = 'none'): Promise<GCodeModalState | null> {
   try {
-    const raw = await readFile(MODAL_STATES_PATH, 'utf8')
+    const sub = subdirForMode(mode)
+    const dir = sub ? join(DATA_DIR, 'current_job', sub) : join(DATA_DIR, 'current_job')
+    const modalPath = join(dir, 'modal-states.json')
+    const raw = await readFile(modalPath, 'utf8')
     const states = JSON.parse(raw) as GCodeModalState[]
     return states[lineIndex] ?? null
   } catch {

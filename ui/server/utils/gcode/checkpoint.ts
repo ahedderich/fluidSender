@@ -1,4 +1,4 @@
-import { readFile, rename, writeFile, unlink, readdir, mkdir } from 'node:fs/promises'
+import { readFile, rename, writeFile, unlink, readdir, mkdir, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { JobCheckpoint } from './types'
 
@@ -21,7 +21,7 @@ export async function loadCheckpoint(): Promise<JobCheckpoint | null> {
   try {
     const raw = await readFile(CHECKPOINT_PATH, 'utf8')
     const parsed = JSON.parse(raw) as JobCheckpoint
-    if (parsed.version !== 1) return null
+    if (parsed.version !== 2) return null
     return parsed
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
@@ -40,8 +40,24 @@ export async function clearCheckpoint(): Promise<void> {
   }
 }
 
-/** Delete every file in the current_job directory (analysis, vectors, checkpoint). */
+/** Delete every file and known subdirectories in the current_job directory. */
 export async function clearAllJobData(): Promise<void> {
+  // Remove transform subfolders first
+  const subdirs = ['rotated', 'height_adjusted', 'rotated_height_adjusted']
+  for (const sub of subdirs) {
+    const subPath = join(CURRENT_JOB_DIR, sub)
+    try {
+      const entries = await readdir(subPath)
+      await Promise.allSettled(entries.map((f) => unlink(join(subPath, f))))
+      await rmdir(subPath)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error(`[checkpoint] Failed to clear subdir ${sub}:`, err)
+      }
+    }
+  }
+
+  // Remove files in root current_job dir
   try {
     const entries = await readdir(CURRENT_JOB_DIR)
     await Promise.allSettled(

@@ -34,6 +34,7 @@ import {
   clearMeasurements,
   updateMagazineSlots,
   stripAuthUsers,
+  getProbingState,
   type ModalEntry,
   type Toast,
   type StockDef,
@@ -76,6 +77,7 @@ import { sendJog, cancelJog, onJogStatusUpdate } from '../utils/machine/jogger'
 import { jobRunner } from '../utils/gcode/jobRunner'
 import { loadRuntimeLog } from '../utils/tool/runtimeLog'
 import { probingRunner } from '../utils/probing/probingRunner'
+import { modeFromFlags as _modeFromFlags } from '../utils/gcode/types'
 import type { ProbeConfig, ProbeCompensation } from '../utils/tool/types'
 import { parseFluidNCConfig } from '../utils/machine/configParser'
 
@@ -450,6 +452,15 @@ export default defineWebSocketHandler({
         break
       }
 
+      case 'job:setTransformMode': {
+        if (!requireRole(peer, 'operator')) break
+        const { rotationActive, heightmapActive } = msg.payload as { rotationActive: boolean; heightmapActive: boolean }
+        const mode = _modeFromFlags(rotationActive, heightmapActive)
+        const ps = getProbingState()
+        await jobRunner.setTransformMode(mode, ps.rotation, ps.heightmap)
+        break
+      }
+
       // ── Tool library ──────────────────────────────────────────────────────
       case 'tool:load': {
         if (!requireRole(peer, 'operator')) break
@@ -668,9 +679,11 @@ export default defineWebSocketHandler({
           probeConfig: ProbeConfig
           compensation?: ProbeCompensation
         }
-        probingRunner.startWizard(wizardKey, wzConfig, probeConfig, compensation).catch((err: unknown) => {
-          console.error('[ws] probing:start error:', err)
-        })
+        probingRunner.startWizard(wizardKey, wzConfig, probeConfig, compensation)
+          .then(() => jobRunner.invalidateTransformCache().catch(() => {}))
+          .catch((err: unknown) => {
+            console.error('[ws] probing:start error:', err)
+          })
         break
       }
       case 'probing:abort':

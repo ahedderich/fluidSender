@@ -4,7 +4,7 @@ import { appendExecution } from '../fileMetadata'
 import { analyzeGCode } from './analysis'
 import { getModalStateAtLine } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
-import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis } from './analyzer'
+import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis, clearAllTransformArtefacts } from './analyzer'
 import {
   broadcastPatch,
   setJobState,
@@ -23,6 +23,8 @@ import {
   pushToast,
   type PatchOp,
   type ToolchangeModalProps,
+  type ProbingRotationResult,
+  type HeightmapResult,
 } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
 import { startSend, sendGCode, suspendSend, resumeChunk, stopSend, senderHardStop } from '../machine/sender'
@@ -31,8 +33,9 @@ import { toolStore } from '../tool/toolStore'
 import { appendRuntimeSession } from '../tool/runtimeLog'
 import { buildToolchangePositionSequence, buildToolsetterApproachSequence } from './toolchangeSequences'
 import { runToolsetterProbe } from '../machine/toolsetterProbe'
+import { applyTransforms } from './transform'
 import type { SendHandle, SenderStatusEvent } from '../machine/types'
-import type { GCodeLine, GCodeModalState, JobState, ToolSection } from './types'
+import type { GCodeLine, GCodeModalState, JobState, ToolSection, TransformMode } from './types'
 import type { ToolchangeConfig } from '../../../../shared/toolchange'
 import type { TcVars } from '../macro/macroRunner'
 
@@ -76,6 +79,11 @@ class JobRunner {
   // Execution history tracking
   private _execStartedAt: number | null = null
 
+  // Transform state
+  private _transformMode: TransformMode = 'none'
+  private _activeRotation: ProbingRotationResult | null = null
+  private _activeHeightmap: HeightmapResult | null = null
+
   // Active program-pause modal id (null when no M0 pause is in progress)
   private _programPauseModalId: string | null = null
 
@@ -102,7 +110,10 @@ class JobRunner {
     const filename = basename(fileId).replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')
 
     try {
-      let analysis = await loadCachedAnalysis(fileId)
+      const rawContent = await readFile(join(UPLOADS_DIR, fileId), 'utf8')
+      const content = applyTransforms(rawContent, this._transformMode, this._activeRotation, this._activeHeightmap)
+
+      let analysis = await loadCachedAnalysis(fileId, this._transformMode)
       let lines
 
       if (!analysis) {
@@ -120,23 +131,25 @@ class JobRunner {
           programPause: null,
           toolPreferences: {},
           ambiguousTools: [],
+          transformMode: this._transformMode,
         })])
         this._status = 'analyzing'
 
         const result = await analyzeGCodeFile(
           fileId,
           filename,
+          content,
           (pct) => {
             if (ctrl.signal.aborted) return
             broadcastPatch([setJobState({ analyzeProgress: pct })])
           },
           ctrl.signal,
+          this._transformMode,
         )
         analysis = result.analysis
         lines = result.lines
         this.analyzeAbort = null
       } else {
-        const content = await readFile(join(UPLOADS_DIR, fileId), 'utf8')
         lines = analyzeGCode(content).lines
       }
 
@@ -184,12 +197,13 @@ class JobRunner {
         programPause: null,
         toolPreferences: this._toolPreferences,
         ambiguousTools: this._ambiguousTools,
+        transformMode: this._transformMode,
       })
 
       const checkpoint = await loadCheckpoint()
       if (checkpoint && checkpoint.fileId === fileId && checkpoint.execPtr > 0) {
         const resumePtr = checkpoint.execPtr
-        const modalStateAtResume = await getModalStateAtLine(resumePtr)
+        const modalStateAtResume = await getModalStateAtLine(resumePtr, this._transformMode)
         broadcastPatch([setJobState({
           recovery: {
             available: true,
@@ -213,6 +227,7 @@ class JobRunner {
           programPause: null,
           toolPreferences: {},
           ambiguousTools: [],
+          transformMode: 'none',
         })])
         this._status = 'idle'
       } else {
@@ -274,7 +289,7 @@ class JobRunner {
       // resumePtr is the count of confirmed-executed lines; states[resumePtr-1] is the
       // endpoint of the last completed move (= start of the in-flight move we interrupted).
       jLog(`resume() fetching modal state at line ${resumePtr - 1}`)
-      const modal = await getModalStateAtLine(resumePtr - 1)
+      const modal = await getModalStateAtLine(resumePtr - 1, this._transformMode)
       jLog(`resume() modal=${modal ? `pos(${modal.position.x.toFixed(2)},${modal.position.y.toFixed(2)},${modal.position.z.toFixed(2)}) wcs=${modal.workCoordinate}` : 'null'}`)
 
       this._setStatus('recovering', {
@@ -433,6 +448,9 @@ class JobRunner {
     this._currentSectionIndex = 0
     this._toolPreferences = {}
     this._ambiguousTools = []
+    this._transformMode = 'none'
+    this._activeRotation = null
+    this._activeHeightmap = null
     broadcastPatch([setJobState({
       status: 'idle',
       fileId: null,
@@ -452,6 +470,7 @@ class JobRunner {
       programPause: null,
       toolPreferences: {},
       ambiguousTools: [],
+      transformMode: 'none',
     })])
     this._status = 'idle'
     clearAllJobData().catch(() => {})
@@ -459,18 +478,22 @@ class JobRunner {
 
   /** Called once on server startup to restore persisted job state. */
   async bootRestore(): Promise<'empty' | 'loaded' | 'crash'> {
-    const analysis = await loadRawAnalysis()
+    const checkpoint = await loadCheckpoint()
+    const mode: TransformMode = checkpoint?.transformMode ?? 'none'
+    this._transformMode = mode
+
+    const analysis = await loadRawAnalysis(mode)
     if (!analysis) return 'empty'
 
     try {
       const filePath = join(UPLOADS_DIR, analysis.fileId)
-      const content = await readFile(filePath, 'utf8')
+      const rawContent = await readFile(filePath, 'utf8')
+      const content = applyTransforms(rawContent, mode, this._activeRotation, this._activeHeightmap)
       this.lines = analyzeGCode(content).lines
       this.fileId = analysis.fileId
       this.filename = analysis.filename
       this._toolSections = analysis.tools ?? []
 
-      const checkpoint = await loadCheckpoint()
       const hasCrash = !!checkpoint && checkpoint.fileId === analysis.fileId && checkpoint.execPtr > 0
 
       const baseState: Partial<JobState> = {
@@ -490,11 +513,12 @@ class JobRunner {
         programPause: null,
         toolPreferences: {},
         ambiguousTools: [],
+        transformMode: mode,
       }
 
       if (hasCrash) {
         const resumePtr = checkpoint!.execPtr
-        const modalStateAtResume = await getModalStateAtLine(resumePtr)
+        const modalStateAtResume = await getModalStateAtLine(resumePtr, mode)
         this._setStatus('loaded', {
           ...baseState,
           recovery: {
@@ -532,7 +556,8 @@ class JobRunner {
       const filename = checkpoint.filename
 
       if (!this.lines.length || this.fileId !== checkpoint.fileId) {
-        const content = await readFile(join(UPLOADS_DIR, checkpoint.fileId), 'utf8')
+        const rawContent = await readFile(join(UPLOADS_DIR, checkpoint.fileId), 'utf8')
+        const content = applyTransforms(rawContent, this._transformMode, this._activeRotation, this._activeHeightmap)
         this.lines = analyzeGCode(content).lines
       }
       this.fileId = checkpoint.fileId
@@ -540,8 +565,8 @@ class JobRunner {
       this.sendPtr = resumePtr
       this._execPtr = resumePtr
 
-      const modal = await getModalStateAtLine(resumePtr)
-      const savedAnalysis = await loadRawAnalysis()
+      const modal = await getModalStateAtLine(resumePtr, this._transformMode)
+      const savedAnalysis = await loadRawAnalysis(this._transformMode)
 
       this._setStatus('recovering', {
         fileId: checkpoint.fileId,
@@ -599,7 +624,7 @@ class JobRunner {
 
     try {
       const resumePtr = checkpoint.execPtr
-      const modalStateAtResume = await getModalStateAtLine(resumePtr)
+      const modalStateAtResume = await getModalStateAtLine(resumePtr, this._transformMode)
       return {
         available: true,
         checkpointPtr: resumePtr,
@@ -608,6 +633,41 @@ class JobRunner {
       }
     } catch {
       return null
+    }
+  }
+
+  async setTransformMode(
+    mode: TransformMode,
+    rotation: ProbingRotationResult | null,
+    heightmap: HeightmapResult | null,
+  ): Promise<void> {
+    if (!this.fileId) {
+      this._transformMode = mode
+      this._activeRotation = rotation
+      this._activeHeightmap = heightmap
+      broadcastPatch([setJobState({ transformMode: mode })])
+      return
+    }
+    const busy: JobState['status'][] = ['running', 'pausing', 'stopping']
+    if (busy.includes(this._status)) {
+      broadcastPatch([pushToast({ id: `tf-busy-${Date.now()}`, type: 'error', message: 'Cannot change transform while job is running', timeout: 4000 })])
+      return
+    }
+    this._transformMode = mode
+    this._activeRotation = rotation
+    this._activeHeightmap = heightmap
+    await this.loadJob(this.fileId)
+  }
+
+  async invalidateTransformCache(): Promise<void> {
+    await clearAllTransformArtefacts()
+    if (this._transformMode !== 'none') {
+      this._transformMode = 'none'
+      this._activeRotation = null
+      this._activeHeightmap = null
+      broadcastPatch([setJobState({ transformMode: 'none' })])
+      broadcastPatch([pushToast({ id: `tf-invalidated-${Date.now()}`, type: 'info', message: 'Transform cleared — new measurements available', timeout: 5000 })])
+      if (this.fileId) await this.loadJob(this.fileId)
     }
   }
 
@@ -1208,11 +1268,12 @@ class JobRunner {
       this.lastCheckpointPtr = this.sendPtr
       this.lastCheckpointTime = now
       saveCheckpoint({
-        version: 1,
+        version: 2,
         fileId: this.fileId!,
         filename: this.filename!,
         execPtr: this._execPtr,
         savedAt: now,
+        transformMode: this._transformMode,
       }).catch(() => {})
     }
   }
