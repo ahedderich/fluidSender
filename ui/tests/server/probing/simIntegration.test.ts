@@ -23,7 +23,6 @@ const SIM_PORT = Number(process.env.SIM_PORT ?? 8765)
 const SIM_CONTROL_PORT = Number(process.env.SIM_CONTROL_PORT ?? 8766)
 
 const TIP_DIAMETER = 2.0
-const TIP_RADIUS = TIP_DIAMETER / 2
 
 // 40×40 stock centred on the sim's initial XY position (-150, -100), top z = -10
 // → faces at x = -170/-130, y = -120/-80.
@@ -141,7 +140,7 @@ async function probeEdgeMachine(
   const status = getLastMachineStatus()
   expect(status, 'machine status available').toBeTruthy()
   const wco = status!.wco[axis.toLowerCase() as 'x' | 'y' | 'z']
-  await probingRunner.probeIndividualEdge(axis, direction, TIP_RADIUS, PROBE_CFG, 5, comp)
+  await probingRunner.probeIndividualEdge(axis, direction, PROBE_CFG, 5, comp)
   const ps = getProbingState()
   expect(ps.phase, `probe failed: ${ps.errorMessage}`).toBe('completed')
   const result = ps.stepResults[0]
