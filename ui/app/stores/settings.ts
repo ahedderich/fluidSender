@@ -256,6 +256,7 @@ export const useSettingsStore = defineStore('settings', () => {
         delete (m as Record<string, unknown>).magazine
       }
       return {
+        toolchange: { strategy: 'manual-basic' as const },
         ...m,
         macros: _migrateMacros(m.macros ?? []),
       }
