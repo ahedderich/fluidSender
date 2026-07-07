@@ -280,3 +280,4 @@ Cycle area and Emergency area share the remaining width after the two fixed sect
 - **PRs:** Small and focused. One logical change per PR. Imperative commit messages ("Add jog panel", not "Added jog panel").
 - **Commits:** Never commit automatically. Only commit when the user explicitly asks, or ask the user whether to commit after completing a logical unit of work. Never add a `Co-Authored-By` trailer or any Claude/AI attribution to commit messages.
 - **Tests:** ≥ 80 % coverage on business logic. Simulator Rust code: `cargo test` must pass before any PR merge.
+- **Lint/typecheck on file changes:** After any file change under `ui/` or `fluid-sim/sim-ui/`, run that package's `bun run lint` and `bun run typecheck` before considering the change done, to stay in continuous compliance with `ci-ui`/`ci-sim-ui`.
