@@ -1,5 +1,4 @@
-import { describe, it, before, after } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { webcrypto } from 'node:crypto'
 import { machineConnection } from '../../../server/utils/machine/connection'
 import type { ConnectionEvent } from '../../../server/utils/machine/connection'
@@ -53,6 +52,7 @@ const PROBE_CFG: ProbeConfig = {
 }
 
 const TOLERANCE = 0.05
+const SUITE_TIMEOUT = 300_000
 
 async function controlPost(path: string, body: unknown): Promise<void> {
   const res = await fetch(`http://${SIM_HOST}:${SIM_CONTROL_PORT}${path}`, {
@@ -60,7 +60,7 @@ async function controlPost(path: string, body: unknown): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  assert.ok(res.ok, `control API ${path} failed: ${res.status}`)
+  expect(res.ok, `control API ${path} failed: ${res.status}`).toBe(true)
 }
 
 function gcode(lines: string[]): Promise<void> {
@@ -89,8 +89,8 @@ async function waitFor(cond: () => boolean, timeoutMs: number, what: string): Pr
 async function freshWco(): Promise<{ x: number; y: number; z: number }> {
   await sleep(600) // ≥ 2 poll intervals after any G10 WCS change
   const s = getLastMachineStatus()
-  assert.ok(s, 'machine status available')
-  return s.wco
+  expect(s, 'machine status available').toBeTruthy()
+  return s!.wco
 }
 
 /** Zeroes the WCS at the parked position and waits for the poller to report the
@@ -139,18 +139,18 @@ async function probeEdgeMachine(
   comp: ProbeCompensation,
 ): Promise<number> {
   const status = getLastMachineStatus()
-  assert.ok(status, 'machine status available')
-  const wco = status.wco[axis.toLowerCase() as 'x' | 'y' | 'z']
+  expect(status, 'machine status available').toBeTruthy()
+  const wco = status!.wco[axis.toLowerCase() as 'x' | 'y' | 'z']
   await probingRunner.probeIndividualEdge(axis, direction, TIP_RADIUS, PROBE_CFG, 5, comp)
   const ps = getProbingState()
-  assert.equal(ps.phase, 'completed', `probe failed: ${ps.errorMessage}`)
+  expect(ps.phase, `probe failed: ${ps.errorMessage}`).toBe('completed')
   const result = ps.stepResults[0]
-  assert.ok(result, 'probe produced a step result')
-  return result.edgeWpos + wco
+  expect(result, 'probe produced a step result').toBeTruthy()
+  return result!.edgeWpos + wco
 }
 
-describe('probe deviation round-trip (sim)', { skip: !SIM_HOST, timeout: 300_000 }, () => {
-  before(async () => {
+describe.skipIf(!SIM_HOST)('probe deviation round-trip (sim)', () => {
+  beforeAll(async () => {
     initPoller(() => {})
     initMachineMode(() => {})
 
@@ -179,9 +179,9 @@ describe('probe deviation round-trip (sim)', { skip: !SIM_HOST, timeout: 300_000
     await waitFor(() => machineConnection.isConnected, 5000, 'TCP connection')
     startPoller()
     await waitFor(() => getLastMachineStatus() !== null, 5000, 'first machine status')
-  })
+  }, SUITE_TIMEOUT)
 
-  after(() => {
+  afterAll(() => {
     stopPoller()
     machineConnection.disconnect()
   })
@@ -189,54 +189,54 @@ describe('probe deviation round-trip (sim)', { skip: !SIM_HOST, timeout: 300_000
   it('zero deviation: computed surfaces match the stock geometry (§2.4 sign fix)', async () => {
     await parkForXProbe()
     const xSurface = await probeEdgeMachine('X', '+', ZERO_COMP)
-    assert.ok(Math.abs(xSurface - LEFT_FACE_X) <= TOLERANCE,
-      `X surface ${xSurface.toFixed(3)} expected ${LEFT_FACE_X} ±${TOLERANCE}`)
+    expect(Math.abs(xSurface - LEFT_FACE_X) <= TOLERANCE,
+      `X surface ${xSurface.toFixed(3)} expected ${LEFT_FACE_X} ±${TOLERANCE}`).toBe(true)
 
     // The probe re-zeroed the WCS at the measurement site: the edge is work X0,
     // so wco.x equals the edge's machine position.
     const xWco = await freshWco()
-    assert.ok(Math.abs(xWco.x - LEFT_FACE_X) <= TOLERANCE,
-      `wco.x ${xWco.x.toFixed(3)} expected ${LEFT_FACE_X} ±${TOLERANCE} (edge = work X0)`)
+    expect(Math.abs(xWco.x - LEFT_FACE_X) <= TOLERANCE,
+      `wco.x ${xWco.x.toFixed(3)} expected ${LEFT_FACE_X} ±${TOLERANCE} (edge = work X0)`).toBe(true)
     const xStatus = getLastMachineStatus()
-    assert.ok(xStatus, 'status after X probe')
-    assert.ok(xStatus.mpos.x < LEFT_FACE_X - 4,
-      `mpos.x ${xStatus.mpos.x.toFixed(3)} should be backed off the edge at ${LEFT_FACE_X}`)
+    expect(xStatus, 'status after X probe').toBeTruthy()
+    expect(xStatus!.mpos.x < LEFT_FACE_X - 4,
+      `mpos.x ${xStatus!.mpos.x.toFixed(3)} should be backed off the edge at ${LEFT_FACE_X}`).toBe(true)
 
     await parkForZProbe()
     const zSurface = await probeEdgeMachine('Z', '-', ZERO_COMP)
-    assert.ok(Math.abs(zSurface - TOP_Z) <= TOLERANCE,
-      `Z surface ${zSurface.toFixed(3)} expected ${TOP_Z} ±${TOLERANCE}`)
+    expect(Math.abs(zSurface - TOP_Z) <= TOLERANCE,
+      `Z surface ${zSurface.toFixed(3)} expected ${TOP_Z} ±${TOLERANCE}`).toBe(true)
 
     const zWco = await freshWco()
-    assert.ok(Math.abs(zWco.z - TOP_Z) <= TOLERANCE,
-      `wco.z ${zWco.z.toFixed(3)} expected ${TOP_Z} ±${TOLERANCE} (surface = work Z0)`)
+    expect(Math.abs(zWco.z - TOP_Z) <= TOLERANCE,
+      `wco.z ${zWco.z.toFixed(3)} expected ${TOP_Z} ±${TOLERANCE} (surface = work Z0)`).toBe(true)
     const zStatus = getLastMachineStatus()
-    assert.ok(zStatus, 'status after Z probe')
-    assert.ok(zStatus.mpos.z > TOP_Z + 4,
-      `mpos.z ${zStatus.mpos.z.toFixed(3)} should be backed off above the surface at ${TOP_Z}`)
-  })
+    expect(zStatus, 'status after Z probe').toBeTruthy()
+    expect(zStatus!.mpos.z > TOP_Z + 4,
+      `mpos.z ${zStatus!.mpos.z.toFixed(3)} should be backed off above the surface at ${TOP_Z}`).toBe(true)
+  }, SUITE_TIMEOUT)
 
   it('asymmetric deviations with matching compensation cancel exactly', async () => {
     await controlPost('/api/machine/config', { probeDeviations: DEVIATIONS })
 
     await parkForXProbe()
     const xSurface = await probeEdgeMachine('X', '+', DEVIATIONS)
-    assert.ok(Math.abs(xSurface - LEFT_FACE_X) <= TOLERANCE,
-      `compensated X surface ${xSurface.toFixed(3)} expected ${LEFT_FACE_X} ±${TOLERANCE}`)
+    expect(Math.abs(xSurface - LEFT_FACE_X) <= TOLERANCE,
+      `compensated X surface ${xSurface.toFixed(3)} expected ${LEFT_FACE_X} ±${TOLERANCE}`).toBe(true)
 
     const xWco = await freshWco()
-    assert.ok(Math.abs(xWco.x - LEFT_FACE_X) <= TOLERANCE,
-      `compensated wco.x ${xWco.x.toFixed(3)} expected ${LEFT_FACE_X} ±${TOLERANCE}`)
+    expect(Math.abs(xWco.x - LEFT_FACE_X) <= TOLERANCE,
+      `compensated wco.x ${xWco.x.toFixed(3)} expected ${LEFT_FACE_X} ±${TOLERANCE}`).toBe(true)
 
     await parkForZProbe()
     const zSurface = await probeEdgeMachine('Z', '-', DEVIATIONS)
-    assert.ok(Math.abs(zSurface - TOP_Z) <= TOLERANCE,
-      `compensated Z surface ${zSurface.toFixed(3)} expected ${TOP_Z} ±${TOLERANCE}`)
+    expect(Math.abs(zSurface - TOP_Z) <= TOLERANCE,
+      `compensated Z surface ${zSurface.toFixed(3)} expected ${TOP_Z} ±${TOLERANCE}`).toBe(true)
 
     const zWco = await freshWco()
-    assert.ok(Math.abs(zWco.z - TOP_Z) <= TOLERANCE,
-      `compensated wco.z ${zWco.z.toFixed(3)} expected ${TOP_Z} ±${TOLERANCE}`)
-  })
+    expect(Math.abs(zWco.z - TOP_Z) <= TOLERANCE,
+      `compensated wco.z ${zWco.z.toFixed(3)} expected ${TOP_Z} ±${TOLERANCE}`).toBe(true)
+  }, SUITE_TIMEOUT)
 
   it('deviation without compensation shifts the result by exactly the deviation', async () => {
     await controlPost('/api/machine/config', { probeDeviations: DEVIATIONS })
@@ -245,7 +245,7 @@ describe('probe deviation round-trip (sim)', { skip: !SIM_HOST, timeout: 300_000
     const xSurface = await probeEdgeMachine('X', '+', ZERO_COMP)
     // Sim triggers late by xPlus, so the uncompensated result over-reports by the same amount.
     const expected = LEFT_FACE_X + DEVIATIONS.xPlus
-    assert.ok(Math.abs(xSurface - expected) <= TOLERANCE,
-      `uncompensated X surface ${xSurface.toFixed(3)} expected ${expected.toFixed(3)} ±${TOLERANCE}`)
-  })
+    expect(Math.abs(xSurface - expected) <= TOLERANCE,
+      `uncompensated X surface ${xSurface.toFixed(3)} expected ${expected.toFixed(3)} ±${TOLERANCE}`).toBe(true)
+  }, SUITE_TIMEOUT)
 })

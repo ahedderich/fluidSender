@@ -1,5 +1,4 @@
-import { describe, it } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect } from 'vitest'
 import { blendDeviation, deviationFor, edgeZeroValues } from '../../../server/utils/probing/probingRunner'
 import type { ProbeCompensation } from '../../../server/utils/tool/types'
 
@@ -9,7 +8,7 @@ import type { ProbeCompensation } from '../../../server/utils/tool/types'
 const comp: ProbeCompensation = { xPlus: 0.1, xMinus: -0.2, yPlus: 0.3, yMinus: 0.4, zMinus: 0.5 }
 
 function closeTo(actual: number, expected: number, eps = 1e-12) {
-  assert.ok(Math.abs(actual - expected) < eps, `Expected ${actual} ≈ ${expected}`)
+  expect(Math.abs(actual - expected) < eps, `Expected ${actual} ≈ ${expected}`).toBe(true)
 }
 
 describe('blendDeviation', () => {
@@ -22,7 +21,7 @@ describe('blendDeviation', () => {
   })
 
   it('returns 0 for +Z probing', () => {
-    assert.equal(blendDeviation([0, 0, 1], comp), 0)
+    expect(blendDeviation([0, 0, 1], comp)).toBe(0)
   })
 
   it('returns the 50/50 average at 45° in XY', () => {
@@ -45,7 +44,7 @@ describe('blendDeviation', () => {
   })
 
   it('returns 0 for the zero vector', () => {
-    assert.equal(blendDeviation([0, 0, 0], comp), 0)
+    expect(blendDeviation([0, 0, 0], comp)).toBe(0)
   })
 })
 
@@ -56,7 +55,7 @@ describe('deviationFor', () => {
     closeTo(deviationFor('Y', '+', comp), comp.yPlus)
     closeTo(deviationFor('Y', '-', comp), comp.yMinus)
     closeTo(deviationFor('Z', '-', comp), comp.zMinus)
-    assert.equal(deviationFor('Z', '+', comp), 0)
+    expect(deviationFor('Z', '+', comp)).toBe(0)
   })
 })
 

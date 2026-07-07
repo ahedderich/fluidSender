@@ -1,5 +1,4 @@
-import { describe, it } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect } from 'vitest'
 import { applyTransforms } from '../../../server/utils/gcode/transform'
 import type { HeightmapResult } from '../../../server/utils/appState'
 
@@ -21,7 +20,7 @@ function near(a: number, b: number, tol = 0.001): boolean {
 }
 
 function assertNear(actual: number, expected: number, tol = 0.001, msg?: string): void {
-  assert.ok(near(actual, expected, tol), `${msg ?? ''} expected ${actual} ≈ ${expected} (±${tol})`)
+  expect(near(actual, expected, tol), `${msg ?? ''} expected ${actual} ≈ ${expected} (±${tol})`).toBe(true)
 }
 
 const ROT_45 = { rotationDeg: 45, bowMm: 0, edge: 'top' as const }
@@ -87,9 +86,9 @@ describe('rotation transform', () => {
     const out = applyTransforms(gcode, 'rotated', ROT_45, null)
     const arcLine = out.split('\n')[2]!
 
-    assert.ok(arcLine.includes('I'), 'output should include I')
-    assert.ok(arcLine.includes('J'), 'output should include J')
-    assert.ok(!/\bR[\d.-]/.test(arcLine), 'output should not include R word')
+    expect(arcLine.includes('I'), 'output should include I').toBe(true)
+    expect(arcLine.includes('J'), 'output should include J').toBe(true)
+    expect(!/\bR[\d.-]/.test(arcLine), 'output should not include R word').toBe(true)
   })
 
   it('correctly rotates a G91 (relative) G1 delta', () => {
@@ -109,7 +108,7 @@ describe('rotation transform', () => {
   it('passes non-motion lines verbatim', () => {
     const lines = ['M3 S12000', 'G4 P0.5', '; comment', '(inline comment)', 'G54']
     const out = applyTransforms(lines.join('\n'), 'rotated', ROT_45, null)
-    assert.equal(out, lines.join('\n'))
+    expect(out).toBe(lines.join('\n'))
   })
 })
 
@@ -134,7 +133,7 @@ describe('heightmap — null fill', () => {
     const hm = makeHm([null, null, null, null])
     const input = 'G1 X5 Y5 Z-2'
     const out = applyTransforms(input, 'height_adjusted', null, hm)
-    assert.equal(out, input)
+    expect(out).toBe(input)
   })
 })
 
@@ -169,7 +168,7 @@ describe('heightmap — G1 move segmentation', () => {
     const hm = makeHm([0, 0, 0, 0])
     const out = applyTransforms('G90\nG1 X5 Y0 Z0', 'height_adjusted', null, hm)
     const segs = out.split('\n').filter((l) => l.startsWith('G1'))
-    assert.equal(segs.length, 1, 'single segment for short move')
+    expect(segs.length, 'single segment for short move').toBe(1)
   })
 
   it('splits a long move into correct number of segments', () => {
@@ -177,16 +176,16 @@ describe('heightmap — G1 move segmentation', () => {
     const hm = makeHm([0, 0, 0, 0], 2, 2, 10)
     const out = applyTransforms('G90\nG1 X50 Y0 Z0', 'height_adjusted', null, hm)
     const segs = out.split('\n').filter((l) => l.startsWith('G1'))
-    assert.equal(segs.length, 5, '5 segments for 50mm move with spacing=10')
+    expect(segs.length, '5 segments for 50mm move with spacing=10').toBe(5)
   })
 
   it('places F word on first segment only', () => {
     const hm = makeHm([0, 0, 0, 0], 2, 2, 10)
     const out = applyTransforms('G90\nG1 X50 Y0 Z0 F1000', 'height_adjusted', null, hm)
     const segs = out.split('\n').filter((l) => l.startsWith('G1'))
-    assert.ok(segs[0]!.includes('F'), 'first segment has F')
+    expect(segs[0]!.includes('F'), 'first segment has F').toBe(true)
     for (let i = 1; i < segs.length; i++) {
-      assert.ok(!segs[i]!.includes('F'), `segment ${i} should not have F`)
+      expect(segs[i]!.includes('F'), `segment ${i} should not have F`).toBe(false)
     }
   })
 })
@@ -199,9 +198,9 @@ describe('heightmap — G2/G3 arc tessellation', () => {
     const gcode = 'G90\nG0 X10 Y0\nG3 X0 Y10 I-10 J0'
     const out = applyTransforms(gcode, 'height_adjusted', null, hm)
     const segs = out.split('\n').filter((l) => l.startsWith('G1'))
-    assert.ok(segs.length > 1, 'arc tessellated into multiple segments')
+    expect(segs.length > 1, 'arc tessellated into multiple segments').toBe(true)
     for (const seg of segs) {
-      assert.match(seg, /G1 X[-\d.]+ Y[-\d.]+ Z[-\d.]+/, 'segment is valid G1')
+      expect(seg, 'segment is valid G1').toMatch(/G1 X[-\d.]+ Y[-\d.]+ Z[-\d.]+/)
     }
   })
 
@@ -210,7 +209,7 @@ describe('heightmap — G2/G3 arc tessellation', () => {
     const gcode = 'G90\nG0 X10 Y0\nG3 X10 Y0 I-10 J0'
     const out = applyTransforms(gcode, 'height_adjusted', null, hm)
     const segs = out.split('\n').filter((l) => l.startsWith('G1'))
-    assert.ok(segs.length > 4, 'full circle produces many segments')
+    expect(segs.length > 4, 'full circle produces many segments').toBe(true)
   })
 })
 
