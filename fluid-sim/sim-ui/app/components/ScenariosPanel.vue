@@ -9,13 +9,13 @@
       <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
         Scenarios
       </h2>
-      <span class="text-[10px] text-gray-400 dark:text-slate-500">{{ scenarios.length }} saved</span>
+      <span class="text-[10px] text-gray-400 dark:text-slate-500">{{ sim.scenarios.length }} saved</span>
     </div>
 
     <!-- Scenario list -->
     <div class="flex-1 overflow-y-auto min-h-0 divide-y divide-gray-50 dark:divide-slate-700/50">
       <div
-        v-for="scenario in scenarios"
+        v-for="scenario in sim.scenarios"
         :key="scenario.id"
         class="group flex items-start gap-2 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-700/30 transition-colors"
         :class="activeId === scenario.id ? 'bg-blue-50 dark:bg-blue-900/20' : ''"
@@ -25,13 +25,24 @@
           class="flex-1 text-left min-w-0"
           @click="apply(scenario)"
         >
-          <div
-            class="text-sm font-medium truncate"
-            :class="activeId === scenario.id
-              ? 'text-blue-700 dark:text-blue-300'
-              : 'text-gray-800 dark:text-slate-200'"
-          >
-            {{ scenario.name }}
+          <div class="flex items-center gap-1.5 min-w-0">
+            <!-- Default star indicator -->
+            <svg
+              v-if="sim.defaultScenarioId === scenario.id"
+              class="w-3 h-3 shrink-0 text-amber-400"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+            >
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+            <div
+              class="text-sm font-medium truncate"
+              :class="activeId === scenario.id
+                ? 'text-blue-700 dark:text-blue-300'
+                : 'text-gray-800 dark:text-slate-200'"
+            >
+              {{ scenario.name }}
+            </div>
           </div>
           <div class="text-xs text-gray-400 dark:text-slate-500 mt-0.5 leading-snug line-clamp-2">
             {{ scenario.description }}
@@ -50,20 +61,48 @@
           </div>
         </button>
 
-        <!-- Delete -->
-        <button
-          @click="remove(scenario.id)"
-          class="shrink-0 p-1 opacity-0 group-hover:opacity-100 text-gray-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 transition-all rounded"
-          title="Delete scenario"
-        >
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <!-- Row actions (visible on hover) -->
+        <div class="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+          <!-- Set/unset default -->
+          <button
+            @click="toggleDefault(scenario.id)"
+            class="p-1 rounded transition-colors"
+            :class="sim.defaultScenarioId === scenario.id
+              ? 'text-amber-400 hover:text-amber-500'
+              : 'text-gray-300 dark:text-slate-600 hover:text-amber-400'"
+            :title="sim.defaultScenarioId === scenario.id ? 'Remove default' : 'Set as default'"
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" :fill="sim.defaultScenarioId === scenario.id ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+          </button>
+
+          <!-- Recapture current state -->
+          <button
+            @click="recapture(scenario)"
+            class="p-1 text-gray-300 dark:text-slate-600 hover:text-blue-500 dark:hover:text-blue-400 rounded transition-colors"
+            title="Overwrite with current sim state"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
+
+          <!-- Delete -->
+          <button
+            @click="remove(scenario.id)"
+            class="p-1 text-gray-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 rounded transition-colors"
+            title="Delete scenario"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div
-        v-if="scenarios.length === 0"
+        v-if="sim.scenarios.length === 0"
         class="px-3 py-6 text-center text-xs text-gray-400 dark:text-slate-500"
       >
         No scenarios yet
@@ -116,18 +155,23 @@ import type { Scenario, MachineState } from '~/stores/sim'
 
 const sim = useSimStore()
 
-const scenarios = ref<Scenario[]>([])
 const activeId = ref<string | null>(null)
 const saving = ref(false)
 const newName = ref('')
 const nameInput = ref<HTMLInputElement | null>(null)
 
-// Load on mount
-const { data } = await useFetch<Scenario[]>('/api/scenarios')
-if (data.value) scenarios.value = data.value
+// Populate the store so applyDefaultScenario (called on WS connect) has data to work with
+const { data } = await useFetch<{ defaultId: string | null; scenarios: Scenario[] }>('/api/scenarios')
+if (data.value) {
+  sim.scenarios = data.value.scenarios
+  sim.defaultScenarioId = data.value.defaultId
+}
 
 async function persist() {
-  await $fetch('/api/scenarios', { method: 'POST', body: scenarios.value })
+  await $fetch('/api/scenarios', {
+    method: 'POST',
+    body: { defaultId: sim.defaultScenarioId, scenarios: sim.scenarios },
+  })
 }
 
 function apply(scenario: Scenario) {
@@ -135,9 +179,28 @@ function apply(scenario: Scenario) {
   activeId.value = scenario.id
 }
 
+function toggleDefault(id: string) {
+  sim.defaultScenarioId = sim.defaultScenarioId === id ? null : id
+  persist()
+}
+
+function recapture(scenario: Scenario) {
+  const idx = sim.scenarios.findIndex((s) => s.id === scenario.id)
+  if (idx === -1) return
+  sim.scenarios[idx] = {
+    ...scenario,
+    machineState: sim.machineState,
+    pos: { ...sim.pos },
+    wco: { ...sim.wco },
+    stock: { ...sim.stock, hole: { ...sim.stock.hole }, point: { ...sim.stock.point } },
+  }
+  persist()
+}
+
 function remove(id: string) {
-  scenarios.value = scenarios.value.filter((s) => s.id !== id)
+  sim.scenarios = sim.scenarios.filter((s) => s.id !== id)
   if (activeId.value === id) activeId.value = null
+  if (sim.defaultScenarioId === id) sim.defaultScenarioId = null
   persist()
 }
 
@@ -157,10 +220,10 @@ function confirmSave() {
     machineState: sim.machineState,
     pos: { ...sim.pos },
     wco: { ...sim.wco },
-    stock: { ...sim.stock },
+    stock: { ...sim.stock, hole: { ...sim.stock.hole }, point: { ...sim.stock.point } },
   }
 
-  scenarios.value.push(scenario)
+  sim.scenarios.push(scenario)
   saving.value = false
   activeId.value = scenario.id
   persist()

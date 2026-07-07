@@ -16,9 +16,10 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
+use crate::machine::probe::ProbeDeviations;
 use crate::machine::state::{
-    AxisMap, LimitState, MachineState, MachineStatus, SharedMachineState, StateBroadcast,
-    AXIS_COUNT,
+    AxisMap, ConsoleBroadcast, LimitState, MachineState, MachineStatus, SharedMachineState,
+    StateBroadcast, AXIS_COUNT,
 };
 use crate::machine::stock::StockDefinition;
 
@@ -26,8 +27,8 @@ use crate::machine::stock::StockDefinition;
 pub struct AppState {
     pub machine: SharedMachineState,
     pub broadcast: StateBroadcast,
-    /// Optional stock; if set, used in probe collision detection
-    pub stock: Arc<tokio::sync::RwLock<Option<StockDefinition>>>,
+    /// FluidNC protocol traffic, forwarded to the sim-ui console.
+    pub console: ConsoleBroadcast,
 }
 
 /// Snapshot of simulator state sent to the sim-ui over HTTP/WebSocket.
@@ -43,7 +44,7 @@ pub struct SimState {
     pub coolant: String,
     pub limits: LimitState,
     pub probe_triggered: bool,
-    pub probe_tip_diameter: f64,
+    pub probe_deviations: ProbeDeviations,
     pub door: bool,
     pub sim_speed: u8,
     pub axis_count: usize,
@@ -63,7 +64,7 @@ impl SimState {
             coolant: format!("{:?}", s.coolant).to_lowercase(),
             limits: s.limits.clone(),
             probe_triggered: s.probe.triggered,
-            probe_tip_diameter: s.probe.tip_diameter,
+            probe_deviations: s.probe.deviations.clone(),
             door: s.door,
             sim_speed: s.sim_speed,
             axis_count: s.axis_count,
@@ -86,6 +87,7 @@ pub fn router(app: AppState) -> Router {
         .route("/api/machine/config", post(set_machine_config))
         .route("/api/stock", post(set_stock))
         .route("/ws/state", get(ws_state_handler))
+        .route("/ws/console", get(ws_console_handler))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(app)
@@ -98,7 +100,9 @@ pub async fn run(port: u16, app: AppState) {
         .await
         .expect("Failed to bind control API port");
     info!("Control API listening on {}", addr);
-    axum::serve(listener, router).await.expect("Control API failed");
+    axum::serve(listener, router)
+        .await
+        .expect("Control API failed");
 }
 
 // --- Handlers ---
@@ -146,7 +150,9 @@ async fn trigger_limit(
         _ => return StatusCode::BAD_REQUEST,
     }
 
-    if state.limits.any_active() && !matches!(state.status, MachineStatus::Alarm | MachineStatus::Door) {
+    if state.limits.any_active()
+        && !matches!(state.status, MachineStatus::Alarm | MachineStatus::Door)
+    {
         state.status = MachineStatus::Alarm;
     }
 
@@ -166,7 +172,9 @@ async fn trigger_limit(
             "yMax" => s.limits.y_max = false,
             "zMin" => s.limits.z_min = false,
             "zMax" => s.limits.z_max = false,
-            "door" => { s.door = false; }
+            "door" => {
+                s.door = false;
+            }
             _ => {}
         }
         let _ = bcast.send(());
@@ -193,7 +201,9 @@ async fn trigger_probe(State(app): State<AppState>) -> StatusCode {
 }
 
 #[derive(Deserialize)]
-struct SetSpeedBody { speed: u8 }
+struct SetSpeedBody {
+    speed: u8,
+}
 
 async fn set_speed(State(app): State<AppState>, Json(body): Json<SetSpeedBody>) -> StatusCode {
     let speed = body.speed.clamp(1, 10);
@@ -205,24 +215,43 @@ async fn set_speed(State(app): State<AppState>, Json(body): Json<SetSpeedBody>) 
 
 #[derive(Deserialize, Default)]
 struct AxisInput {
-    x: Option<f64>, y: Option<f64>, z: Option<f64>,
-    a: Option<f64>, b: Option<f64>, c: Option<f64>,
+    x: Option<f64>,
+    y: Option<f64>,
+    z: Option<f64>,
+    a: Option<f64>,
+    b: Option<f64>,
+    c: Option<f64>,
 }
 
 impl AxisInput {
     fn apply_to(&self, arr: &mut [f64; AXIS_COUNT]) {
-        if let Some(v) = self.x { arr[0] = v; }
-        if let Some(v) = self.y { arr[1] = v; }
-        if let Some(v) = self.z { arr[2] = v; }
-        if let Some(v) = self.a { arr[3] = v; }
-        if let Some(v) = self.b { arr[4] = v; }
-        if let Some(v) = self.c { arr[5] = v; }
+        if let Some(v) = self.x {
+            arr[0] = v;
+        }
+        if let Some(v) = self.y {
+            arr[1] = v;
+        }
+        if let Some(v) = self.z {
+            arr[2] = v;
+        }
+        if let Some(v) = self.a {
+            arr[3] = v;
+        }
+        if let Some(v) = self.b {
+            arr[4] = v;
+        }
+        if let Some(v) = self.c {
+            arr[5] = v;
+        }
     }
 }
 
 async fn set_position(State(app): State<AppState>, Json(body): Json<AxisInput>) -> StatusCode {
     let mut state = app.machine.write().await;
     body.apply_to(&mut state.pos);
+    // A teleport invalidates the planned end position — subsequent relative moves
+    // must chain off the new location, not the pre-teleport plan.
+    state.planned_pos = state.pos;
     let _ = app.broadcast.send(());
     StatusCode::NO_CONTENT
 }
@@ -239,7 +268,7 @@ async fn set_wco(State(app): State<AppState>, Json(body): Json<AxisInput>) -> St
 struct MachineConfigInput {
     travel: Option<AxisInput>,
     axis_count: Option<usize>,
-    probe_tip_diameter: Option<f64>,
+    probe_deviations: Option<ProbeDeviations>,
 }
 
 async fn set_machine_config(
@@ -253,30 +282,50 @@ async fn set_machine_config(
     if let Some(n) = body.axis_count {
         state.axis_count = n.clamp(1, AXIS_COUNT);
     }
-    if let Some(d) = body.probe_tip_diameter {
-        state.probe.tip_diameter = d.max(0.1);
+    if let Some(devs) = body.probe_deviations {
+        // Deviations are deliberately unclamped — negative values (late trigger) are valid.
+        state.probe.deviations = devs;
     }
     let _ = app.broadcast.send(());
     StatusCode::NO_CONTENT
 }
 
-async fn set_stock(
-    State(app): State<AppState>,
-    Json(stock): Json<StockDefinition>,
-) -> StatusCode {
+async fn set_stock(State(app): State<AppState>, Json(stock): Json<StockDefinition>) -> StatusCode {
     info!("Stock updated: {:?}", stock.shape);
-    let mut s = app.stock.write().await;
-    *s = Some(stock);
+    let mut state = app.machine.write().await;
+    state.stock = Some(stock);
     StatusCode::NO_CONTENT
 }
 
 // --- WebSocket handler ---
 
-async fn ws_state_handler(
+async fn ws_state_handler(ws: WebSocketUpgrade, State(app): State<AppState>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| ws_state(socket, app))
+}
+
+async fn ws_console_handler(
     ws: WebSocketUpgrade,
     State(app): State<AppState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws_state(socket, app))
+    ws.on_upgrade(move |socket| ws_console(socket, app))
+}
+
+/// Streams FluidNC protocol traffic (requests + responses) to the sim-ui.
+/// Display-only — incoming messages from the client are ignored.
+async fn ws_console(mut socket: WebSocket, app: AppState) {
+    let mut rx = app.console.subscribe();
+    loop {
+        match rx.recv().await {
+            Ok(entry) => {
+                let json = serde_json::to_string(&entry).unwrap_or_default();
+                if socket.send(Message::Text(json.into())).await.is_err() {
+                    break;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(_) => break,
+        }
+    }
 }
 
 async fn ws_state(mut socket: WebSocket, app: AppState) {
@@ -295,7 +344,8 @@ async fn ws_state(mut socket: WebSocket, app: AppState) {
         match rx.recv().await {
             Ok(()) => {
                 let state = app.machine.read().await;
-                let json = serde_json::to_string(&SimState::from_machine(&state)).unwrap_or_default();
+                let json =
+                    serde_json::to_string(&SimState::from_machine(&state)).unwrap_or_default();
                 if socket.send(Message::Text(json.into())).await.is_err() {
                     break;
                 }
@@ -303,7 +353,8 @@ async fn ws_state(mut socket: WebSocket, app: AppState) {
             Err(broadcast::error::RecvError::Lagged(_)) => {
                 // Skip missed updates, send current state
                 let state = app.machine.read().await;
-                let json = serde_json::to_string(&SimState::from_machine(&state)).unwrap_or_default();
+                let json =
+                    serde_json::to_string(&SimState::from_machine(&state)).unwrap_or_default();
                 let _ = socket.send(Message::Text(json.into())).await;
             }
             Err(_) => break,

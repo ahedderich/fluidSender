@@ -55,6 +55,8 @@ vitest.results.json
 htmlcov/
 .nyc_output/
 .playwright-cli/
+ui/.test-out
+ui/.test-out-probing
 
 # -----------------------------------------------------------------------------
 # Rust (fluid-sim/sim/)
@@ -137,6 +139,11 @@ $RECYCLE.BIN/
 *~
 
 # -----------------------------------------------------------------------------
+# Claude Code
+# -----------------------------------------------------------------------------
+.claude/
+
+# -----------------------------------------------------------------------------
 # Editors & IDEs
 # -----------------------------------------------------------------------------
 # VS Code — keep shared settings, ignore personal/machine-specific files
@@ -175,6 +182,12 @@ tramp
 *.tmPreferences.cache
 *.stTheme.cache
 *.sublime-workspace
+
+# -----------------------------------------------------------------------------
+# Reference repositories (cloned locally for firmware behaviour research)
+# Clone with: git clone <url> <repo-name>/ inside this folder
+# -----------------------------------------------------------------------------
+FluidNC/
 
 # -----------------------------------------------------------------------------
 # Temporary & misc

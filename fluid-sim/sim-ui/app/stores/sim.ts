@@ -1,9 +1,18 @@
 import { defineStore } from 'pinia'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 
 export type MachineState = 'Idle' | 'Run' | 'Hold' | 'Alarm' | 'Homing' | 'Door'
 export type StockShape = 'rect' | 'round'
 export type LimitKey = 'xMin' | 'xMax' | 'yMin' | 'yMax' | 'zMin' | 'zMax' | 'door'
+
+/** One line of FluidNC protocol traffic streamed from the sim (`/ws/console`). */
+export interface ConsoleLine {
+  /** "rx" = request received by the sim, "tx" = response sent by the sim. */
+  dir: 'rx' | 'tx'
+  source: string
+  text: string
+  ts: number
+}
 
 export const AXES = ['x', 'y', 'z', 'a', 'b', 'c'] as const
 export type AxisKey = (typeof AXES)[number]
@@ -36,8 +45,8 @@ export const useSimStore = defineStore('sim', () => {
   const axisCount = ref(3)
 
   // Machine position in mm (linear) or ° (rotary A/B/C).
-  // Z is negative when the spindle descends from home.
-  const pos = reactive<Record<AxisKey, number>>({ x: 150.0, y: 100.0, z: 5.0, a: 0.0, b: 0.0, c: 0.0 })
+  // X and Y home at 0; work area is negative. Z home at 0; descends negative.
+  const pos = reactive<Record<AxisKey, number>>({ x: -150.0, y: -100.0, z: 5.0, a: 0.0, b: 0.0, c: 0.0 })
 
   // Work coordinate offset. WPos = MPos - WCO.
   const wco = reactive<Record<AxisKey, number>>({ x: 0.0, y: 0.0, z: 0.0, a: 0.0, b: 0.0, c: 0.0 })
@@ -45,21 +54,24 @@ export const useSimStore = defineStore('sim', () => {
   // Machine travel envelope (mm for linear, ° for rotary)
   const travel = reactive<Record<AxisKey, number>>({ x: 300, y: 200, z: 80, a: 360, b: 360, c: 360 })
 
-  // Stock definition
+  // Stock definition in signed machine coords, matching the sim's collision math:
+  // ox/oy is the stock CENTRE, oz its top surface. The work area is in the negative
+  // XY quadrant and Z descends negative from home, so all three are normally negative.
+  // Hole x/y are offsets from the stock centre.
   const stock = reactive({
     shape: 'rect' as StockShape,
     width: 100,
     height: 80,
     depth: 20,
-    ox: 100,
-    oy: 60,
-    oz: 5,
+    ox: -150,
+    oy: -100,
+    oz: -20,
     diameter: 80,
     rotation: 0,
     hole: {
       enabled: false,
-      x: 50,
-      y: 40,
+      x: 0,
+      y: 0,
       diameter: 20,
       depth: 20,
     },
@@ -74,8 +86,13 @@ export const useSimStore = defineStore('sim', () => {
   // Simulation speed multiplier (1–10×)
   const simSpeed = ref(1)
 
-  // Touch probe
-  const probe = reactive({ tipDiameter: 2.0, triggered: false })
+  // Touch probe. Deviation sign convention: positive = trigger fires before centre
+  // reaches the surface (normal; ≈ ball radius); negative = trigger fires after centre
+  // has passed the surface.
+  const probe = reactive({
+    triggered: false,
+    deviations: { xPlus: 0, xMinus: 0, yPlus: 0, yMinus: 0, zMinus: 0 },
+  })
 
   // Limit switches + door sensor
   const limits = reactive<Record<LimitKey, boolean>>({
@@ -103,6 +120,21 @@ export const useSimStore = defineStore('sim', () => {
     'axes/y/homing/cycle': '2',
     'axes/z/homing/cycle': '1',
   })
+
+  // FluidNC protocol traffic streamed from the sim (display-only console)
+  const CONSOLE_LIMIT = 500
+  const consoleLog = ref<ConsoleLine[]>([])
+
+  function pushConsoleLine(line: ConsoleLine) {
+    consoleLog.value.push(line)
+    if (consoleLog.value.length > CONSOLE_LIMIT) {
+      consoleLog.value.splice(0, consoleLog.value.length - CONSOLE_LIMIT)
+    }
+  }
+
+  function clearConsole() {
+    consoleLog.value = []
+  }
 
   // Derived work position for all axes
   const wpos = computed(() =>
@@ -173,6 +205,39 @@ export const useSimStore = defineStore('sim', () => {
     })
   }
 
+  async function setTravel(axes: Partial<Record<AxisKey, number>>) {
+    for (const [k, v] of Object.entries(axes)) {
+      travel[k as AxisKey] = v as number
+    }
+    await $fetch('/api/sim/machine/config', {
+      method: 'POST',
+      body: { travel: axes },
+    }).catch(() => {})
+  }
+
+  async function pushProbeConfig() {
+    await $fetch('/api/sim/machine/config', {
+      method: 'POST',
+      body: {
+        probeDeviations: { ...probe.deviations },
+      },
+    }).catch(() => {})
+  }
+
+  // Debounced push of probe edits to the sim — without it, local edits never reach
+  // the sim and the next WS state message silently reverts them.
+  let probePushTimer: ReturnType<typeof setTimeout> | null = null
+  watch(
+    () => [{ ...probe.deviations }],
+    () => {
+      if (probePushTimer) clearTimeout(probePushTimer)
+      probePushTimer = setTimeout(() => {
+        probePushTimer = null
+        pushProbeConfig()
+      }, 300)
+    },
+  )
+
   async function pushStockToSim() {
     const shape = stock.shape === 'rect'
       ? { type: 'rect', width: stock.width, height: stock.height, rotation: stock.rotation }
@@ -226,11 +291,23 @@ export const useSimStore = defineStore('sim', () => {
     ])
   }
 
+  // Scenario list and default — owned here so useSimConnection can apply on WS connect
+  const scenarios = ref<Scenario[]>([])
+  const defaultScenarioId = ref<string | null>(null)
+
+  async function applyDefaultScenario() {
+    if (!defaultScenarioId.value) return
+    const def = scenarios.value.find(s => s.id === defaultScenarioId.value)
+    if (def) await applyScenario(def)
+  }
+
   return {
     connected, machineState, axisCount, simSpeed,
     pos, wco, wpos, travel,
     stock, probe, limits, fluidConfig,
+    consoleLog, pushConsoleLine, clearConsole,
     triggerProbe, triggerLimit, softReset, triggerAlarm,
-    setSimSpeed, setPosition, setWco, pushStockToSim, applyScenario,
+    setSimSpeed, setPosition, setWco, setTravel, pushProbeConfig, pushStockToSim,
+    applyScenario, scenarios, defaultScenarioId, applyDefaultScenario,
   }
 })

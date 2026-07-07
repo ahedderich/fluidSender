@@ -12,8 +12,8 @@
   background: linear-gradient(
     to right,
     #3b82f6 0%,
-    #3b82f6 calc((var(--val, 100) - 10) / 290 * 100%),
-    #334155 calc((var(--val, 100) - 10) / 290 * 100%),
+    #3b82f6 calc((var(--val, 100) - 10) / 190 * 100%),
+    #334155 calc((var(--val, 100) - 10) / 190 * 100%),
     #334155 100%
   );
 }
@@ -22,8 +22,8 @@
   background: linear-gradient(
     to right,
     #3b82f6 0%,
-    #3b82f6 calc((var(--val, 100) - 10) / 290 * 100%),
-    #1e293b calc((var(--val, 100) - 10) / 290 * 100%),
+    #3b82f6 calc((var(--val, 100) - 10) / 190 * 100%),
+    #1e293b calc((var(--val, 100) - 10) / 190 * 100%),
     #1e293b 100%
   );
 }
@@ -51,6 +51,14 @@
   background: #3b82f6;
   border: 2px solid #1e40af;
   cursor: pointer;
+}
+
+/* Shared form input styles */
+.settings-input {
+  @apply bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 text-gray-900 dark:text-slate-100 text-sm px-2 py-1.5 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500;
+}
+.settings-input-sm {
+  @apply bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 text-gray-900 dark:text-slate-100 text-xs px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 w-full;
 }
 
 /* Scrollbar styling for dark panels */

@@ -1,3 +1,5 @@
+import { useModals } from '~/composables/useModals'
+
 interface ConfirmOptions {
   title: string
   message?: string
@@ -6,36 +8,20 @@ interface ConfirmOptions {
   danger?: boolean
 }
 
-const visible = ref(false)
-const opts = reactive<ConfirmOptions>({ title: '' })
-let _resolve: ((v: boolean) => void) | null = null
-
+// Confirmation dialogs are synced: opening broadcasts a 'confirm' modal to every
+// browser, and the promise resolves when *any* browser accepts or dismisses it.
 export function useConfirm() {
+  const modals = useModals()
+
   function confirm(options: ConfirmOptions): Promise<boolean> {
-    Object.assign(opts, {
+    return modals.open<boolean>('confirm', {
       confirmLabel: 'Confirm',
       cancelLabel: 'Cancel',
       danger: false,
       message: undefined,
       ...options,
     })
-    visible.value = true
-    return new Promise((resolve) => {
-      _resolve = resolve
-    })
   }
 
-  function accept() {
-    visible.value = false
-    _resolve?.(true)
-    _resolve = null
-  }
-
-  function dismiss() {
-    visible.value = false
-    _resolve?.(false)
-    _resolve = null
-  }
-
-  return { visible, opts, confirm, accept, dismiss }
+  return { confirm }
 }

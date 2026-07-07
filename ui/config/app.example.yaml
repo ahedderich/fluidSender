@@ -1,0 +1,37 @@
+# FluidSender App Configuration
+# Copy to app.yaml (or let the app auto-create it on first run)
+
+auth:
+  enabled: false          # set to true to require login
+  # users are managed via the Settings > Authentication UI
+  # passwords are stored as bcrypt hashes — never edit manually
+
+machines: []              # populated via Settings > Add Machine
+
+app:
+  units: mm               # mm | inch
+  macros: []              # app-level macros shared across all machines
+  viewport:
+    defaultView: iso      # iso | top | front | right
+    showGrid: true
+    showAxes: true
+  jog:
+    slowSpeed: 100        # mm/min
+    mediumSpeed: 500
+    fastSpeed: 2000
+    xyStep: 1.0           # mm per button press
+    zStep: 0.5
+  shortcuts:
+    jogXPos: ArrowRight
+    jogXNeg: ArrowLeft
+    jogYPos: ArrowUp
+    jogYNeg: ArrowDown
+    jogZPos: PageUp
+    jogZNeg: PageDown
+    feedHold: "!"
+    cycleStart: "~"
+    softReset: ctrl+x
+    home: "$"
+    speedSlow: "1"
+    speedMedium: "2"
+    speedFast: "3"

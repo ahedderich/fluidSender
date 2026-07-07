@@ -9,7 +9,10 @@ pub struct ServerConfig {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { fluidnc_port: 8765, control_port: 8766 }
+        Self {
+            fluidnc_port: 8765,
+            control_port: 8766,
+        }
     }
 }
 
@@ -52,25 +55,48 @@ impl Default for MachineConfig {
     fn default() -> Self {
         Self {
             axis_count: 3,
-            travel: AxisValues { x: 300.0, y: 200.0, z: 80.0, a: 360.0, b: 360.0, c: 360.0 },
-            max_rate: AxisValues { x: 5000.0, y: 5000.0, z: 1000.0, a: 1000.0, b: 1000.0, c: 1000.0 },
-            acceleration: AxisValues { x: 200.0, y: 200.0, z: 100.0, a: 100.0, b: 100.0, c: 100.0 },
-            steps_per_mm: AxisValues { x: 80.0, y: 80.0, z: 400.0, a: 80.0, b: 80.0, c: 80.0 },
+            travel: AxisValues {
+                x: 300.0,
+                y: 200.0,
+                z: 80.0,
+                a: 360.0,
+                b: 360.0,
+                c: 360.0,
+            },
+            max_rate: AxisValues {
+                x: 5000.0,
+                y: 5000.0,
+                z: 1000.0,
+                a: 1000.0,
+                b: 1000.0,
+                c: 1000.0,
+            },
+            acceleration: AxisValues {
+                x: 200.0,
+                y: 200.0,
+                z: 100.0,
+                a: 100.0,
+                b: 100.0,
+                c: 100.0,
+            },
+            steps_per_mm: AxisValues {
+                x: 80.0,
+                y: 80.0,
+                z: 400.0,
+                a: 80.0,
+                b: 80.0,
+                c: 80.0,
+            },
             soft_limits: true,
             homing_duration_ms: 2000,
         }
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ProbeConfig {
-    pub tip_diameter: f64,
-}
-
-impl Default for ProbeConfig {
-    fn default() -> Self {
-        Self { tip_diameter: 2.0 }
-    }
+    #[serde(default)]
+    pub deviations: crate::machine::probe::ProbeDeviations,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -81,7 +107,10 @@ pub struct SimConfig {
 
 impl Default for SimConfig {
     fn default() -> Self {
-        Self { speed: 1, tick_hz: 50 }
+        Self {
+            speed: 1,
+            tick_hz: 50,
+        }
     }
 }
 

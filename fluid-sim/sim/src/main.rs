@@ -1,20 +1,14 @@
-mod config;
-mod machine;
-mod protocol;
-mod server;
-
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use config::Config;
-use machine::motion::spawn_motion_task;
-use machine::state::{MachineState, new_shared};
-use server::control::{AppState, run as run_control};
-use server::fluidnc::run as run_fluidnc;
+use fluidsim::config::Config;
+use fluidsim::machine::motion::spawn_motion_task;
+use fluidsim::machine::state::{new_console, new_shared, MachineState};
+use fluidsim::server::control::{run as run_control, AppState};
+use fluidsim::server::fluidnc::run as run_fluidnc;
 
 #[derive(Parser)]
 #[command(name = "fluidsim", about = "FluidNC firmware simulator")]
@@ -35,7 +29,11 @@ async fn main() {
 
     let cli = Cli::parse();
     let cfg = Config::load(&cli.config).unwrap_or_else(|e| {
-        tracing::warn!("Could not load {}: {} — using defaults", cli.config.display(), e);
+        tracing::warn!(
+            "Could not load {}: {} — using defaults",
+            cli.config.display(),
+            e
+        );
         Config::default()
     });
 
@@ -53,26 +51,30 @@ async fn main() {
         cfg.machine.travel.c,
     ];
 
-    let state = MachineState::new(
+    let mut state = MachineState::new(
         cfg.machine.axis_count,
         travel,
-        cfg.probe.tip_diameter,
+        cfg.probe.deviations.clone(),
         cfg.sim.speed,
     );
+    state.max_rate = [
+        cfg.machine.max_rate.x,
+        cfg.machine.max_rate.y,
+        cfg.machine.max_rate.z,
+        cfg.machine.max_rate.a,
+        cfg.machine.max_rate.b,
+        cfg.machine.max_rate.c,
+    ];
 
     let (shared, broadcast) = new_shared(state);
-    let stock = Arc::new(RwLock::new(None));
+    let console = new_console();
 
-    let move_tx = spawn_motion_task(
-        Arc::clone(&shared),
-        broadcast.clone(),
-        cfg.sim.tick_hz,
-    );
+    let move_tx = spawn_motion_task(Arc::clone(&shared), broadcast.clone(), cfg.sim.tick_hz);
 
     let app_state = AppState {
         machine: Arc::clone(&shared),
         broadcast: broadcast.clone(),
-        stock: Arc::clone(&stock),
+        console: console.clone(),
     };
 
     let fluidnc_port = cfg.server.fluidnc_port;
@@ -82,6 +84,7 @@ async fn main() {
         fluidnc_port,
         Arc::clone(&shared),
         broadcast.clone(),
+        console.clone(),
         move_tx,
     ));
 

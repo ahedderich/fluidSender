@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia'
+import { useSettingsStore } from '~/stores/settings'
+import { useSyncStore } from '~/stores/sync'
+import { wsSend, wsConnected } from '~/composables/useWsSend'
 
-export type MachineStatus = 'DISCONNECTED' | 'IDLE' | 'RUN' | 'HOLD' | 'ALARM' | 'HOME' | 'DOOR' | 'SLEEP' | 'CHECK'
+// Re-export canonical types from server utils so client and server share the same shapes
+export type { MachineStatus } from '~~/server/utils/machine/types'
+import type { MachineStatus } from '~~/server/utils/machine/types'
+export type { StockDef } from '~~/server/utils/appState'
+import type { StockDef } from '~~/server/utils/appState'
 
 export interface LimitSwitch {
   name: string
@@ -28,182 +35,158 @@ export interface Tool {
   lineEnd: number
 }
 
-export interface ToolLibraryEntry {
-  id: string
-  number?: number
-  name: string
-  type: string
-  diameter: number
-  fluteCount?: number
-  fluteLength?: number
-  overallLength?: number
-  material?: string
-  usageMinutes: number
-  lastUsed?: number
-  /** M = machine-specific tool, A = app-level shared tool */
-  source: 'M' | 'A'
-}
 
-export interface AxisRange {
-  min: number
-  max: number
-}
+export type { ToolLibraryEntry } from '~~/server/utils/tool/types'
+import type { ToolLibraryEntry } from '~~/server/utils/tool/types'
 
-export interface Job {
-  filename: string
-  totalLines: number
-  currentLine: number
-  progress: number
-  estimatedRuntime: number
-  startTime: number | null
-  axisRanges?: { x: AxisRange; y: AxisRange; z: AxisRange }
+export interface ServerConnectionState {
+  machineId: string | null
+  connected: boolean
+  status: string
+  firmwareVersion: string
+  simulatorMode: boolean
 }
 
 export const useMachineStore = defineStore('machine', () => {
   const connected = ref(false)
-  const firmwareVersion = ref('3.7.14')
-  const status = ref<MachineStatus>('DISCONNECTED')
+  const connecting = ref(false)
+  const connectionError = ref('')
+  const connectedMachineId = ref<string | null>(null)
+  const firmwareVersion = ref('')
+  const simulatorMode = ref(false)
+  const machineState = ref<MachineStatus['state']>('Disconnected')
 
-  const machinePos = ref<Position>({ x: -150.25, y: -80.0, z: -12.5 })
-  const workPos = ref<Position>({ x: 50.5, y: 25.0, z: -5.25 })
+  const machinePos = ref<Position>({ x: 0, y: 0, z: 0 })
+  const workPos = ref<Position>({ x: 0, y: 0, z: 0 })
 
   const feedOverride = ref(100)
   const spindleOverride = ref(100)
+  const feed = ref(0)
 
   const spindleOn = ref(false)
-  const spindleRpm = ref(8000)
+  const spindleRpm = ref(0)
   const spindleDir = ref<'cw' | 'ccw'>('cw')
   const coolant = ref<'off' | 'mist' | 'flood'>('off')
 
-  const limitSwitches = ref<LimitSwitch[]>([
-    { name: 'X_MIN', triggered: false },
-    { name: 'X_MAX', triggered: false },
-    { name: 'Y_MIN', triggered: false },
-    { name: 'Y_MAX', triggered: false },
-    { name: 'Z_MIN', triggered: true },
-    { name: 'Z_MAX', triggered: false },
-    { name: 'PROBE', triggered: false },
-  ])
+  const limitSwitches = ref<LimitSwitch[]>([])
+  const probe = ref(false)
+  const toolsetter = ref(false)
+  const door = ref(false)
+  const buffer = ref({ planner: 0, rx: 0 })
 
-  let _entryId = 0
-  const consoleLog = ref<ConsoleEntry[]>([
-    { id: _entryId++, type: 'info', text: 'FluidSender v0.0.1 ready', ts: Date.now() - 8000 },
-  ])
+  // Console is server-owned; this is a read alias so existing components work unchanged
+  const sync = useSyncStore()
+  const consoleLog = computed(() => sync.consoleLog)
 
-  const job = ref<Job | null>({
-    filename: 'bracket_v3.nc',
-    totalLines: 2847,
-    currentLine: 0,
-    progress: 0,
-    estimatedRuntime: 3240,
-    startTime: null,
-    axisRanges: {
-      x: { min: 0.0, max: 200.0 },
-      y: { min: 0.0, max: 150.0 },
-      z: { min: -25.0, max: 0.0 },
-    },
-  })
+  const tools = ref<Tool[]>([])
+  const toolLibrary = reactive<{ machine: ToolLibraryEntry[]; app: ToolLibraryEntry[] }>({ machine: [], app: [] })
+  const magazineSlots = ref<(number | null)[]>([])
+  const stock = ref<StockDef | null>(null)
+  const loadedToolNumber = ref<number | null>(null)
 
-  const tools = ref<Tool[]>([
-    { number: 1, description: '6mm End Mill — Roughing', lineStart: 1, lineEnd: 847 },
-    { number: 2, description: '3mm Ball Nose — Finishing', lineStart: 848, lineEnd: 2047 },
-    { number: 3, description: '1mm Engraving Bit — Detail', lineStart: 2048, lineEnd: 2847 },
-  ])
+  function setToolLibrary(library: { machine: ToolLibraryEntry[]; app: ToolLibraryEntry[] }) {
+    toolLibrary.machine.splice(0, toolLibrary.machine.length, ...library.machine)
+    toolLibrary.app.splice(0, toolLibrary.app.length, ...library.app)
+  }
 
-  const _now = Date.now()
-  const toolLibrary = ref<ToolLibraryEntry[]>([
-    { id: 'lib-1', number: 1, name: '6mm Flat End Mill', type: 'flat end mill', diameter: 6, fluteCount: 4, fluteLength: 19, overallLength: 63, material: 'carbide', usageMinutes: 272, lastUsed: _now - 2 * 86_400_000, source: 'M' },
-    { id: 'lib-2', number: 2, name: '3mm Ball Nose', type: 'ball end mill', diameter: 3, fluteCount: 2, fluteLength: 10, overallLength: 50, material: 'carbide', usageMinutes: 138, lastUsed: _now - 2 * 86_400_000, source: 'M' },
-    { id: 'lib-3', number: 3, name: '1mm Engraving Bit', type: 'v-cutter', diameter: 1, fluteCount: 1, fluteLength: 4, overallLength: 38, material: 'carbide', usageMinutes: 45, lastUsed: _now - 5 * 86_400_000, source: 'M' },
-    { id: 'lib-4', number: 4, name: '10mm Flat End Mill', type: 'flat end mill', diameter: 10, fluteCount: 4, fluteLength: 30, overallLength: 80, material: 'carbide', usageMinutes: 735, lastUsed: _now - 10 * 86_400_000, source: 'A' },
-    { id: 'lib-5', number: 5, name: '6mm Ball Nose', type: 'ball end mill', diameter: 6, fluteCount: 2, fluteLength: 20, overallLength: 65, material: 'carbide', usageMinutes: 192, lastUsed: _now - 7 * 86_400_000, source: 'A' },
-    { id: 'lib-6', number: 6, name: '8mm Roughing End Mill', type: 'flat end mill', diameter: 8, fluteCount: 3, fluteLength: 25, overallLength: 75, material: 'carbide', usageMinutes: 525, lastUsed: _now - 14 * 86_400_000, source: 'A' },
-    { id: 'lib-7', number: 7, name: '2mm Drill', type: 'drill', diameter: 2, fluteCount: 2, fluteLength: 15, overallLength: 45, material: 'hss', usageMinutes: 80, lastUsed: _now - 30 * 86_400_000, source: 'A' },
-    { id: 'lib-8', number: 8, name: '45° V-Cutter', type: 'v-cutter', diameter: 6, fluteCount: 2, fluteLength: 8, overallLength: 55, material: 'carbide', usageMinutes: 30, lastUsed: _now - 60 * 86_400_000, source: 'A' },
-    { id: 'lib-9', number: 9, name: '12mm Face Mill', type: 'face mill', diameter: 12, fluteCount: 3, fluteLength: 15, overallLength: 70, material: 'carbide', usageMinutes: 410, lastUsed: _now - 20 * 86_400_000, source: 'A' },
-    { id: 'lib-10', number: 10, name: 'M3 Tap', type: 'tap', diameter: 3, fluteCount: 3, overallLength: 45, material: 'hss', usageMinutes: 15, lastUsed: _now - 90 * 86_400_000, source: 'A' },
-  ])
+  function setLoadedToolNumber(n: number | null) {
+    loadedToolNumber.value = n
+  }
 
-  // magazine slot assignments: index = slot (0-based), value = tool number or null
-  const magazineSlots = ref<(number | null)[]>([1, 2, 3, null, null, null, null, null])
+  function setStock(s: StockDef) { stock.value = s }
+  function clearStock() { stock.value = null }
 
-  function setToolLibrary(entries: ToolLibraryEntry[]) {
-    toolLibrary.value = entries
+  let _connectTimeout: ReturnType<typeof setTimeout> | null = null
+
+  function applyServerStatus(state: ServerConnectionState) {
+    if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null }
+    connecting.value = false
+    connectionError.value = ''
+    connected.value = state.connected
+    connectedMachineId.value = state.machineId
+    firmwareVersion.value = state.firmwareVersion ?? ''
+    simulatorMode.value = state.simulatorMode ?? false
+
+    if (!state.connected) {
+      limitSwitches.value = []
+      probe.value = false
+      toolsetter.value = false
+      door.value = false
+      machinePos.value = { x: 0, y: 0, z: 0 }
+      workPos.value = { x: 0, y: 0, z: 0 }
+      machineState.value = 'Disconnected'
+    }
+  }
+
+  function applyMachineStatus(s: MachineStatus) {
+    machineState.value = s.state
+    machinePos.value = s.mpos
+    workPos.value = s.wpos
+    feed.value = s.feed
+    spindleRpm.value = s.spindleSpeed
+    spindleOn.value = s.spindleOn
+    coolant.value = s.coolantFlood ? 'flood' : s.coolantMist ? 'mist' : 'off'
+    limitSwitches.value = s.limitSwitches
+    probe.value = s.probe
+    toolsetter.value = s.toolsetter
+    door.value = s.door
+    feedOverride.value = s.overrides.feed
+    spindleOverride.value = s.overrides.spindle
+    buffer.value = s.buffer
   }
 
   function connect() {
-    connected.value = true
-    status.value = 'IDLE'
-    addConsole('recv', `Grbl 3.7.14 [FluidNC v${firmwareVersion.value}] ready`)
-    addConsole('recv', `[MSG: Machine: Connected]`)
+    const s = useSettingsStore()
+    if (!s.activeMachineId) return
+    if (!wsConnected.value) {
+      connectionError.value = 'Server WebSocket offline — refresh or wait for reconnection.'
+      return
+    }
+    connecting.value = true
+    connectionError.value = ''
+    wsSend({ t: 'machine:connect', payload: { machineId: s.activeMachineId } })
+    _connectTimeout = setTimeout(() => {
+      connecting.value = false
+      connectionError.value = 'Connection timed out. Check the machine config and try again.'
+    }, 8000)
   }
 
   function disconnect() {
-    connected.value = false
-    status.value = 'DISCONNECTED'
-    addConsole('info', 'Disconnected')
+    connectionError.value = ''
+    wsSend({ t: 'machine:disconnect', payload: {} })
   }
 
   function addConsole(type: ConsoleEntry['type'], text: string) {
-    consoleLog.value.push({ id: _entryId++, type, text, ts: Date.now() })
-    if (consoleLog.value.length > 500) consoleLog.value.splice(0, 100)
+    wsSend({ t: 'ui:console:push', payload: { type, text, ts: Date.now() } })
+  }
+
+  function clearConsole() {
+    wsSend({ t: 'ui:console:clear', payload: {} })
   }
 
   function sendCommand(cmd: string) {
-    addConsole('sent', cmd)
-    if (cmd === '?') {
-      const m = machinePos.value
-      const w = workPos.value
-      addConsole(
-        'recv',
-        `<${status.value}|MPos:${m.x.toFixed(3)},${m.y.toFixed(3)},${m.z.toFixed(3)}|WPos:${w.x.toFixed(3)},${w.y.toFixed(3)},${w.z.toFixed(3)}>`,
-      )
-    } else if (cmd === '$H') {
-      status.value = 'HOME'
-      addConsole('recv', 'ok')
-      setTimeout(() => {
-        status.value = 'IDLE'
-        machinePos.value = { x: 0, y: 0, z: 0 }
-      }, 2000)
-    } else if (cmd.startsWith('$RS')) {
-      addConsole('info', 'Restarting firmware...')
-      setTimeout(() => {
-        addConsole('recv', `Grbl 3.7.14 [FluidNC v${firmwareVersion.value}] ready`)
-        status.value = 'IDLE'
-      }, 1500)
-    } else if (cmd === '$X') {
-      status.value = 'IDLE'
-      addConsole('recv', '[MSG:Caution: Unlocked]')
-      addConsole('recv', 'ok')
-    } else if (cmd === 'M5') {
-      spindleOn.value = false
-      addConsole('recv', 'ok')
-    } else if (cmd.startsWith('M3') || cmd.startsWith('M4')) {
-      spindleOn.value = true
-      spindleDir.value = cmd.startsWith('M3') ? 'cw' : 'ccw'
-      const m = cmd.match(/S(\d+)/)
-      if (m) spindleRpm.value = parseInt(m[1])
-      addConsole('recv', 'ok')
-    } else if (cmd === 'M9') {
-      coolant.value = 'off'
-      addConsole('recv', 'ok')
-    } else if (cmd === 'M7') {
-      coolant.value = 'mist'
-      addConsole('recv', 'ok')
-    } else if (cmd === 'M8') {
-      coolant.value = 'flood'
-      addConsole('recv', 'ok')
-    } else {
-      addConsole('recv', 'ok')
-    }
+    wsSend({ t: 'machine:command', payload: { cmd } })
+  }
+
+  function sendOverride(bytes: number[]) {
+    wsSend({ t: 'machine:override', payload: { bytes } })
+  }
+
+  function reloadFirmwareConfig() {
+    wsSend({ t: 'machine:firmware:reload', payload: {} })
   }
 
   return {
     connected,
+    connecting,
+    connectionError,
+    connectedMachineId,
     firmwareVersion,
-    status,
+    simulatorMode,
+    machineState,
     machinePos,
     workPos,
+    feed,
     feedOverride,
     spindleOverride,
     spindleOn,
@@ -211,15 +194,28 @@ export const useMachineStore = defineStore('machine', () => {
     spindleDir,
     coolant,
     limitSwitches,
+    probe,
+    toolsetter,
+    door,
+    buffer,
     consoleLog,
-    job,
     tools,
     toolLibrary,
     magazineSlots,
+    stock,
+    loadedToolNumber,
+    setStock,
+    clearStock,
+    setLoadedToolNumber,
+    applyServerStatus,
+    applyMachineStatus,
     connect,
     disconnect,
     addConsole,
+    clearConsole,
     sendCommand,
+    sendOverride,
     setToolLibrary,
+    reloadFirmwareConfig,
   }
 })

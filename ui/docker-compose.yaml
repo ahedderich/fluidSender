@@ -11,3 +11,4 @@ services:
       NODE_ENV: production
       NUXT_HOST: "0.0.0.0"
       NUXT_PORT: "3000"
+      NUXT_JWT_SECRET: "change-this-to-a-long-random-secret"   # required when auth.enabled = true

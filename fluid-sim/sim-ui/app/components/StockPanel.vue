@@ -35,19 +35,24 @@
         <DimInput label="Height (Y)" v-model="s.stock.height" unit="mm" :step="1" :min="1" />
         <DimInput label="Depth (Z)" v-model="s.stock.depth" unit="mm" :step="1" :min="1" />
         <DimInput label="Rotation" v-model="s.stock.rotation" unit="°" :step="1" />
-        <DimInput label="Origin X" v-model="s.stock.ox" unit="mm" :step="1" />
-        <DimInput label="Origin Y" v-model="s.stock.oy" unit="mm" :step="1" />
-        <DimInput label="Origin Z" v-model="s.stock.oz" unit="mm" :step="1" :min="0" />
+        <DimInput label="Center X" v-model="s.stock.ox" unit="mm" :step="1" />
+        <DimInput label="Center Y" v-model="s.stock.oy" unit="mm" :step="1" />
+        <DimInput label="Top Z" v-model="s.stock.oz" unit="mm" :step="1" />
       </template>
       <template v-else>
         <DimInput label="Diameter" v-model="s.stock.diameter" unit="mm" :step="1" :min="1" class="col-span-2" />
         <DimInput label="Depth (Z)" v-model="s.stock.depth" unit="mm" :step="1" :min="1" />
         <div />
-        <DimInput label="Origin X" v-model="s.stock.ox" unit="mm" :step="1" />
-        <DimInput label="Origin Y" v-model="s.stock.oy" unit="mm" :step="1" />
-        <DimInput label="Origin Z" v-model="s.stock.oz" unit="mm" :step="1" :min="0" />
+        <DimInput label="Center X" v-model="s.stock.ox" unit="mm" :step="1" />
+        <DimInput label="Center Y" v-model="s.stock.oy" unit="mm" :step="1" />
+        <DimInput label="Top Z" v-model="s.stock.oz" unit="mm" :step="1" />
       </template>
     </div>
+
+    <p class="text-[10px] text-gray-400 dark:text-slate-500 -mt-1">
+      Signed machine coordinates: Center X/Y is the stock centre, Top Z its top
+      surface — normally negative (Z0 is the top of travel).
+    </p>
 
     <!-- Hole section -->
     <div class="border-t border-gray-100 dark:border-slate-700 pt-2.5">
@@ -68,8 +73,8 @@
         <span class="text-xs font-semibold text-gray-600 dark:text-slate-300">Hole</span>
       </button>
       <div v-if="s.stock.hole.enabled" class="grid grid-cols-2 gap-x-3 gap-y-2 pl-1">
-        <DimInput label="Center X" v-model="s.stock.hole.x" unit="mm" :step="1" />
-        <DimInput label="Center Y" v-model="s.stock.hole.y" unit="mm" :step="1" />
+        <DimInput label="Offset X" v-model="s.stock.hole.x" unit="mm" :step="1" />
+        <DimInput label="Offset Y" v-model="s.stock.hole.y" unit="mm" :step="1" />
         <DimInput label="Diameter" v-model="s.stock.hole.diameter" unit="mm" :step="1" :min="1" />
         <DimInput label="Depth" v-model="s.stock.hole.depth" unit="mm" :step="1" :min="1" />
       </div>

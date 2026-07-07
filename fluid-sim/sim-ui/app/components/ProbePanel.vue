@@ -17,14 +17,56 @@
     </div>
 
     <div class="space-y-2.5">
-      <DimInput
-        label="Tip Diameter"
-        v-model="s.probe.tipDiameter"
-        unit="mm"
-        :step="0.1"
-        :min="0.1"
-        :max="25"
-      />
+      <div>
+        <h3 class="text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5">
+          Trigger Deviations
+        </h3>
+        <div class="grid grid-cols-2 gap-2">
+          <DimInput
+            label="+X"
+            v-model="s.probe.deviations.xPlus"
+            unit="mm"
+            :step="0.01"
+            :min="-2"
+            :max="2"
+          />
+          <DimInput
+            label="−X"
+            v-model="s.probe.deviations.xMinus"
+            unit="mm"
+            :step="0.01"
+            :min="-2"
+            :max="2"
+          />
+          <DimInput
+            label="+Y"
+            v-model="s.probe.deviations.yPlus"
+            unit="mm"
+            :step="0.01"
+            :min="-2"
+            :max="2"
+          />
+          <DimInput
+            label="−Y"
+            v-model="s.probe.deviations.yMinus"
+            unit="mm"
+            :step="0.01"
+            :min="-2"
+            :max="2"
+          />
+          <DimInput
+            label="−Z"
+            v-model="s.probe.deviations.zMinus"
+            unit="mm"
+            :step="0.01"
+            :min="-2"
+            :max="2"
+          />
+        </div>
+        <p class="text-[10px] text-gray-400 dark:text-slate-500 mt-1.5">
+          Positive = trigger fires before centre reaches the surface (normal; ≈ ball radius). Negative = trigger fires after centre has passed the surface.
+        </p>
+      </div>
       <button
         @click="s.triggerProbe"
         class="w-full py-2 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white rounded-lg text-sm font-semibold transition-colors"
@@ -38,5 +80,6 @@
 <script setup lang="ts">
 import { useSimStore } from '~/stores/sim'
 
+// Probe edits are pushed to the sim by the store's debounced watch.
 const s = useSimStore()
 </script>

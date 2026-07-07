@@ -12,6 +12,8 @@ FluidSender is a native FluidNC client — not a generic GRBL sender. It impleme
 - **USB & TCP/WiFi connectivity** — USB serial (recommended) and TCP/WiFi with clear warnings when running over WiFi
 - **3D toolpath preview** — interactive toolpath visualization with webcam overlay support
 - **GCode file management** — upload, browse, and queue GCode jobs with real-time progress tracking
+- **Planner-buffer-aware job execution** — tracks sent vs. confirmed-executed line counts separately using FluidNC's `Bf:` field; keeps a configurable number of motion commands in the firmware planner so the machine never stalls waiting for the sender, while execution progress reflects lines that have physically left the planner — not just lines dispatched over the wire
+- **Job crash recovery** (hopefully never needed) — checkpoints job progress every 50 lines; if the connection drops mid-job, the server detects the interruption on reconnect and offers to resume from a safe lookback point, replaying modal state (units, WCS, spindle, coolant) and positioning the tool before re-entering the cut
 - **Probing wizards** — guided workflows for edge finding, corner/center probing, and surface heightmap generation
 - **Tool & magazine management** — tool library with active tool tracking and load/unload workflow
 - **Spindle & coolant control** — full spindle (router/laser) and coolant (mist/flood) control with live overrides
@@ -20,6 +22,8 @@ FluidSender is a native FluidNC client — not a generic GRBL sender. It impleme
 - **FluidNC simulator** — Rust-based firmware emulator with configurable machine, stock, and failure modes
 - **Light/dark theme** — toggleable system-aware theming
 - **Optional authentication** — protect the UI with a username/password when needed
+- **Role-based access** — Viewer, Operator, and Admin roles granting different levels of access
+- **Multi-user/session state sync** — every connected browser shows the same state, dialogs, and selections where it matters, kept in sync in real time by the server
 - **Fully containerized** — single `docker-compose.yaml` for production deployment
 
 ---
@@ -152,6 +156,50 @@ Connect the main UI to the simulator by setting the connection type to TCP and p
 | 5 | Functional UI development | Planned |
 
 See [CLAUDE.md](CLAUDE.md) for detailed phase specifications.
+
+---
+
+## GRBL Compatibility
+
+FluidSender is purpose-built for FluidNC and there are no plans to pursue GRBL compatibility at this point in time.
+
+The intent is to maintain a GCode sender that does not compromise on features or functionality in order to accommodate backwards compatibility with legacy GRBL firmware. Unless a future GRBL release were to support the same feature set and internal structure as FluidNC in a comparable way, there is no straightforward path to meaningful compatibility.
+
+The most significant blocker is execution tracking. FluidSender's job execution engine relies on FluidNC's planner queue reporting via the `Bf:` field to determine, with a high degree of confidence, which commands have physically left the planner and been executed — not merely which lines have been sent. This distinction is fundamental to the crash detection and pause/resume recovery features. Supporting an alternative firmware would require separate execution tracking logic, conditional code paths, and significant testing effort — all for a use case that would still be limited by the capabilities of the connected firmware.
+
+The firmware configuration handling is another area of divergence: FluidNC's hierarchical YAML-based config structure has no direct equivalent in standard GRBL.
+
+None of this is to say it would be impossible, but for now the added complexity offers little value relative to the investment required.
+
+---
+
+## Roadmap
+
+Planned features and areas of future development, roughly in order of priority:
+
+- **Stock definition via STEP file** — import a STEP model as the stock definition instead of defining a simple rectangular or round shape manually
+- **Extended probing wizards** — guided probing workflows for more complex stock geometry, building on the existing edge-finding and corner-probing primitives
+- **Firmware update check** — automatic check for newer FluidNC firmware releases on connect, with a visible indicator when an update is available
+- **Firmware OTA update** — over-the-air firmware flashing via the FluidNC web server upload mechanism (or the web UI routes), similar to what the FluidNC web UI already supports — requires coordination with bdring before implementation
+- **3+1 and 5-axis extended support** — dedicated probing wizards and extended testing for machines with rotary axes; blocked on upgrading personal hardware first
+
+---
+
+## ATC Support
+
+FluidSender includes an ATC (Automatic Tool Changer) mode with magazine slot management, tool-aware job execution, and toolsetter-based length probing. However, I do not personally own an ATC spindle, so all ATC-specific features have been developed and tested in simulation only.
+
+My personal toolchange setup uses the **manual with toolsetter** strategy on physical hardware. I hope to upgrade at some point, but until then, ATC mode remains simulation-tested only.
+
+If you have an ATC-equipped machine and run into issues, have recommendations, or want to request a specific feature, please open an issue on this repository.
+
+---
+
+## Disclaimer
+
+Use FluidSender at your own risk. No liability is accepted for any damage to hardware, workpieces, or property, or for any injuries that may result from its use. This applies especially to non-stable or pre-release versions and to any features marked as experimental.
+
+CNC machines are powerful and potentially dangerous. Always apply appropriate safety measures, keep the emergency stop within reach, and verify machine behaviour in a safe context before running unattended or in production.
 
 ---
 
