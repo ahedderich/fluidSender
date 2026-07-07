@@ -1,7 +1,7 @@
 import { probeEdge } from '../probing/probingRunner'
 import { getLastMachineStatus } from './poller'
 import { DEFAULT_PROBE_COMPENSATION } from '../tool/types'
-import type { ToolsetterConfig } from '../../../../shared/toolchange'
+import type { ToolsetterConfig } from '../../../shared/toolchange'
 
 export async function runToolsetterProbe(pos: ToolsetterConfig): Promise<number> {
   const status = getLastMachineStatus()
@@ -11,7 +11,6 @@ export async function runToolsetterProbe(pos: ToolsetterConfig): Promise<number>
     'Z',
     '-',
     pos.probeDistance,
-    0,
     pos.probeConfig,
     DEFAULT_PROBE_COMPENSATION,
     wco,

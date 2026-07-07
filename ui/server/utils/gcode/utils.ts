@@ -2,7 +2,7 @@
 export function word(clean: string, letter: string): number | undefined {
   const re = new RegExp(`${letter}([+-]?\\d*\\.?\\d+)`, 'i')
   const m = re.exec(clean)
-  return m ? parseFloat(m[1]) : undefined
+  return m ? parseFloat(m[1]!) : undefined
 }
 
 /** Strip inline comments `(...)` and end-of-line comments `;...` for internal parsing. Never modifies the original line. */

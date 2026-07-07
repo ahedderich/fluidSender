@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
     ...body,
     auth: {
       ...(existing.auth ?? {}),
-      enabled: (body.auth as Record<string, unknown> | undefined)?.enabled ?? existing.auth?.enabled,
+      enabled: ((body.auth as Record<string, unknown> | undefined)?.enabled as boolean | undefined) ?? existing.auth?.enabled,
     },
     app: { ...(existing.app ?? {}), ...(body.app as Record<string, unknown> ?? {}) },
   }

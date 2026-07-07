@@ -389,7 +389,7 @@ const configuredAxes = computed(() => {
   const cfg = fluidncCfg.value
   if (cfg?.axes && Object.keys(cfg.axes).length > 0) {
     const withLimits = Object.keys(cfg.axes).filter((a) => {
-      const m = cfg.axes[a]?.motor0 as Record<string, string | undefined> | undefined
+      const m = cfg.axes![a]?.motor0 as Record<string, string | undefined> | undefined
       return isRealPin(m?.limit_neg_pin) || isRealPin(m?.limit_pos_pin)
     })
     if (withLimits.length > 0) return withLimits.map((a) => a.toUpperCase())

@@ -151,13 +151,13 @@ function isSafetyRequired(actionId: string): boolean {
 }
 
 function formatShortcut(actionId: string): string {
-  const binding = (s.app.shortcuts as Record<string, string>)[actionId]
+  const binding = (s.app.shortcuts as unknown as Record<string, string>)[actionId]
   if (!binding) return '—'
 
   const safetyKey = s.app.shortcuts.safetyKey
   const requiresSafety = isSafetyRequired(actionId)
   const parts = binding.toLowerCase().split('+')
-  const rawKey = parts[parts.length - 1]
+  const rawKey = parts[parts.length - 1] ?? ''
 
   const display: string[] = []
   if (requiresSafety && safetyKey !== 'none') {
@@ -176,7 +176,7 @@ function toggleSafetyRequired(key: string) {
 }
 
 function clearShortcut(key: string) {
-  ;(s.app.shortcuts as Record<string, string>)[key] = ''
+  ;(s.app.shortcuts as unknown as Record<string, string>)[key] = ''
 }
 
 const recordingKey = ref<string | null>(null)
@@ -200,7 +200,7 @@ function onKeyDown(e: KeyboardEvent) {
   if (e.shiftKey && safetyKey !== 'shift') parts.push('shift')
   parts.push(e.key)
 
-  ;(s.app.shortcuts as Record<string, string>)[recordingKey.value] = parts.join('+')
+  ;(s.app.shortcuts as unknown as Record<string, string>)[recordingKey.value] = parts.join('+')
   recordingKey.value = null
 }
 

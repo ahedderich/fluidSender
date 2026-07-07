@@ -474,7 +474,7 @@ const preview = computed<PreviewData>(() => {
     const step = Math.max(1, Math.ceil(passes.length / 30))
 
     for (let i = 0; i < passes.length; i += step) {
-      const p = passes[i]
+      const p = passes[i]!
       const rev = i % 2 !== 0
       const s = toSvg(rev ? p.x2 : p.x1, rev ? p.y2 : p.y1, scale)
       const e = toSvg(rev ? p.x1 : p.x2, rev ? p.y1 : p.y2, scale)
@@ -482,7 +482,7 @@ const preview = computed<PreviewData>(() => {
     }
 
     if (passes.length > 0) {
-      const p = passes[0]
+      const p = passes[0]!
       const s = toSvg(p.x1, p.y1, scale)
       const e = toSvg(p.x2, p.y2, scale)
       result.arrow = arrowPolygon(s.x, s.y, e.x, e.y)
@@ -499,7 +499,7 @@ const preview = computed<PreviewData>(() => {
         toSvg(hW, hH, scale),
       ]
       for (let c = 0; c < 4; c++) {
-        const a = corners[c], b = corners[(c + 1) % 4]
+        const a = corners[c]!, b = corners[(c + 1) % 4]!
         result.lines.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y })
       }
       if (hW >= W / 2 - 0.001 && hH >= H / 2 - 0.001) break

@@ -97,12 +97,12 @@ function linearGCode(params: SurfacingParams): string[] {
   const passes = linearPasses(params)
   if (passes.length === 0) return lines
 
-  const first = passes[0]
+  const first = passes[0]!
   lines.push(`G0 X${f(first.x1)} Y${f(first.y1)}`)
   lines.push(`G1 Z${f(-depthOfCut)} F${(feedrate * 0.3).toFixed(1)}`)
 
   for (let i = 0; i < passes.length; i++) {
-    const p = passes[i]
+    const p = passes[i]!
     const rev = i % 2 !== 0
     const sx = rev ? p.x2 : p.x1, sy = rev ? p.y2 : p.y1
     const ex = rev ? p.x1 : p.x2, ey = rev ? p.y1 : p.y2

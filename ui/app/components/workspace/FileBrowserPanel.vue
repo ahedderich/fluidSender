@@ -30,7 +30,7 @@
         <button
           class="text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 rounded transition-colors"
           title="Refresh"
-          @click="refresh"
+          @click="() => refresh()"
         >
           ↺
         </button>

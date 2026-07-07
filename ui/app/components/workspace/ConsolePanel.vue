@@ -147,14 +147,14 @@ function sendCmd() {
 function historyUp() {
   if (historyIndex.value < cmdHistory.value.length - 1) {
     historyIndex.value++
-    inputCmd.value = cmdHistory.value[historyIndex.value]
+    inputCmd.value = cmdHistory.value[historyIndex.value] ?? ''
   }
 }
 
 function historyDown() {
   if (historyIndex.value > 0) {
     historyIndex.value--
-    inputCmd.value = cmdHistory.value[historyIndex.value]
+    inputCmd.value = cmdHistory.value[historyIndex.value] ?? ''
   } else {
     historyIndex.value = -1
     inputCmd.value = ''

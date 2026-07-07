@@ -146,7 +146,7 @@ function extractPrimaryToken(line: string): string | null {
   // G or M codes — find first occurrence; normalise number (removes leading zeros).
   const gmMatch = clean.match(/[GM](\d+(?:\.\d+)?)/i)
   if (gmMatch) {
-    const letter = gmMatch[0][0].toUpperCase()
+    const letter = gmMatch[0]!.charAt(0).toUpperCase()
     const num = parseFloat(gmMatch[1]!)
     return `${letter}${num}`
   }

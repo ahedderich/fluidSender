@@ -246,7 +246,7 @@ async function saveAppSettings() {
   }
 }
 
-const machineTabs = [
+const machineTabs: Array<{ key: 'fluidSender' | 'toolchange' | 'firmware' | 'macros'; label: string }> = [
   { key: 'fluidSender', label: 'FluidSender' },
   { key: 'toolchange', label: 'Tool Change' },
   { key: 'firmware', label: 'Firmware Config' },
@@ -255,7 +255,7 @@ const machineTabs = [
 const machineTab = ref<'fluidSender' | 'toolchange' | 'firmware' | 'macros'>('fluidSender')
 
 const appTabs = computed(() => {
-  const tabs: { key: string; label: string }[] = [
+  const tabs: Array<{ key: 'interface' | 'jog' | 'macros' | 'auth' | 'shortcuts'; label: string }> = [
     { key: 'interface', label: 'Interface' },
     { key: 'jog', label: 'Jog & Motion' },
     { key: 'macros', label: 'Macros' },

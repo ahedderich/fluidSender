@@ -117,7 +117,7 @@ async function startEdit(axis: string) {
 }
 
 function applyEdit(axis: string) {
-  const num = parseFloat(editValues[axis])
+  const num = parseFloat(editValues[axis] ?? '')
   if (!isNaN(num)) {
     if (axis === 'X') machine.workPos.x = num
     else if (axis === 'Y') machine.workPos.y = num

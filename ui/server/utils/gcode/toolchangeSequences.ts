@@ -1,4 +1,4 @@
-import type { ToolchangeSpatialConfig, ToolsetterConfig } from '../../../../shared/toolchange'
+import type { ToolchangeSpatialConfig, ToolsetterConfig } from '../../../shared/toolchange'
 
 export function buildToolchangePositionSequence(pos: ToolchangeSpatialConfig): string[] {
   return [

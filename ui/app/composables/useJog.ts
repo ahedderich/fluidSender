@@ -30,7 +30,7 @@ export function useJog() {
 
   function selectSpeed(i: number) {
     _activeSpeedIndex.value = i
-    const preset = speedPresets.value[i]
+    const preset = speedPresets.value[i]!
     _jogSpeed.value = preset.feedRate
     _xyStepSize.value = preset.xyStep
     _zStepSize.value = preset.zStep

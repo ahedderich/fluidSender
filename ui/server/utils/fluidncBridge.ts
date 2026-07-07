@@ -52,9 +52,9 @@ function destroySocket() {
 
 function parseGreetingVersion(line: string): string | null {
   const m = line.match(/\[FluidNC\s+v([^\]]+)\]/)
-  if (m) return m[1].trim()
+  if (m) return m[1]!.trim()
   const m2 = line.match(/Grbl\s+([\d.]+)/)
-  return m2 ? m2[1].trim() : null
+  return m2 ? m2[1]!.trim() : null
 }
 
 // Parse <State|MPos:x,y,z|WCO:x,y,z|FS:f,s|Pn:pins|A:acc>
@@ -64,7 +64,7 @@ function parseStatusLine(line: string): TelemetryState | null {
   if (parts.length < 2) return null
 
   // State can be "Hold:0", "Alarm:1", "Idle", etc. — normalise to uppercase base.
-  const status = (parts[0].split(':')[0] ?? 'IDLE').toUpperCase()
+  const status = (parts[0]!.split(':')[0] ?? 'IDLE').toUpperCase()
 
   let machinePos = { x: 0, y: 0, z: 0, a: undefined as number | undefined }
   let newWco: typeof cachedWco | null = null
@@ -74,7 +74,7 @@ function parseStatusLine(line: string): TelemetryState | null {
   let accStr = ''
 
   for (let i = 1; i < parts.length; i++) {
-    const p = parts[i]
+    const p = parts[i]!
     if (p.startsWith('MPos:')) {
       const c = p.slice(5).split(',').map(Number)
       machinePos = { x: c[0] ?? 0, y: c[1] ?? 0, z: c[2] ?? 0, a: c[3] }

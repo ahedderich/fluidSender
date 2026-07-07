@@ -13,7 +13,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   const s = useSettingsStore()
   if (!s.initialized) {
-    await s.hydrate(fetchWithCookies)
+    await s.hydrate(fetchWithCookies as typeof $fetch)
   }
 
   if (to.path === '/settings') return

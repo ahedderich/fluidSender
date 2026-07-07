@@ -36,7 +36,7 @@ import { runToolsetterProbe } from '../machine/toolsetterProbe'
 import { applyTransforms } from './transform'
 import type { SendHandle, SenderStatusEvent } from '../machine/types'
 import type { GCodeLine, GCodeModalState, JobState, ToolSection, TransformMode } from './types'
-import type { ToolchangeConfig } from '../../../../shared/toolchange'
+import type { ToolchangeConfig } from '../../../shared/toolchange'
 import type { TcVars } from '../macro/macroRunner'
 
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
@@ -1063,8 +1063,8 @@ class JobRunner {
     const currentTool = await getLoadedToolForMachine(machineId) ?? 0
     const slots = tc.magazineSlots
 
-    const currentSlot = slots.findIndex((n) => n === currentTool) + 1
-    const nextSlot = slots.findIndex((n) => n === nextToolNumber) + 1
+    const currentSlot = slots.findIndex((n: number | null) => n === currentTool) + 1
+    const nextSlot = slots.findIndex((n: number | null) => n === nextToolNumber) + 1
 
     return {
       currentTool,
@@ -1076,7 +1076,7 @@ class JobRunner {
   }
 
   private async _runToolsetterSequence(
-    pos: import('../../../../shared/toolchange').ToolsetterConfig,
+    pos: import('../../../shared/toolchange').ToolsetterConfig,
     nextToolNumber: number,
     isJobContext: boolean,
   ): Promise<void> {

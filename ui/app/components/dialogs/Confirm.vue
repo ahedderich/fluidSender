@@ -77,7 +77,7 @@ interface ConfirmProps {
 
 const modals = useModals()
 const entry = computed(() => modals.modals.find((m) => m.kind === 'confirm') ?? null)
-const opts = computed<ConfirmProps>(() => (entry.value?.props as ConfirmProps) ?? { title: '' })
+const opts = computed<ConfirmProps>(() => (entry.value?.props as unknown as ConfirmProps) ?? { title: '' })
 
 function accept() {
   if (entry.value) modals.resolve(entry.value.id, true)

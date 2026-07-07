@@ -23,7 +23,7 @@ export function useKeyboardShortcuts() {
 
   function baseKeyName(binding: string): string {
     const parts = binding.toLowerCase().split('+')
-    return parts[parts.length - 1]
+    return parts[parts.length - 1] ?? ''
   }
 
   function matchesBinding(binding: string, e: KeyboardEvent): boolean {
@@ -43,7 +43,7 @@ export function useKeyboardShortcuts() {
   }
 
   function fires(actionId: ShortcutActionId, e: KeyboardEvent): boolean {
-    const binding = (settings.app.shortcuts as Record<string, string>)[actionId]
+    const binding = (settings.app.shortcuts as unknown as Record<string, string>)[actionId]
     if (!binding) return false
     const safetyKey = settings.app.shortcuts.safetyKey
     const requiresSafety = (settings.app.shortcuts.requiresSafetyKey[actionId] ?? false) && safetyKey !== 'none'
@@ -120,7 +120,7 @@ export function useKeyboardShortcuts() {
 
   function onKeyUp(e: KeyboardEvent) {
     if (!activeJogKey) return
-    const binding = (settings.app.shortcuts as Record<string, string>)[activeJogKey]
+    const binding = (settings.app.shortcuts as unknown as Record<string, string>)[activeJogKey]
     if (binding && e.key.toLowerCase() === baseKeyName(binding)) {
       activeJogKey = null
       jog.stopJog()

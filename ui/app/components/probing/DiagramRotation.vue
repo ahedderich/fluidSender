@@ -118,9 +118,10 @@ const g = computed(() => {
 
   // insideOffset arrow: from corner to first probe point (horizontal)
   const isHoriz = props.edge === 'top' || props.edge === 'bottom'
+  const edgeStr: string = props.edge
   const offFrom = isHoriz
-    ? iso(props.edge === 'right' ? 2 : 0, cfg.pts[0][1], probeZ)
-    : iso(cfg.pts[0][0], props.edge === 'bottom' ? 1 : 0, probeZ)
+    ? iso(edgeStr === 'right' ? 2 : 0, cfg.pts[0][1], probeZ)
+    : iso(cfg.pts[0][0], edgeStr === 'bottom' ? 1 : 0, probeZ)
   const offTo   = iso(cfg.pts[0][0], cfg.pts[0][1], probeZ)
 
   return { dots, edgeFace, arc, arcLabel, offFrom, offTo }

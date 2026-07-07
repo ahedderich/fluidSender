@@ -67,7 +67,7 @@ export default defineEventHandler(async (event) => {
         const info = await stat(join(absDir, entry.name))
         const meta = await readMeta(relPath)
         const executions = meta?.executions ?? []
-        const last = executions.length > 0 ? executions[executions.length - 1] : null
+        const last = executions.length > 0 ? executions[executions.length - 1] ?? null : null
         files.push({
           type: 'file',
           name: stripUuidPrefix(entry.name),

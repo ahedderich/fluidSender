@@ -122,6 +122,7 @@
 </template>
 
 <script setup lang="ts">
+import type * as THREE from 'three'
 import { useMachineStore } from '~/stores/machine'
 import { useSettingsStore } from '~/stores/settings'
 import { useJobControl } from '~/composables/useJobControl'
@@ -243,15 +244,10 @@ async function initThree() {
   const container = containerRef.value
   if (!canvas || !container) return
 
-  // @ts-expect-error — Three.js loaded via importmap at runtime; not in project types
   const THREE = await import(/* @vite-ignore */ 'three')
-  // @ts-expect-error — Three.js loaded via importmap at runtime; not in project types
   const { OrbitControls } = await import(/* @vite-ignore */ 'three/examples/jsm/controls/OrbitControls.js')
-  // @ts-expect-error — Three.js loaded via importmap at runtime; not in project types
   const { LineSegments2 } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineSegments2.js')
-  // @ts-expect-error — Three.js loaded via importmap at runtime; not in project types
   const { LineSegmentsGeometry } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineSegmentsGeometry.js')
-  // @ts-expect-error — Three.js loaded via importmap at runtime; not in project types
   const { LineMaterial } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineMaterial.js')
 
   const { width, height } = container.getBoundingClientRect()
@@ -532,7 +528,7 @@ async function initThree() {
       const corners = ([ [-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh] ] as [number,number][])
         .map(([x,y]) => [ x*cos - y*sin, x*sin + y*cos ] as [number,number])
       for (let i = 0; i < 4; i++) {
-        const [ax,ay] = corners[i], [bx,by] = corners[(i+1)%4]
+        const [ax,ay] = corners[i]!, [bx,by] = corners[(i+1)%4]!
         pts.push(ax,ay,zTop, bx,by,zTop)   // top edge
         pts.push(ax,ay,zBot, bx,by,zBot)   // bottom edge
         pts.push(ax,ay,zTop, ax,ay,zBot)   // vertical
