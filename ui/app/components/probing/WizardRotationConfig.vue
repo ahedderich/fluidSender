@@ -45,14 +45,12 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
-  cfg: {
-    safeHeightMm: number
-    insideOffset: number
-    edge: 'top' | 'bottom' | 'left' | 'right'
-  }
-  stockShape?: 'rect' | 'round'
-}>()
+const cfg = defineModel<{
+  safeHeightMm: number
+  insideOffset: number
+  edge: 'top' | 'bottom' | 'left' | 'right'
+}>('cfg', { required: true })
+defineProps<{ stockShape?: 'rect' | 'round' }>()
 
 const hoveredParam = ref<string | null>(null)
 

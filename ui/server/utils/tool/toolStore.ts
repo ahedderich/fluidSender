@@ -35,7 +35,7 @@ async function writeLibrary(path: string, tools: ToolLibraryEntry[]): Promise<vo
 
 // In-memory caches
 let _appTools: ToolLibraryEntry[] = []
-let _machineTools: Map<string, ToolLibraryEntry[]> = new Map()
+const _machineTools: Map<string, ToolLibraryEntry[]> = new Map()
 
 class ToolStore {
   async loadAppLibrary(): Promise<ToolLibraryEntry[]> {

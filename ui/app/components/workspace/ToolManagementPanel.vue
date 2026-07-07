@@ -266,7 +266,6 @@
         <div
           v-for="entry in sortedTools"
           :key="entry.id"
-          draggable="true"
           :class="[
             toolRowClassLib(entry),
             isViewer ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
@@ -773,6 +772,7 @@
 
 <!-- Inline sub-component: M/A source badge -->
 <script lang="ts">
+import { defineComponent, h } from 'vue'
 const SourceBadge = defineComponent({
   props: { source: { type: String as () => 'M' | 'A', required: true } },
   setup(props) {
@@ -788,7 +788,6 @@ const SourceBadge = defineComponent({
 </script>
 
 <script setup lang="ts">
-import { defineComponent, h } from 'vue'
 import { useMachineStore, type ToolLibraryEntry } from '~/stores/machine'
 import { DEFAULT_PROBE_COMPENSATION, type ProbeCompensation } from '~~/server/utils/tool/types'
 import { useJobControl } from '~/composables/useJobControl'

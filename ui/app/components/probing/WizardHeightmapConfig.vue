@@ -48,14 +48,12 @@
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
 
-const props = defineProps<{
-  cfg: {
-    safeHeightMm: number
-    buffer: number
-    edgeOffset: number
-    resolution: number
-  }
-}>()
+const cfg = defineModel<{
+  safeHeightMm: number
+  buffer: number
+  edgeOffset: number
+  resolution: number
+}>('cfg', { required: true })
 
 const machine = useMachineStore()
 const hoveredParam = ref<string | null>(null)
@@ -72,12 +70,12 @@ const stockHeight = computed(() => {
 })
 
 const gridCols = computed(() => {
-  const effectiveW = stockWidth.value - 2 * props.cfg.edgeOffset
-  return Math.max(2, Math.floor(effectiveW / props.cfg.resolution) + 1)
+  const effectiveW = stockWidth.value - 2 * cfg.value.edgeOffset
+  return Math.max(2, Math.floor(effectiveW / cfg.value.resolution) + 1)
 })
 const gridRows = computed(() => {
-  const effectiveH = stockHeight.value - 2 * props.cfg.edgeOffset
-  return Math.max(2, Math.floor(effectiveH / props.cfg.resolution) + 1)
+  const effectiveH = stockHeight.value - 2 * cfg.value.edgeOffset
+  return Math.max(2, Math.floor(effectiveH / cfg.value.resolution) + 1)
 })
 
 const paramRows = [

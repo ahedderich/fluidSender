@@ -442,7 +442,7 @@ async function save() {
   }
 }
 
-function handleClickOutside(e: MouseEvent) {
+function handleClickOutside(_e: MouseEvent) {
   if (insertMenuOpen.value) {
     insertMenuOpen.value = false
   }

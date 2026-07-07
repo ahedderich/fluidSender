@@ -235,7 +235,7 @@ mod tests {
 
     fn test_state() -> MachineState {
         let travel = [300.0, 200.0, 80.0, 360.0, 360.0, 360.0];
-        MachineState::new(3, travel, 2.0, Default::default(), 1)
+        MachineState::new(3, travel, Default::default(), 1)
     }
 
     #[test]

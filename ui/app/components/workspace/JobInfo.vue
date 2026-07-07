@@ -445,15 +445,6 @@ function doLoadFresh() {
 
 const toolSections = computed<ToolSection[]>(() => job.value?.toolSections ?? [])
 
-function sectionState(section: ToolSection): 'active' | 'complete' | 'queued' {
-  const status = job.value?.status
-  if (!status || status === 'idle' || status === 'analyzing') return 'queued'
-  const ptr = job.value?.sendPtr ?? 0
-  if (ptr > section.endLine) return 'complete'
-  if (ptr >= section.startLine) return 'active'
-  return 'queued'
-}
-
 const allTools = computed(() => [
   ...machine.toolLibrary.machine,
   ...machine.toolLibrary.app,
@@ -676,13 +667,6 @@ function cancelSpindleEdit() {
   editingSpindle.value = false
   localSpindle.value = lastSentSpindle
 }
-
-const currentTool = computed(() => {
-  const sections = toolSections.value
-  if (!sections.length) return null
-  const line = job.value?.sendPtr ?? 0
-  return sections.find((s) => line >= s.startLine && line <= s.endLine) ?? sections[0] ?? null
-})
 
 const nextRequiredToolNumber = computed(() => {
   const sections = toolSections.value

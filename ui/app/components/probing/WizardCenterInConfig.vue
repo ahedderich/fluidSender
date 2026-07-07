@@ -37,12 +37,8 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
-  cfg: {
-    buffer: number
-  }
-  stockShape?: 'rect' | 'round'
-}>()
+const cfg = defineModel<{ buffer: number }>('cfg', { required: true })
+defineProps<{ stockShape?: 'rect' | 'round' }>()
 
 const hoveredParam = ref<string | null>(null)
 

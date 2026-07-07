@@ -1,9 +1,6 @@
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { webcrypto } from 'node:crypto'
-
-// Node 18 (the test:server target) has no global WebCrypto; the sender uses crypto.randomUUID.
-if (!globalThis.crypto) (globalThis as { crypto?: Crypto }).crypto = webcrypto as unknown as Crypto
 import { machineConnection } from '../../../server/utils/machine/connection'
 import type { ConnectionEvent } from '../../../server/utils/machine/connection'
 import { sendGCode, onOk, onBufUpdate } from '../../../server/utils/machine/sender'
@@ -12,6 +9,9 @@ import { initMachineMode } from '../../../server/utils/machine/machineMode'
 import { probingRunner } from '../../../server/utils/probing/probingRunner'
 import { getProbingState } from '../../../server/utils/appState'
 import type { ProbeConfig, ProbeCompensation } from '../../../server/utils/tool/types'
+
+// Node 18 (the test:server target) has no global WebCrypto; the sender uses crypto.randomUUID.
+if (!globalThis.crypto) (globalThis as { crypto?: Crypto }).crypto = webcrypto as unknown as Crypto
 
 // Probe-deviation round-trip against the Rust simulator (PROBE_DEVIATION_PLAN.md §8.3).
 // Requires a running fluid-sim; gated so CI without a sim stays green:

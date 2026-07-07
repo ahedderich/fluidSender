@@ -12,7 +12,7 @@ import {
 } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
 import { sendGCode, senderHardStop } from '../machine/sender'
-import { toolStore } from '../tool/toolStore'
+
 import type { JobState } from '../gcode/types'
 
 // ─── Exported types ──────────────────────────────────────────────────────────

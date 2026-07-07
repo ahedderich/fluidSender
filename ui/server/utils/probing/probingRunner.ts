@@ -720,7 +720,7 @@ class ProbingRunner {
     }
 
     if (!config.skipY) {
-      this._updateStep(`Probing Y${yDir === '+' ? '-' : '+'} edge`, stepIdx++)
+      this._updateStep(`Probing Y${yDir === '+' ? '-' : '+'} edge`, stepIdx)
       await _safeTravelTo(roughPos.x, roughPos.y, safeH, probeHeight)
       this._checkAbort()
       yEdgeWpos = (await probeEdge('Y', yDir, 2 * buf, probeConfig, compensation, wco, () => this._aborted)).edgeWpos

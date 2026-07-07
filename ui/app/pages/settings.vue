@@ -1,4 +1,5 @@
 <template>
+  <div class="contents">
   <main class="flex-1 flex min-h-0 overflow-hidden">
 
     <!-- Sidebar: machine list + app settings nav -->
@@ -170,6 +171,7 @@
     :machine-id="macroEditorMachineId"
     @close="macroEditorOpen = false"
   />
+  </div>
 </template>
 
 <script setup lang="ts">

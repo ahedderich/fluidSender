@@ -243,16 +243,15 @@ async function initThree() {
   const container = containerRef.value
   if (!canvas || !container) return
 
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore — resolved via importmap at runtime; Vite skips bundling with /* @vite-ignore */
+  // @ts-expect-error — Three.js loaded via importmap at runtime; not in project types
   const THREE = await import(/* @vite-ignore */ 'three')
-  // @ts-ignore
+  // @ts-expect-error — Three.js loaded via importmap at runtime; not in project types
   const { OrbitControls } = await import(/* @vite-ignore */ 'three/examples/jsm/controls/OrbitControls.js')
-  // @ts-ignore
+  // @ts-expect-error — Three.js loaded via importmap at runtime; not in project types
   const { LineSegments2 } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineSegments2.js')
-  // @ts-ignore
+  // @ts-expect-error — Three.js loaded via importmap at runtime; not in project types
   const { LineSegmentsGeometry } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineSegmentsGeometry.js')
-  // @ts-ignore
+  // @ts-expect-error — Three.js loaded via importmap at runtime; not in project types
   const { LineMaterial } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineMaterial.js')
 
   const { width, height } = container.getBoundingClientRect()
@@ -388,9 +387,11 @@ async function initThree() {
     // Materials that live in lineMats must be removed so the resize handler
     // doesn't call .set() on a disposed object.
     for (const key of ['grid', 'origin', 'machineBounds']) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const old = objectMap[key] as any
       if (!old) continue
       scene.remove(old)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       old.traverse((child: any) => {
         child.geometry?.dispose()
         if (child.material) {
@@ -400,6 +401,7 @@ async function initThree() {
           child.material.dispose()
         }
       })
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete objectMap[key]
     }
 
@@ -493,6 +495,7 @@ async function initThree() {
 
     // Restore layer visibility that was toggled before this rebuild
     for (const layer of layers) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const obj = objectMap[layer.key] as any
       if (obj && !layer.visible) obj.visible = false
     }
@@ -504,6 +507,7 @@ async function initThree() {
   // Stock mesh — built on demand from machine.stock; null = no stock shown.
   // The top-face centre is always at work (0,0,0): rect/round centered in XY, top at Z=0.
   function buildStockMesh(s: import('~/stores/machine').StockDef | null) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const old = objectMap['stock'] as any
     if (old) {
       scene.remove(old)
@@ -511,6 +515,7 @@ async function initThree() {
       const idx = lineMats.indexOf(old.material)
       if (idx !== -1) lineMats.splice(idx, 1)
       old.material?.dispose()
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete objectMap['stock']
     }
     if (!s) return
@@ -580,6 +585,7 @@ async function initThree() {
           child.material.dispose()
         }
       })
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete objectMap[key]
     }
   }
@@ -656,6 +662,7 @@ async function initThree() {
       if (!vec) continue
       if (vec.t === 'A') {
         // Tessellate arc into line segments
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const pts = tessellateArc(vec.x0, vec.y0, vec.z0, vec.x1, vec.y1, vec.z1, vec.i, vec.j, (vec as any).k ?? 0, vec.cw, (vec as any).plane ?? 'G17')
         let px = vec.x0, py = vec.y0, pz = vec.z0
         for (const [nx, ny, nz] of pts) {
@@ -835,6 +842,7 @@ watch(
   (wp) => {
     const obj = objectMap['tool'] as { position: { set(x: number, y: number, z: number): void } } | undefined
     if (!obj) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const h = (objectMap['tool'] as any).scale.y as number
     obj.position.set(wp.x, wp.y, wp.z + h / 2)
     requestRender()
@@ -844,6 +852,7 @@ watch(
 
 // Recreate tool scale when the active tool's diameter changes
 watch(toolDiameter, (d) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const obj = objectMap['tool'] as any
   if (!obj) return
   const h = obj.scale.y as number
@@ -866,6 +875,7 @@ watch(() => machine.stock, (s) => {
 // Slide the boundary box to track machine home in work coordinates (= wpos − mpos).
 // This keeps the box correctly positioned when the operator sets a WCO (G54/G10).
 watch(machineHomeWpos, (h) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const box = objectMap['machineBounds'] as any
   if (box) {
     box.position.set(h.x, h.y, h.z)

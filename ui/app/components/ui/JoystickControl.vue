@@ -39,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-const props = defineProps<{ disabled?: boolean }>()
+defineProps<{ disabled?: boolean }>()
 
 const emit = defineEmits<{
   move: [{ x: number; y: number; magnitude: number }]

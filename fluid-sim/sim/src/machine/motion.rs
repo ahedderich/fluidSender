@@ -425,7 +425,7 @@ mod tests {
 
     fn make_shared() -> (SharedMachineState, StateBroadcast) {
         let travel = [300.0, 200.0, 80.0, 360.0, 360.0, 360.0];
-        let state = MachineState::new(3, travel, 2.0, Default::default(), 1);
+        let state = MachineState::new(3, travel, Default::default(), 1);
         crate::machine::state::new_shared(state)
     }
 

@@ -58,7 +58,5 @@
 <script setup lang="ts">
 import type { MachineProfile } from '~/stores/settings'
 
-defineProps<{
-  machine: MachineProfile
-}>()
+const machine = defineModel<MachineProfile>('machine', { required: true })
 </script>

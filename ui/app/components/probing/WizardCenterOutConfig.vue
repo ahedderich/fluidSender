@@ -38,16 +38,14 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
-  cfg: {
-    safeHeightMm: number
-    buffer: number
-    skipX: boolean
-    skipY: boolean
-    skipZ: boolean
-  }
-  stockShape?: 'rect' | 'round'
-}>()
+const cfg = defineModel<{
+  safeHeightMm: number
+  buffer: number
+  skipX: boolean
+  skipY: boolean
+  skipZ: boolean
+}>('cfg', { required: true })
+defineProps<{ stockShape?: 'rect' | 'round' }>()
 
 const hoveredParam = ref<string | null>(null)
 

@@ -503,7 +503,7 @@ export async function setLoadedTool(machineId: string, toolNumber: number | null
   const config = await getConfig()
   const loadedTools = (config.app?.loadedTools as Record<string, number> | undefined) ?? {}
   if (toolNumber === null) {
-    delete loadedTools[machineId]
+    Reflect.deleteProperty(loadedTools, machineId)
   } else {
     loadedTools[machineId] = toolNumber
   }

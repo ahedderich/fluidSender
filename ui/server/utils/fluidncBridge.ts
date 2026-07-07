@@ -120,7 +120,7 @@ function parseStatusLine(line: string): TelemetryState | null {
 
 // ─── Line handler ─────────────────────────────────────────────────────────────
 
-function handleLine(line: string, machineId: string) {
+function handleLine(line: string, _machineId: string) {
   const text = line.trim()
   if (!text) return
 

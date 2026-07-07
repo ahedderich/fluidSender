@@ -326,12 +326,6 @@ const effectiveSecondDim = computed<number | null>(() =>
     ? (machine.stock?.measuredDiameter ?? machine.stock?.diameter ?? null)
     : (machine.stock?.measuredHeight ?? machine.stock?.height ?? null)
 )
-const effectiveDiameter = computed<number | null>(() =>
-  machine.stock?.shape === 'round'
-    ? (machine.stock?.measuredDiameter ?? machine.stock?.diameter ?? null)
-    : null
-)
-
 // ── Loaded tool ───────────────────────────────────────────────────────────────
 
 const loadedTool = computed(() => {

@@ -184,12 +184,10 @@
 import type { MachineProfile } from '~/stores/settings'
 import type { ToolchangeConfig } from '~/../../shared/toolchange'
 
-const props = defineProps<{
-  machine: MachineProfile
-}>()
+const machine = defineModel<MachineProfile>('machine', { required: true })
 
 const tc = computed<ToolchangeConfig>(() => {
-  return (props.machine.toolchange as ToolchangeConfig | undefined) ?? { strategy: 'manual-basic' }
+  return (machine.value.toolchange as ToolchangeConfig | undefined) ?? { strategy: 'manual-basic' }
 })
 
 const TOOLSETTER_DEFAULTS = {
@@ -210,7 +208,7 @@ function changeStrategy(newStrategy: ToolchangeConfig['strategy']) {
     case 'atc-managed': newTc = { strategy: 'atc-managed', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [] }; break
     case 'custom-macro': newTc = { strategy: 'custom-macro', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [] }; break
   }
-  props.machine.toolchange = newTc
+  machine.value.toolchange = newTc
 }
 
 const strategyDescription = computed(() => {
@@ -220,6 +218,7 @@ const strategyDescription = computed(() => {
     case 'atc-passthrough': return 'Passes M6 directly to FluidNC. The ATC controller handles the entire toolchange sequence independently.'
     case 'atc-managed': return 'FluidSender executes the ATC macro (GCode + variable substitution) then tracks magazine slot assignments.'
     case 'custom-macro': return 'Runs a custom GCode macro for every M6 command. Variables for current/next tool numbers are substituted.'
+    default: return ''
   }
 })
 </script>

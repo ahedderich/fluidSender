@@ -26,7 +26,6 @@ import {
   isToolChangeModeActive,
   registerMachineStatusProvider,
   registerToolLibraryProvider,
-  setLoadedTool,
   clearLoadedToolDisplay,
   getLoadedToolForMachine,
   setStock,
@@ -42,15 +41,6 @@ import {
 } from '../utils/appState'
 import type { SessionPayload } from '../utils/auth'
 import { verifySession, parseCookie } from '../utils/auth'
-
-const peerSessions = new Map<string, SessionPayload>()
-
-function requireRole(peer: Peer, minRole: 'operator' | 'admin'): boolean {
-  const session = peerSessions.get(peer.id)
-  if (!session) return false
-  const levels: Record<string, number> = { viewer: 0, operator: 1, admin: 2 }
-  return (levels[session.role] ?? 0) >= (levels[minRole] ?? 0)
-}
 import { macroRunner, buildTcContext, type Macro } from '../utils/macro/macroRunner'
 import { toolStore } from '../utils/tool/toolStore'
 import { machineConnection } from '../utils/machine/connection'
@@ -81,6 +71,15 @@ import { probingRunner } from '../utils/probing/probingRunner'
 import { modeFromFlags as _modeFromFlags } from '../utils/gcode/types'
 import type { ProbeConfig, ProbeCompensation } from '../utils/tool/types'
 import { load as loadYaml } from 'js-yaml'
+
+const peerSessions = new Map<string, SessionPayload>()
+
+function requireRole(peer: Peer, minRole: 'operator' | 'admin'): boolean {
+  const session = peerSessions.get(peer.id)
+  if (!session) return false
+  const levels: Record<string, number> = { viewer: 0, operator: 1, admin: 2 }
+  return (levels[session.role] ?? 0) >= (levels[minRole] ?? 0)
+}
 
 // ─── One-time bootstrap ──────────────────────────────────────────────────────
 
