@@ -51,6 +51,10 @@ export default defineNuxtConfig({
     experimental: {
       websocket: true,
     },
+    // serialport has a native .node binary — Nitro cannot bundle it, must treat as external
+    externals: {
+      external: ['serialport', '@serialport/bindings-cpp', '@serialport/parser-readline', '@serialport/stream'],
+    },
   },
 
   runtimeConfig: {

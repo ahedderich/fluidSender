@@ -1,5 +1,7 @@
 import net from 'node:net'
 import { EventEmitter } from 'node:events'
+import { SerialPort } from 'serialport'
+import { ReadlineParser } from '@serialport/parser-readline'
 
 export type ConnectionEvent =
   | { type: 'connected'; host: string; port: number }
@@ -27,19 +29,23 @@ interface MachineEntry {
 
 class MachineConnection extends EventEmitter {
   private socket: net.Socket | null = null
+  private serial: SerialPort | null = null
   private lineBuffer = ''
   private intentionalDisconnect = false
   // Suppress the terminating `ok` in firmware greeting sequences (not a command ack)
   private _suppressNextOk = false
 
   get isConnected(): boolean {
-    return !!this.socket && !this.socket.destroyed
+    if (this.socket) return !this.socket.destroyed
+    if (this.serial) return this.serial.isOpen
+    return false
   }
 
   async connect(machineId: string, machines: unknown[]): Promise<void> {
     // Tear down existing connection cleanly
     this.intentionalDisconnect = true
     this._destroySocket()
+    await this._destroySerial()
     this.intentionalDisconnect = false
 
     const machine = (machines as MachineEntry[]).find((m) => m.id === machineId)
@@ -54,10 +60,7 @@ class MachineConnection extends EventEmitter {
     const { connection } = machine
 
     if (connection.type === 'usb') {
-      this.emit('event', {
-        type: 'error',
-        message: 'USB serial is not yet supported in the Node dev runtime. Use TCP or build for production.',
-      } satisfies ConnectionEvent)
+      this._connectSerial(connection)
       return
     }
 
@@ -96,22 +99,73 @@ class MachineConnection extends EventEmitter {
   }
 
   sendRaw(line: string): void {
-    if (!this.socket || this.socket.destroyed) return
     const data = line.endsWith('\n') ? line : `${line}\n`
-    this.socket.write(data)
+    if (this.socket && !this.socket.destroyed) {
+      this.socket.write(data)
+    } else if (this.serial?.isOpen) {
+      this.serial.write(data)
+    }
   }
 
   // Send a single real-time control byte without a newline (e.g. 0x85 jog-cancel, 0x18 soft-reset)
   sendByte(byte: number): void {
-    if (!this.socket || this.socket.destroyed) return
-    this.socket.write(Buffer.from([byte]))
+    const buf = Buffer.from([byte])
+    if (this.socket && !this.socket.destroyed) {
+      this.socket.write(buf)
+    } else if (this.serial?.isOpen) {
+      this.serial.write(buf)
+    }
   }
 
   disconnect(): void {
     this.intentionalDisconnect = true
     this._destroySocket()
+    void this._destroySerial()
     this.emit('event', { type: 'disconnected', intentional: true } satisfies ConnectionEvent)
     this.intentionalDisconnect = false
+  }
+
+  private _connectSerial(connection: MachineConnectionConfig): void {
+    const sp = new SerialPort({
+      path: connection.serialPort,
+      baudRate: connection.baudRate,
+      autoOpen: false,
+    })
+    this.serial = sp
+
+    const parser = sp.pipe(new ReadlineParser({ delimiter: '\n' }))
+
+    sp.on('open', () => {
+      this.emit('event', {
+        type: 'connected',
+        host: connection.serialPort,
+        port: connection.baudRate,
+      } satisfies ConnectionEvent)
+    })
+
+    parser.on('data', (line: string) => {
+      this._handleLine(line)
+    })
+
+    sp.on('error', (err: Error) => {
+      console.error('[connection] Serial error:', err.message)
+      this.emit('event', { type: 'error', message: err.message } satisfies ConnectionEvent)
+      this.emit('event', { type: 'disconnected', intentional: false } satisfies ConnectionEvent)
+      void this._destroySerial()
+    })
+
+    sp.on('close', () => {
+      if (this.intentionalDisconnect) return
+      this.serial = null
+      this.emit('event', { type: 'disconnected', intentional: false } satisfies ConnectionEvent)
+    })
+
+    sp.open((err) => {
+      if (err) {
+        console.error('[connection] Serial open error:', err.message)
+        this.emit('event', { type: 'error', message: err.message } satisfies ConnectionEvent)
+      }
+    })
   }
 
   private _handleLine(raw: string): void {
@@ -170,6 +224,18 @@ class MachineConnection extends EventEmitter {
     this.socket = null
     this.lineBuffer = ''
     if (s && !s.destroyed) s.destroy()
+  }
+
+  private _destroySerial(): Promise<void> {
+    const sp = this.serial
+    this.serial = null
+    if (!sp || !sp.isOpen) return Promise.resolve()
+    return new Promise((resolve) => {
+      sp.close((err) => {
+        if (err) console.error('[connection] Serial close error:', err.message)
+        resolve()
+      })
+    })
   }
 }
 
