@@ -244,12 +244,28 @@ export async function clearStock(): Promise<PatchOp[]> {
   ]
 }
 
-export function clearMeasurements(): PatchOp {
-  return setProbingState({
+export async function clearMeasurements(): Promise<PatchOp> {
+  const op = setProbingState({
     measuredWidth: null, measuredHeight: null, measuredDiameter: null,
     rotation: null, heightmap: null,
     edgeHistoryX: [null, null], edgeHistoryY: [null, null],
   })
+  const config = await getConfig()
+  config.app = { ...(config.app ?? {}), probingResults: { rotation: null, heightmap: null } }
+  await setConfig(config)
+  return op
+}
+
+export async function saveProbingResults(): Promise<void> {
+  const config = await getConfig()
+  config.app = {
+    ...(config.app ?? {}),
+    probingResults: {
+      rotation: ui.probingState.rotation,
+      heightmap: ui.probingState.heightmap,
+    },
+  }
+  await setConfig(config)
 }
 
 // ─── Job state (server-authoritative, synced to all clients via patch) ────────
@@ -529,6 +545,11 @@ export async function getConfig(): Promise<AppConfig> {
     }
   }
   stockDef = (cachedConfig.app?.stock as StockDef | null | undefined) ?? null
+  const savedResults = cachedConfig.app?.probingResults as { rotation?: ProbingRotationResult | null; heightmap?: HeightmapResult | null } | undefined
+  if (savedResults) {
+    if (savedResults.rotation !== undefined) ui.probingState.rotation = savedResults.rotation ?? null
+    if (savedResults.heightmap !== undefined) ui.probingState.heightmap = savedResults.heightmap ?? null
+  }
   const savedMachineId = cachedConfig.app?.lastMachineId as string | undefined
   if (savedMachineId) ui.selection.activeMachineId = savedMachineId
   configLoaded = true

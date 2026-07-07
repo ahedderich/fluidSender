@@ -103,6 +103,64 @@
       </table>
     </div>
 
+    <!-- Transform compensation toggles (only when measurements are present) -->
+    <div
+      v-if="job && (ps.rotation || ps.heightmap)"
+      class="px-3 py-2 border-b border-gray-100 dark:border-slate-700 shrink-0"
+    >
+      <div class="flex items-center justify-between mb-1.5">
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">Compensation</h3>
+        <span
+          v-if="activeMode !== 'none'"
+          class="text-xs px-1.5 py-0.5 rounded font-medium bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300"
+        >
+          {{ modeLabel }}
+        </span>
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <label
+          v-if="ps.rotation"
+          class="flex items-center justify-between gap-2"
+          :class="isAnalyzing ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'"
+        >
+          <span class="text-xs text-gray-700 dark:text-slate-300">Rotation compensation</span>
+          <button
+            role="switch"
+            :aria-checked="rotationEnabled"
+            :disabled="isAnalyzing || isViewer"
+            class="relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:pointer-events-none"
+            :class="rotationEnabled ? 'bg-blue-600' : 'bg-gray-200 dark:bg-slate-600'"
+            @click="toggleRotation"
+          >
+            <span
+              class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform"
+              :class="rotationEnabled ? 'translate-x-4' : 'translate-x-0'"
+            />
+          </button>
+        </label>
+        <label
+          v-if="ps.heightmap"
+          class="flex items-center justify-between gap-2"
+          :class="isAnalyzing ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'"
+        >
+          <span class="text-xs text-gray-700 dark:text-slate-300">Heightmap compensation</span>
+          <button
+            role="switch"
+            :aria-checked="heightmapEnabled"
+            :disabled="isAnalyzing || isViewer"
+            class="relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:pointer-events-none"
+            :class="heightmapEnabled ? 'bg-blue-600' : 'bg-gray-200 dark:bg-slate-600'"
+            @click="toggleHeightmap"
+          >
+            <span
+              class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform"
+              :class="heightmapEnabled ? 'translate-x-4' : 'translate-x-0'"
+            />
+          </button>
+        </label>
+      </div>
+    </div>
+
     <!-- Tool Change banner -->
     <div
       v-if="job?.status === 'tool_change' && job?.toolChangeRequest"
@@ -332,15 +390,49 @@
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
+import { useSyncStore } from '~/stores/sync'
 import { useJobControl } from '~/composables/useJobControl'
 import { wsSend } from '~/composables/useWsSend'
 import { useCurrentUser } from '~/composables/useCurrentUser'
 import type { ToolSection } from '~/types/job'
 
 const machine = useMachineStore()
+const syncStore = useSyncStore()
 const { job, clearJob, confirmRecovery } = useJobControl()
 const currentUser = useCurrentUser()
 const isViewer = computed(() => currentUser.value.isViewer)
+
+const ps = syncStore.probingState
+const activeMode = computed(() => syncStore.job?.transformMode ?? 'none')
+const isAnalyzing = computed(() => syncStore.job?.status === 'analyzing')
+const rotationEnabled = computed(
+  () => activeMode.value === 'rotated' || activeMode.value === 'rotated_height_adjusted',
+)
+const heightmapEnabled = computed(
+  () => activeMode.value === 'height_adjusted' || activeMode.value === 'rotated_height_adjusted',
+)
+const modeLabel = computed(() => {
+  switch (activeMode.value) {
+    case 'rotated': return 'Rotated'
+    case 'height_adjusted': return 'Height-adjusted'
+    case 'rotated_height_adjusted': return 'Rotated + Height-adjusted'
+    default: return ''
+  }
+})
+
+function sendTransformToggle(rotation: boolean, heightmap: boolean): void {
+  wsSend({ t: 'job:setTransformMode', payload: { rotationActive: rotation, heightmapActive: heightmap } })
+}
+
+function toggleRotation(): void {
+  if (isAnalyzing.value || isViewer.value) return
+  sendTransformToggle(!rotationEnabled.value, heightmapEnabled.value)
+}
+
+function toggleHeightmap(): void {
+  if (isAnalyzing.value || isViewer.value) return
+  sendTransformToggle(rotationEnabled.value, !heightmapEnabled.value)
+}
 
 function doRecover() {
   const resumePtr = job.value?.recovery?.resumePtr

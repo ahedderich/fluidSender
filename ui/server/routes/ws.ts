@@ -721,7 +721,7 @@ export default defineWebSocketHandler({
       }
       case 'ui:stock:clearMeasurements': {
         if (!requireRole(peer, 'operator')) break
-        broadcastPatch([clearMeasurements()])
+        broadcastPatch([await clearMeasurements()])
         break
       }
 

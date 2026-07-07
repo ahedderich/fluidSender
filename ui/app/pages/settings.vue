@@ -82,7 +82,6 @@
         <SettingsMachineFluidSenderTab
           v-if="machineTab === 'fluidSender'"
           :machine="editingMachine"
-          @open-macro-editor="openMacroEditor"
         />
 
         <SettingsMachineToolchangeTab
@@ -94,6 +93,13 @@
           v-else-if="machineTab === 'firmware'"
           :machine="editingMachine"
           :is-connected="isEditingConnected"
+        />
+
+        <SettingsMacrosTab
+          v-else-if="machineTab === 'macros'"
+          scope="machine"
+          :machine-id="editingMachine.id"
+          @open-macro-editor="openMacroEditor"
         />
 
         <!-- Save Machine Settings -->
@@ -136,7 +142,7 @@
 
         <SettingsAppInterfaceTab v-if="appTab === 'interface'" />
         <SettingsAppJogTab v-else-if="appTab === 'jog'" />
-        <SettingsAppMacrosTab v-else-if="appTab === 'macros'" @open-macro-editor="openMacroEditor" />
+        <SettingsMacrosTab v-else-if="appTab === 'macros'" scope="app" @open-macro-editor="openMacroEditor" />
         <SettingsAppAuthTab v-else-if="appTab === 'auth'" />
         <SettingsAppShortcutsTab v-else-if="appTab === 'shortcuts'" />
 
@@ -242,8 +248,9 @@ const machineTabs = [
   { key: 'fluidSender', label: 'FluidSender' },
   { key: 'toolchange', label: 'Tool Change' },
   { key: 'firmware', label: 'Firmware Config' },
+  { key: 'macros', label: 'Macros' },
 ]
-const machineTab = ref<'fluidSender' | 'toolchange' | 'firmware'>('fluidSender')
+const machineTab = ref<'fluidSender' | 'toolchange' | 'firmware' | 'macros'>('fluidSender')
 
 const appTabs = computed(() => {
   const tabs: { key: string; label: string }[] = [

@@ -80,13 +80,13 @@ import { ref, computed } from 'vue'
 import { useSettingsStore } from '~/stores/settings'
 import { useSyncStore } from '~/stores/sync'
 import { useConfirm } from '~/composables/useConfirm'
-import { useCurrentUser } from '~/composables/useCurrentUser'
+import { useMovementEnabled } from '~/composables/useMovementEnabled'
 import type { Macro } from '~/types/macro'
 
 const settings = useSettingsStore()
 const sync = useSyncStore()
 const { confirm } = useConfirm()
-const currentUser = useCurrentUser()
+const movementEnabled = useMovementEnabled()
 
 const formMacro = ref<Macro | null>(null)
 
@@ -100,7 +100,7 @@ const allMacros = computed<MacroWithSource[]>(() => [
 ])
 
 function isMacroDisabled(macro: Macro): boolean {
-  if (currentUser.value.isViewer) return true
+  if (!movementEnabled.value) return true
   return macro.requiresToolChange && sync.job?.status !== 'tool_change'
 }
 

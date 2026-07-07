@@ -43,7 +43,7 @@
               type="number"
               min="1"
               max="10000"
-              :disabled="isViewer"
+              :disabled="!movementEnabled"
               class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40"
             />
             <span class="text-xs text-gray-400 shrink-0">mm/m</span>
@@ -58,7 +58,7 @@
               min="0.001"
               max="100"
               step="0.1"
-              :disabled="isViewer"
+              :disabled="!movementEnabled"
               class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40"
             />
             <span class="text-xs text-gray-400 shrink-0">mm</span>
@@ -73,7 +73,7 @@
               min="0.001"
               max="100"
               step="0.1"
-              :disabled="isViewer"
+              :disabled="!movementEnabled"
               class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40"
             />
             <span class="text-xs text-gray-400 shrink-0">mm</span>
@@ -87,7 +87,8 @@
           v-for="(speed, i) in speeds"
           :key="speed.label"
           @click="selectSpeed(i)"
-          :class="activeSpeedIndex === i ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300'"
+          :disabled="!movementEnabled"
+          :class="activeSpeedIndex === i ? 'bg-blue-600 text-white' : (!movementEnabled ? 'bg-gray-100 dark:bg-slate-700 opacity-40 cursor-not-allowed text-gray-700 dark:text-slate-300' : 'bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300')"
           class="w-full flex-1 rounded-md text-xs font-medium transition-colors"
         >
           {{ speed.label }}
@@ -146,28 +147,28 @@
       <!-- Col 5: Goto / parking buttons -->
       <div class="flex flex-col gap-1 shrink-0 w-16 ml-4">
         <button
-          :disabled="isViewer"
+          :disabled="!movementEnabled"
           @click="machine.sendCommand('$H')"
           class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors truncate disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Parking
         </button>
         <button
-          :disabled="isViewer"
+          :disabled="!movementEnabled"
           @click="machine.sendCommand('G0 G54 X0 Y0')"
           class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           → XY
         </button>
         <button
-          :disabled="isViewer"
+          :disabled="!movementEnabled"
           @click="machine.sendCommand('G0 G54 Z0')"
           class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           → Z
         </button>
         <button
-          :disabled="isViewer"
+          :disabled="!movementEnabled"
           @click="showGotoPos = !showGotoPos"
           class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
@@ -265,15 +266,14 @@ import { useSyncStore } from '~/stores/sync'
 import { useNav } from '~/composables/useNav'
 import { useModals } from '~/composables/useModals'
 import { wsSend } from '~/composables/useWsSend'
-import { useCurrentUser } from '~/composables/useCurrentUser'
+import { useMovementEnabled } from '~/composables/useMovementEnabled'
 
 const machine = useMachineStore()
 const settings = useSettingsStore()
 const sync = useSyncStore()
 const { navMode } = useNav()
 const modals = useModals()
-const currentUser = useCurrentUser()
-const isViewer = computed(() => currentUser.value.isViewer)
+const movementEnabled = useMovementEnabled()
 
 const isJobActive = computed(() => {
   const s = sync.job?.status
@@ -282,15 +282,8 @@ const isJobActive = computed(() => {
 
 // true only on the browser that is actively jogging right now
 const isJogging = ref(false)
-// block jog when another browser is jogging, when a job is active, or during probe calibration
-const canJog = computed(() =>
-  !isViewer.value &&
-  (!sync.jogActive || isJogging.value) &&
-  !sync.calibrationActive &&
-  sync.job?.status !== 'running' &&
-  sync.job?.status !== 'pausing' &&
-  sync.job?.status !== 'recovering',
-)
+// block jog when another browser is jogging, on top of the shared movementEnabled gate
+const canJog = computed(() => movementEnabled.value && (!sync.jogActive || isJogging.value))
 
 const xyDirs = [
   { label: '↖', dx: -1, dy: 1 },
@@ -324,6 +317,11 @@ function selectSpeed(i: number) {
   zStepSize.value = preset.zStep
 }
 
+const JOG_INTERVAL_MS = 50
+// Lookahead factor: segment duration = interval × lookahead, ensuring the next
+// command arrives before the current move finishes (seamless chaining).
+const JOG_LOOKAHEAD = 1.5
+
 let jogInterval: ReturnType<typeof setInterval> | null = null
 let jogTimeout: ReturnType<typeof setTimeout> | null = null
 
@@ -331,20 +329,32 @@ function startJog(dx: number, dy: number, dz: number) {
   if (!canJog.value) return
   isJogging.value = true
   wsSend({ t: 'ui:jog:start' })
-  doJog(dx, dy, dz)
+  sendTapJog(dx, dy, dz)
   jogTimeout = setTimeout(() => {
-    jogInterval = setInterval(() => doJog(dx, dy, dz), 100)
+    jogInterval = setInterval(() => sendContinuousJog(dx, dy, dz), JOG_INTERVAL_MS)
   }, 400)
 }
 
-function doJog(dx: number, dy: number, dz: number) {
-  const xyStep = xyStepSize.value
-  const zStep = zStepSize.value
-  const feed = jogSpeed.value
+// Single-tap jog: uses the configured step size so each click is a precise increment.
+function sendTapJog(dx: number, dy: number, dz: number) {
   const parts: string[] = []
-  if (dx !== 0) parts.push(`X${(dx * xyStep).toFixed(3)}`)
-  if (dy !== 0) parts.push(`Y${(dy * xyStep).toFixed(3)}`)
-  if (dz !== 0) parts.push(`Z${(dz * zStep).toFixed(3)}`)
+  if (dx !== 0) parts.push(`X${(dx * xyStepSize.value).toFixed(3)}`)
+  if (dy !== 0) parts.push(`Y${(dy * xyStepSize.value).toFixed(3)}`)
+  if (dz !== 0) parts.push(`Z${(dz * zStepSize.value).toFixed(3)}`)
+  if (parts.length) {
+    wsSend({ t: 'machine:jog:move', payload: { cmd: `$J=G91 ${parts.join(' ')} F${jogSpeed.value}` } })
+  }
+}
+
+// Continuous jog: segment length derived from feed rate so commands chain without
+// gaps (no stutter) and the buffer stays shallow (responsive cancel).
+function sendContinuousJog(dx: number, dy: number, dz: number) {
+  const feed = jogSpeed.value
+  const seg = (feed / 60) * (JOG_INTERVAL_MS / 1000) * JOG_LOOKAHEAD
+  const parts: string[] = []
+  if (dx !== 0) parts.push(`X${(dx * seg).toFixed(3)}`)
+  if (dy !== 0) parts.push(`Y${(dy * seg).toFixed(3)}`)
+  if (dz !== 0) parts.push(`Z${(dz * seg).toFixed(3)}`)
   if (parts.length) {
     wsSend({ t: 'machine:jog:move', payload: { cmd: `$J=G91 ${parts.join(' ')} F${feed}` } })
   }
@@ -358,8 +368,8 @@ function stopJog() {
   jogInterval = null
   if (isJogging.value) {
     isJogging.value = false
-    // Only cancel buffered moves when continuous jog was active; a single tap
-    // sends one small step that should complete naturally.
+    // Single-tap jog completes its small step naturally; only cancel when
+    // continuous mode was active (where the buffer may hold pending segments).
     if (wasRunning) wsSend({ t: 'machine:jog:cancel' })
     wsSend({ t: 'ui:jog:stop' })
   }
@@ -369,7 +379,6 @@ function onJoystickMove({ x, y, magnitude }: { x: number; y: number; magnitude: 
   if (magnitude < 0.1) {
     if (isJogging.value) {
       isJogging.value = false
-      // Joystick ticks continuously so the jog buffer may hold pending moves
       wsSend({ t: 'machine:jog:cancel' })
       wsSend({ t: 'ui:jog:stop' })
     }
@@ -380,8 +389,14 @@ function onJoystickMove({ x, y, magnitude }: { x: number; y: number; magnitude: 
     isJogging.value = true
     wsSend({ t: 'ui:jog:start' })
   }
-  const speed = magnitude * jogSpeed.value
-  wsSend({ t: 'machine:jog:move', payload: { cmd: `$J=G91 X${(x * xyStepSize.value).toFixed(3)} Y${(y * xyStepSize.value).toFixed(3)} F${Math.round(speed)}` } })
+  const feed = jogSpeed.value
+  const effectiveFeed = magnitude * feed
+  // Segment length derived from speed so commands chain without gaps.
+  // x/y already encode direction × deflection fraction, so magnitude cancels:
+  // seg_axis = (x / magnitude) * (effectiveFeed / 60) * intervalSec * lookahead
+  //          = x * (feed / 60) * intervalSec * lookahead
+  const seg = (feed / 60) * (JOG_INTERVAL_MS / 1000) * JOG_LOOKAHEAD
+  wsSend({ t: 'machine:jog:move', payload: { cmd: `$J=G91 X${(x * seg).toFixed(3)} Y${(y * seg).toFixed(3)} F${Math.round(effectiveFeed)}` } })
 }
 
 // Open/close synced across browsers via the modal stack; the form values below

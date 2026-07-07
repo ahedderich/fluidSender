@@ -1,4 +1,4 @@
-import { broadcastPatch, getProbingState, setProbingState, setStock, getStock } from '../appState'
+import { broadcastPatch, getProbingState, setProbingState, setStock, getStock, saveProbingResults } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
 import { sendGCode } from '../machine/sender'
 import { getMode, setMode } from '../machine/machineMode'
@@ -843,6 +843,7 @@ class ProbingRunner {
       phase: 'completed',
       rotation: { rotationDeg, bowMm, edge },
     })])
+    void saveProbingResults()
   }
 
   // ── Surface heightmap ──────────────────────────────────────────────────────────
@@ -917,6 +918,7 @@ class ProbingRunner {
       phase: 'completed',
       heightmap: { ...heightmap, values: [...values] },
     })])
+    void saveProbingResults()
   }
 }
 

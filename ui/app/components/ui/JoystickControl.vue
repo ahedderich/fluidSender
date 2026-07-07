@@ -60,8 +60,8 @@ function emitCurrent() {
 
 function startTick() {
   if (tickInterval !== null) return
-  // Emit continuously at 10 Hz while held so jogging persists without pointer movement
-  tickInterval = setInterval(emitCurrent, 100)
+  // Emit at 20 Hz while held so jogging persists without pointer movement
+  tickInterval = setInterval(emitCurrent, 50)
 }
 
 function stopTick() {

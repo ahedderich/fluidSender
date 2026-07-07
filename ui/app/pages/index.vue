@@ -46,7 +46,6 @@
           <WorkspaceSpindlePanel />
           <WorkspaceCoolantPanel />
         </div>
-        <WorkspaceGCodeTransformPanel class="shrink-0" />
         <WorkspaceFileBrowserPanel class="flex-1 min-h-0" />
       </div>
       <!-- Console + Tool Management — disabled when disconnected -->
