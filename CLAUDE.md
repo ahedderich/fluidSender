@@ -171,13 +171,13 @@ Authentication is **optional** and controlled by a config flag (`auth.enabled` i
 ```
 main               ← current production release candidate
 test               ← quality testing stage; features merged here before main
-test/feature-xyz   ← individual feature branches, always cut from `test`
-test/bugfix-xyz    ← bug fix branches, cut from `test` (normal release cycle)
-main/hotfix-xyz    ← urgent post-release fixes, cut from `main`
+feat/xyz           ← individual feature branches, always cut from `test`
+fix/xyz            ← bug fix branches, cut from `test` (normal release cycle)
+hotfix/xyz         ← urgent post-release fixes, cut from `main`
 ```
 
 **Rules:**
-- Before starting any file changes on a new feature, Claude must prompt the user with a question to create a new `test/feature-xyz` branch.
+- Before starting any file changes on a new feature, Claude must prompt the user with a question to create a new `feat/xyz` branch.
 - PRs into `test` require at least one approving review and green CI.
 - PRs into `main` require green CI + passing integration tests.
 - Delete feature/bugfix branches after merging.
