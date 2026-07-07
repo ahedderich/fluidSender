@@ -13,7 +13,9 @@ use crate::machine::state::{
 use crate::protocol::parser::{parse_line, ParsedLine};
 use crate::protocol::realtime::classify;
 use crate::protocol::realtime::RealtimeCmd;
-use crate::protocol::response::{self, BUILD_INFO_RESPONSE, GREETING, SIM_CONFIG_YAML, STARTUP_LOG};
+use crate::protocol::response::{
+    self, BUILD_INFO_RESPONSE, GREETING, SIM_CONFIG_YAML, STARTUP_LOG,
+};
 
 /// Distinguishes what to do when an async operation's receiver fires.
 enum PendingKind {

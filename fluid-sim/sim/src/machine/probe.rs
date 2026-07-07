@@ -172,14 +172,7 @@ mod tests {
     fn manual_trigger_returns_contact() {
         let pos = [50.0, 50.0, 10.0];
         let dir = [0.0, 0.0, -1.0];
-        let hit = check_probe_contact(
-            pos,
-            dir,
-            false,
-            &ProbeDeviations::default(),
-            true,
-            None,
-        );
+        let hit = check_probe_contact(pos, dir, false, &ProbeDeviations::default(), true, None);
         assert!(matches!(hit, ProbeHit::Contact(p) if p == pos));
     }
 
@@ -187,14 +180,7 @@ mod tests {
     fn no_contact_without_trigger_or_stock() {
         let pos = [50.0, 50.0, 10.0];
         let dir = [0.0, 0.0, -1.0];
-        let hit = check_probe_contact(
-            pos,
-            dir,
-            false,
-            &ProbeDeviations::default(),
-            false,
-            None,
-        );
+        let hit = check_probe_contact(pos, dir, false, &ProbeDeviations::default(), false, None);
         assert!(matches!(hit, ProbeHit::None));
     }
 
@@ -204,14 +190,7 @@ mod tests {
         let stock = make_stock();
         let d = ProbeDeviations::default();
         let dir = [0.0, 0.0, -1.0];
-        let hit = check_probe_contact(
-            [100.0, 60.0, 5.05],
-            dir,
-            false,
-            &d,
-            false,
-            Some(&stock),
-        );
+        let hit = check_probe_contact([100.0, 60.0, 5.05], dir, false, &d, false, Some(&stock));
         assert!(
             matches!(hit, ProbeHit::None),
             "should not trigger above 5.0"

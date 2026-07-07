@@ -149,7 +149,9 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
 
     // Update persistent motion mode from any explicit G0–G3 in this line, and collect
     // the information needed to dispatch modal motion after the loop.
-    let has_explicit_motion = gs.iter().any(|&g| g == 0.0 || g == 1.0 || g == 2.0 || g == 3.0);
+    let has_explicit_motion = gs
+        .iter()
+        .any(|&g| g == 0.0 || g == 1.0 || g == 2.0 || g == 3.0);
     for &g in &gs {
         match g as u32 {
             0 => state.modal.motion_mode = MotionMode::G0,
@@ -661,7 +663,11 @@ mod tests {
             "G28 should return its own Move, not a modal G1"
         );
         // The target of G28 is the stored g28_pos (or [0;6] by default), not X-50
-        assert_eq!(state.modal.motion_mode, MotionMode::G1, "motion mode unchanged by G28");
+        assert_eq!(
+            state.modal.motion_mode,
+            MotionMode::G1,
+            "motion mode unchanged by G28"
+        );
     }
 
     #[test]
