@@ -126,6 +126,13 @@ class MachineConnection extends EventEmitter {
   }
 
   private _connectSerial(connection: MachineConnectionConfig): void {
+    if (!connection.serialPort) {
+      this.emit('event', {
+        type: 'error',
+        message: 'No serial port configured. Set a port path in machine settings.',
+      } satisfies ConnectionEvent)
+      return
+    }
     const sp = new SerialPort({
       path: connection.serialPort,
       baudRate: connection.baudRate,

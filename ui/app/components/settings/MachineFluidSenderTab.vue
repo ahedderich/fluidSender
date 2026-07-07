@@ -31,7 +31,39 @@
     </SettingsRow>
     <template v-if="machine.connection.type === 'usb'">
       <SettingsRow label="Serial Port">
-        <input v-model="machine.connection.serialPort" type="text" class="settings-input w-48 font-mono" placeholder="/dev/ttyUSB0" />
+        <div class="flex items-center gap-2">
+          <select
+            v-if="availablePorts.length > 0"
+            v-model="machine.connection.serialPort"
+            class="settings-input w-48 font-mono"
+          >
+            <option value="">— select port —</option>
+            <option v-for="p in availablePorts" :key="p.path" :value="p.path">
+              {{ p.path }}{{ p.manufacturer ? ` (${p.manufacturer})` : '' }}
+            </option>
+          </select>
+          <input
+            v-else
+            v-model="machine.connection.serialPort"
+            type="text"
+            class="settings-input w-48 font-mono"
+            placeholder="/dev/ttyUSB0"
+          />
+          <button
+            type="button"
+            @click="refreshPorts"
+            :disabled="loadingPorts"
+            class="p-1.5 rounded text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-40"
+            title="Refresh ports"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" :class="{ 'animate-spin': loadingPorts }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
+        </div>
+        <p v-if="availablePorts.length === 0 && !loadingPorts" class="mt-1 text-xs text-gray-400 dark:text-slate-500">
+          No ports detected — enter path manually or click refresh
+        </p>
       </SettingsRow>
       <SettingsRow label="Baud Rate">
         <select v-model.number="machine.connection.baudRate" class="settings-input w-32">
@@ -59,4 +91,36 @@
 import type { MachineProfile } from '~/stores/settings'
 
 const machine = defineModel<MachineProfile>('machine', { required: true })
+
+interface SerialPortInfo {
+  path: string
+  manufacturer: string | null
+}
+
+const availablePorts = ref<SerialPortInfo[]>([])
+const loadingPorts = ref(false)
+
+async function refreshPorts() {
+  loadingPorts.value = true
+  try {
+    availablePorts.value = await $fetch<SerialPortInfo[]>('/api/serial-ports')
+  } catch {
+    availablePorts.value = []
+  } finally {
+    loadingPorts.value = false
+  }
+}
+
+onMounted(() => {
+  if (machine.value.connection.type === 'usb') {
+    refreshPorts()
+  }
+})
+
+watch(
+  () => machine.value.connection.type,
+  (type) => {
+    if (type === 'usb') refreshPorts()
+  },
+)
 </script>
