@@ -261,29 +261,37 @@
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
-import { useSettingsStore } from '~/stores/settings'
 import { useSyncStore } from '~/stores/sync'
 import { useNav } from '~/composables/useNav'
 import { useModals } from '~/composables/useModals'
-import { wsSend } from '~/composables/useWsSend'
 import { useMovementEnabled } from '~/composables/useMovementEnabled'
+import { useJog } from '~/composables/useJog'
 
 const machine = useMachineStore()
-const settings = useSettingsStore()
 const sync = useSyncStore()
 const { navMode } = useNav()
 const modals = useModals()
 const movementEnabled = useMovementEnabled()
 
+const {
+  canJog,
+  activeSpeedIndex,
+  jogSpeed,
+  xyStepSize,
+  zStepSize,
+  speedPresets,
+  selectSpeed,
+  startJog,
+  stopJog,
+  onJoystickMove,
+} = useJog()
+
+const speeds = speedPresets
+
 const isJobActive = computed(() => {
   const s = sync.job?.status
   return s === 'running' || s === 'pausing' || s === 'recovering' || s === 'stopping' || s === 'program_pause'
 })
-
-// true only on the browser that is actively jogging right now
-const isJogging = ref(false)
-// block jog when another browser is jogging, on top of the shared movementEnabled gate
-const canJog = computed(() => movementEnabled.value && (!sync.jogActive || isJogging.value))
 
 const xyDirs = [
   { label: '↖', dx: -1, dy: 1 },
@@ -296,108 +304,6 @@ const xyDirs = [
   { label: '↓', dx: 0, dy: -1 },
   { label: '↘', dx: 1, dy: -1 },
 ]
-
-const speedPresets = computed(() => [
-  { label: 'Slow', feedRate: settings.app.jog.slowSpeed, xyStep: 0.1, zStep: 0.05 },
-  { label: 'Med', feedRate: settings.app.jog.mediumSpeed, xyStep: 1.0, zStep: 0.5 },
-  { label: 'Fast', feedRate: settings.app.jog.fastSpeed, xyStep: 5.0, zStep: 2.0 },
-])
-const speeds = speedPresets
-
-const activeSpeedIndex = ref(1)
-const jogSpeed = ref(speedPresets.value[1].feedRate)
-const xyStepSize = ref(speedPresets.value[1].xyStep)
-const zStepSize = ref(speedPresets.value[1].zStep)
-
-function selectSpeed(i: number) {
-  activeSpeedIndex.value = i
-  const preset = speedPresets.value[i]
-  jogSpeed.value = preset.feedRate
-  xyStepSize.value = preset.xyStep
-  zStepSize.value = preset.zStep
-}
-
-const JOG_INTERVAL_MS = 50
-// Lookahead factor: segment duration = interval × lookahead, ensuring the next
-// command arrives before the current move finishes (seamless chaining).
-const JOG_LOOKAHEAD = 1.5
-
-let jogInterval: ReturnType<typeof setInterval> | null = null
-let jogTimeout: ReturnType<typeof setTimeout> | null = null
-
-function startJog(dx: number, dy: number, dz: number) {
-  if (!canJog.value) return
-  isJogging.value = true
-  wsSend({ t: 'ui:jog:start' })
-  sendTapJog(dx, dy, dz)
-  jogTimeout = setTimeout(() => {
-    jogInterval = setInterval(() => sendContinuousJog(dx, dy, dz), JOG_INTERVAL_MS)
-  }, 400)
-}
-
-// Single-tap jog: uses the configured step size so each click is a precise increment.
-function sendTapJog(dx: number, dy: number, dz: number) {
-  const parts: string[] = []
-  if (dx !== 0) parts.push(`X${(dx * xyStepSize.value).toFixed(3)}`)
-  if (dy !== 0) parts.push(`Y${(dy * xyStepSize.value).toFixed(3)}`)
-  if (dz !== 0) parts.push(`Z${(dz * zStepSize.value).toFixed(3)}`)
-  if (parts.length) {
-    wsSend({ t: 'machine:jog:move', payload: { cmd: `$J=G91 ${parts.join(' ')} F${jogSpeed.value}` } })
-  }
-}
-
-// Continuous jog: segment length derived from feed rate so commands chain without
-// gaps (no stutter) and the buffer stays shallow (responsive cancel).
-function sendContinuousJog(dx: number, dy: number, dz: number) {
-  const feed = jogSpeed.value
-  const seg = (feed / 60) * (JOG_INTERVAL_MS / 1000) * JOG_LOOKAHEAD
-  const parts: string[] = []
-  if (dx !== 0) parts.push(`X${(dx * seg).toFixed(3)}`)
-  if (dy !== 0) parts.push(`Y${(dy * seg).toFixed(3)}`)
-  if (dz !== 0) parts.push(`Z${(dz * seg).toFixed(3)}`)
-  if (parts.length) {
-    wsSend({ t: 'machine:jog:move', payload: { cmd: `$J=G91 ${parts.join(' ')} F${feed}` } })
-  }
-}
-
-function stopJog() {
-  if (jogTimeout) clearTimeout(jogTimeout)
-  const wasRunning = jogInterval !== null
-  if (jogInterval) clearInterval(jogInterval)
-  jogTimeout = null
-  jogInterval = null
-  if (isJogging.value) {
-    isJogging.value = false
-    // Single-tap jog completes its small step naturally; only cancel when
-    // continuous mode was active (where the buffer may hold pending segments).
-    if (wasRunning) wsSend({ t: 'machine:jog:cancel' })
-    wsSend({ t: 'ui:jog:stop' })
-  }
-}
-
-function onJoystickMove({ x, y, magnitude }: { x: number; y: number; magnitude: number }) {
-  if (magnitude < 0.1) {
-    if (isJogging.value) {
-      isJogging.value = false
-      wsSend({ t: 'machine:jog:cancel' })
-      wsSend({ t: 'ui:jog:stop' })
-    }
-    return
-  }
-  if (!canJog.value) return
-  if (!isJogging.value) {
-    isJogging.value = true
-    wsSend({ t: 'ui:jog:start' })
-  }
-  const feed = jogSpeed.value
-  const effectiveFeed = magnitude * feed
-  // Segment length derived from speed so commands chain without gaps.
-  // x/y already encode direction × deflection fraction, so magnitude cancels:
-  // seg_axis = (x / magnitude) * (effectiveFeed / 60) * intervalSec * lookahead
-  //          = x * (feed / 60) * intervalSec * lookahead
-  const seg = (feed / 60) * (JOG_INTERVAL_MS / 1000) * JOG_LOOKAHEAD
-  wsSend({ t: 'machine:jog:move', payload: { cmd: `$J=G91 X${(x * seg).toFixed(3)} Y${(y * seg).toFixed(3)} F${Math.round(effectiveFeed)}` } })
-}
 
 // Open/close synced across browsers via the modal stack; the form values below
 // stay local to each browser (open/close + result sync depth).

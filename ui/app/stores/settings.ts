@@ -85,7 +85,26 @@ export interface JogSettings {
   zStep: number
 }
 
+export type ShortcutActionId =
+  | 'jogXPos'
+  | 'jogXNeg'
+  | 'jogYPos'
+  | 'jogYNeg'
+  | 'jogZPos'
+  | 'jogZNeg'
+  | 'feedHold'
+  | 'cycleStart'
+  | 'softReset'
+  | 'home'
+  | 'speedSlow'
+  | 'speedMedium'
+  | 'speedFast'
+
+export type SafetyKeyOption = 'shift' | 'ctrl' | 'alt' | 'none'
+
 export interface KeyboardShortcuts {
+  safetyKey: SafetyKeyOption
+  requiresSafetyKey: Partial<Record<ShortcutActionId, boolean>>
   jogXPos: string
   jogXNeg: string
   jogYPos: string
@@ -177,19 +196,26 @@ export const useSettingsStore = defineStore('settings', () => {
       zStep: 0.5,
     } as JogSettings,
     shortcuts: {
+      safetyKey: 'shift' as SafetyKeyOption,
+      requiresSafetyKey: {
+        jogXPos: true, jogXNeg: true, jogYPos: true, jogYNeg: true,
+        jogZPos: true, jogZNeg: true,
+        feedHold: true, cycleStart: true, softReset: true, home: true,
+        speedSlow: true, speedMedium: true, speedFast: true,
+      },
       jogXPos: 'ArrowRight',
       jogXNeg: 'ArrowLeft',
       jogYPos: 'ArrowUp',
       jogYNeg: 'ArrowDown',
       jogZPos: 'PageUp',
       jogZNeg: 'PageDown',
-      feedHold: '!',
-      cycleStart: '~',
-      softReset: 'ctrl+x',
-      home: '$',
-      speedSlow: '1',
-      speedMedium: '2',
-      speedFast: '3',
+      feedHold: 'f',
+      cycleStart: 'c',
+      softReset: 'r',
+      home: 'h',
+      speedSlow: 'y',
+      speedMedium: 'a',
+      speedFast: 'q',
     } as KeyboardShortcuts,
     auth: {
       enabled: false,
@@ -243,7 +269,11 @@ export const useSettingsStore = defineStore('settings', () => {
       if (data.app.macros) app.macros = _migrateMacros(data.app.macros as unknown[])
       if (data.app.viewport) Object.assign(app.viewport, data.app.viewport)
       if (data.app.jog) Object.assign(app.jog, data.app.jog)
-      if (data.app.shortcuts) Object.assign(app.shortcuts, data.app.shortcuts)
+      if (data.app.shortcuts) {
+        const { requiresSafetyKey, ...shortcutRest } = data.app.shortcuts as Partial<KeyboardShortcuts>
+        Object.assign(app.shortcuts, shortcutRest)
+        if (requiresSafetyKey) Object.assign(app.shortcuts.requiresSafetyKey, requiresSafetyKey)
+      }
     }
   }
 
