@@ -27,6 +27,9 @@ dist/
 # Nuxt dev server state
 *.nuxt-devtools*
 
+# Nuxt CLI local setup marker (@nuxt/test-utils etc.)
+.nuxtrc
+
 # -----------------------------------------------------------------------------
 # Bun / Node
 # -----------------------------------------------------------------------------
