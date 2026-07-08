@@ -242,8 +242,8 @@ describe.skipIf(!SIM_HOST)('probe deviation round-trip (sim)', () => {
 
     await parkForXProbe()
     const xSurface = await probeEdgeMachine('X', '+', ZERO_COMP)
-    // Sim triggers late by xPlus, so the uncompensated result over-reports by the same amount.
-    const expected = LEFT_FACE_X + DEVIATIONS.xPlus
+    // Sim triggers early by xPlus, so the uncompensated result under-reports by the same amount.
+    const expected = LEFT_FACE_X - DEVIATIONS.xPlus
     expect(Math.abs(xSurface - expected) <= TOLERANCE,
       `uncompensated X surface ${xSurface.toFixed(3)} expected ${expected.toFixed(3)} ±${TOLERANCE}`).toBe(true)
   }, SUITE_TIMEOUT)
