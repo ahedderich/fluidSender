@@ -8,6 +8,11 @@
 FROM node:22-slim
 WORKDIR /app
 
+# udev provides `udevadm`, which @serialport/bindings-cpp shells out to on
+# Linux to list serial ports (SerialPort.list()); without it the port list
+# request fails.
+RUN apt-get update -y && apt-get install -y udev --no-install-recommends && rm -rf /var/lib/apt/lists/*
+
 # Bun as the package manager (respects bun.lock); Node is the runtime.
 RUN npm install -g bun@1.3.14
 

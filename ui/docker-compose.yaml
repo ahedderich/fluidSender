@@ -7,6 +7,11 @@ services:
     volumes:
       - ./config:/app/config
       - ./data:/app/data
+    devices:
+      # USB-to-serial device for the FluidNC controller. Adjust the path to
+      # match your host (e.g. /dev/ttyACM0), or add more lines for multiple
+      # machines.
+      - "/dev/ttyUSB0:/dev/ttyUSB0"
     environment:
       NODE_ENV: production
       NUXT_HOST: "0.0.0.0"

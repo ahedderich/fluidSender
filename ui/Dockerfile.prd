@@ -13,6 +13,11 @@ RUN bun run build
 FROM node:22-slim AS runner
 WORKDIR /app
 
+# udev provides `udevadm`, which @serialport/bindings-cpp shells out to on
+# Linux to list serial ports (SerialPort.list()); without it the port list
+# request fails.
+RUN apt-get update -y && apt-get install -y udev --no-install-recommends && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /app/.output ./.output
 
 EXPOSE 3000
