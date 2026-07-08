@@ -1,0 +1,50 @@
+services:
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    image: ghcr.io/ahedderich/fluidsender:dev
+    volumes:
+      - ./ui:/app
+      - ./ui/config:/app/config
+      - ui_modules:/app/node_modules
+      - ui_nuxt:/app/.nuxt
+    ports:
+      - "3000:3000"
+    environment:
+      NUXT_HOST: "0.0.0.0"
+      NUXT_PORT: "3000"
+
+  sim:
+    build:
+      context: ./fluid-sim/sim
+      dockerfile: Dockerfile
+    image: ghcr.io/fluidsender/fluidsender-sim:dev
+    ports:
+      - "8765:8765"
+      - "8766:8766"
+
+  sim-ui:
+    build:
+      context: ./fluid-sim/sim-ui
+      dockerfile: Dockerfile
+    image: ghcr.io/fluidsender/fluidsender-sim-ui:dev
+    volumes:
+      - ./fluid-sim/sim-ui:/app
+      - ./fluid-sim/sim-ui/config:/app/config
+      - sim_ui_modules:/app/node_modules
+      - sim_ui_nuxt:/app/.nuxt
+    ports:
+      - "3001:3001"
+    environment:
+      NUXT_HOST: "0.0.0.0"
+      NUXT_PORT: "3001"
+      SIM_CONTROL_URL: "http://sim:8766"
+    depends_on:
+      - sim
+
+volumes:
+  ui_modules:
+  ui_nuxt:
+  sim_ui_modules:
+  sim_ui_nuxt:

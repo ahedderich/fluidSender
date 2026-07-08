@@ -1,0 +1,81 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Range input (override slider) */
+.override-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    #3b82f6 0%,
+    #3b82f6 calc((var(--val, 100) - 10) / 190 * 100%),
+    #334155 calc((var(--val, 100) - 10) / 190 * 100%),
+    #334155 100%
+  );
+}
+
+.dark .override-slider {
+  background: linear-gradient(
+    to right,
+    #3b82f6 0%,
+    #3b82f6 calc((var(--val, 100) - 10) / 190 * 100%),
+    #1e293b calc((var(--val, 100) - 10) / 190 * 100%),
+    #1e293b 100%
+  );
+}
+
+.override-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #1e40af;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.override-slider::-webkit-slider-thumb:hover {
+  background: #60a5fa;
+}
+
+.override-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #1e40af;
+  cursor: pointer;
+}
+
+/* Shared form input styles */
+.settings-input {
+  @apply bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 text-gray-900 dark:text-slate-100 text-sm px-2 py-1.5 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500;
+}
+.settings-input-sm {
+  @apply bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 text-gray-900 dark:text-slate-100 text-xs px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 w-full;
+}
+
+/* Scrollbar styling for dark panels */
+.dark ::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 2px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}

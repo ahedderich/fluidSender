@@ -1,0 +1,60 @@
+name: CI — Simulator
+
+on:
+  pull_request:
+    branches: [test, main]
+    paths:
+      - 'fluid-sim/sim/**'
+  push:
+    branches:
+      - 'feat/**'
+      - 'fix/**'
+      - 'hotfix/**'
+    paths:
+      - 'fluid-sim/sim/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Format & Clippy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fluid-sim/sim
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fluid-sim/sim/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('fluid-sim/sim/Cargo.lock') }}
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: ./fluid-sim/sim
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          format: table

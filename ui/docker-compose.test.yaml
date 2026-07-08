@@ -1,0 +1,12 @@
+services:
+  fluidsender:
+    image: ghcr.io/ahedderich/fluidsender:test
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+    environment:
+      NODE_ENV: production
+      NUXT_HOST: "0.0.0.0"
+      NUXT_PORT: "3000"

@@ -1,0 +1,90 @@
+name: CI — UI
+
+on:
+  pull_request:
+    branches: [test, main]
+    paths:
+      - 'ui/**'
+  push:
+    branches:
+      - 'feat/**'
+      - 'fix/**'
+      - 'hotfix/**'
+    paths:
+      - 'ui/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-typecheck:
+    name: Lint & Typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fluid-sim/sim/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('fluid-sim/sim/Cargo.lock') }}
+
+      - name: Build simulator
+        working-directory: fluid-sim/sim
+        run: cargo build --release
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint --quiet
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Start simulator
+        working-directory: fluid-sim/sim
+        run: |
+          ./target/release/fluidsim &
+          echo $! > /tmp/fluidsim.pid
+          for i in $(seq 1 20); do
+            (echo > /dev/tcp/127.0.0.1/8766) >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+
+      - name: Test
+        env:
+          SIM_HOST: 127.0.0.1
+          SIM_PORT: 8765
+          SIM_CONTROL_PORT: 8766
+        run: bun run test
+
+      - name: Stop simulator
+        if: always()
+        run: kill "$(cat /tmp/fluidsim.pid)" 2>/dev/null || true
+
+      - name: Build
+        run: bun run build
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: ./ui
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          format: table

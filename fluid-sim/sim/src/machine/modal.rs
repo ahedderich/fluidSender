@@ -1,0 +1,72 @@
+/// Persistent motion mode — last explicit G0/G1/G2/G3 seen on any line.
+/// Applied to modal lines that carry axis words but omit the G motion word
+/// (standard in CAM output).  Not reset on soft-reset (matches FluidNC behaviour).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MotionMode {
+    #[default]
+    G0,
+    G1,
+    G2,
+    G3,
+}
+
+/// Modal GCode state — persists between lines in a session.
+#[derive(Debug, Clone)]
+pub struct ModalState {
+    pub units: Units,
+    pub plane: Plane,
+    pub distance: DistanceMode,
+    pub motion_mode: MotionMode,
+    pub wcs: u8,
+    /// G92 coordinate offset (added on top of WCS offset)
+    pub g92_offset: [f64; 6],
+    /// Stored positions for G28 / G30
+    pub g28_pos: Option<[f64; 6]>,
+    pub g30_pos: Option<[f64; 6]>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Units {
+    #[default]
+    Mm,
+    Inch,
+}
+
+impl Units {
+    pub fn to_mm(&self, val: f64) -> f64 {
+        match self {
+            Units::Mm => val,
+            Units::Inch => val * 25.4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Plane {
+    #[default]
+    Xy,
+    Xz,
+    Yz,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DistanceMode {
+    #[default]
+    Absolute,
+    Relative,
+}
+
+impl Default for ModalState {
+    fn default() -> Self {
+        Self {
+            units: Units::Mm,
+            plane: Plane::Xy,
+            distance: DistanceMode::Absolute,
+            motion_mode: MotionMode::G0,
+            wcs: 1,
+            g92_offset: [0.0; 6],
+            g28_pos: None,
+            g30_pos: None,
+        }
+    }
+}
