@@ -32,6 +32,7 @@ export function parseStatusLine(line: string): MachineStatus | null {
   let spindleSpeed = 0
   let bufPlanner = 0
   let bufRx = 0
+  let bufferReported = false
   let ovFeed = 100
   let ovRapid = 100
   let ovSpindle = 100
@@ -67,6 +68,7 @@ export function parseStatusLine(line: string): MachineStatus | null {
       const b = p.slice(p.indexOf(':') + 1).split(',').map(Number)
       bufPlanner = b[0] ?? 0
       bufRx = b[1] ?? 0
+      bufferReported = true
     } else if (p.startsWith('Ov:')) {
       const ov = p.slice(3).split(',').map(Number)
       ovFeed = ov[0] ?? 100
@@ -116,6 +118,7 @@ export function parseStatusLine(line: string): MachineStatus | null {
     feed,
     spindleSpeed,
     buffer: { planner: bufPlanner, rx: bufRx },
+    bufferReported,
     overrides: { feed: ovFeed, rapid: ovRapid, spindle: ovSpindle },
     limitSwitches,
     probe,

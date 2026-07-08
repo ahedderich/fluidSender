@@ -32,6 +32,21 @@ function _assertCanProbe(): void {
   if (mode === 'probing') throw new Error('A probing routine is already active')
 }
 
+// Real FluidNC firmware rejects every G-code line with an error while in Alarm
+// (see execute_line() in ProcessSettings.cpp: "Block if in alarm or jog mode").
+// The simulator always boots Idle, so a probe never used to hang here — against
+// real hardware that hasn't been homed/unlocked, _flush() would otherwise wait
+// forever for an Idle status that never arrives, leaving the wizard stuck on its
+// first step with the machine never moving.
+function _assertMachineIdle(): void {
+  const status = getLastMachineStatus()
+  if (!status || status.state !== 'Idle') {
+    throw new Error(
+      `Machine must be Idle to probe (currently: ${status?.state ?? 'disconnected'}). Home or unlock it first.`,
+    )
+  }
+}
+
 // ─── Flush helper (waits for send to complete) ───────────────────────────────
 
 async function _flush(lines: string[]): Promise<void> {
@@ -326,6 +341,7 @@ class ProbingRunner {
     })])
 
     try {
+      _assertMachineIdle()
       await _flush(['G90', 'G21'])
       const status = getLastMachineStatus()
       if (!status) throw new Error('No machine status available')
@@ -383,6 +399,7 @@ class ProbingRunner {
     const wcoVal = axis === 'X' ? status.wco.x : status.wco.y
     const centerWork = centerMach - wcoVal
     _assertCanProbe()
+    _assertMachineIdle()
     setMode('probing')
     try {
       await _moveThenZero(['G90', 'G21', `G0 ${axis}${centerWork.toFixed(4)}`], [`G10 L20 P0 ${axis}0`])
@@ -431,6 +448,7 @@ class ProbingRunner {
     broadcastPatch([setProbingState(runReset)])
 
     try {
+      _assertMachineIdle()
       switch (wizardKey) {
         case 'center-out':
           await this._runCenterOut(config, probeConfig, compensation, safeH, buf)
