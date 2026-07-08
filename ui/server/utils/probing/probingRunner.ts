@@ -396,13 +396,16 @@ class ProbingRunner {
     const centerMach = (m1 + m2) / 2
     const status = getLastMachineStatus()
     if (!status) return
-    const wcoVal = axis === 'X' ? status.wco.x : status.wco.y
-    const centerWork = centerMach - wcoVal
+    const mposVal = axis === 'X' ? status.mpos.x : status.mpos.y
     _assertCanProbe()
     _assertMachineIdle()
     setMode('probing')
     try {
-      await _moveThenZero(['G90', 'G21', `G0 ${axis}${centerWork.toFixed(4)}`], [`G10 L20 P0 ${axis}0`])
+      // Zero mathematically at the current (unmoved) position rather than driving
+      // there: G10 L20 sets the WCS offset so the current mpos reads as the given
+      // value, which pins the offset to centerMach exactly as a move-then-zero-at-0
+      // would, without a rapid traverse across the stock at probe height.
+      await _flush(['G90', 'G21', `G10 L20 P0 ${axis}${(mposVal - centerMach).toFixed(4)}`])
     } finally {
       setMode('idle')
     }
