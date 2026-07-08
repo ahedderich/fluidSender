@@ -25,6 +25,15 @@ FluidSender is a native FluidNC client — not a generic GRBL sender. It impleme
 - **Role-based access** — Viewer, Operator, and Admin roles granting different levels of access
 - **Multi-user/session state sync** — every connected browser shows the same state, dialogs, and selections where it matters, kept in sync in real time by the server
 - **Fully containerized** — single `docker-compose.yaml` for production deployment
+---
+
+## ATC Support
+
+FluidSender includes an ATC (Automatic Tool Changer) mode with magazine slot management, tool-aware job execution, and toolsetter-based length probing. However, I do not personally own an ATC spindle, so all ATC-specific features have been developed and tested in simulation only.
+
+My personal toolchange setup uses the **manual with toolsetter** strategy on physical hardware. I hope to upgrade at some point, but until then, ATC mode remains simulation-tested only.
+
+If you have an ATC-equipped machine and run into issues, have recommendations, or want to request a specific feature, please open an issue on this repository.
 
 ---
 
@@ -145,20 +154,6 @@ Connect the main UI to the simulator by setting the connection type to TCP and p
 
 ---
 
-## Development Phases
-
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 1 | Initial scaffolding | Complete |
-| 2 | UI design mockups | Complete |
-| 3 | Rust simulator implementation | Planned |
-| 4 | Release cycle & versioning | Planned |
-| 5 | Functional UI development | Planned |
-
-See [CLAUDE.md](CLAUDE.md) for detailed phase specifications.
-
----
-
 ## GRBL Compatibility
 
 FluidSender is purpose-built for FluidNC and there are no current plans to pursue broader GRBL-family compatibility.
@@ -180,16 +175,7 @@ Planned features and areas of future development, roughly in order of priority:
 - **Firmware update check** — automatic check for newer FluidNC firmware releases on connect, with a visible indicator when an update is available
 - **Firmware OTA update** — over-the-air firmware flashing via the FluidNC web server upload mechanism (or the web UI routes), similar to what the FluidNC web UI already supports — requires coordination with bdring before implementation
 - **3+1 and 5-axis extended support** — dedicated probing wizards and extended testing for machines with rotary axes; blocked on upgrading personal hardware first
-
----
-
-## ATC Support
-
-FluidSender includes an ATC (Automatic Tool Changer) mode with magazine slot management, tool-aware job execution, and toolsetter-based length probing. However, I do not personally own an ATC spindle, so all ATC-specific features have been developed and tested in simulation only.
-
-My personal toolchange setup uses the **manual with toolsetter** strategy on physical hardware. I hope to upgrade at some point, but until then, ATC mode remains simulation-tested only.
-
-If you have an ATC-equipped machine and run into issues, have recommendations, or want to request a specific feature, please open an issue on this repository.
+- **Full laser engraver and plasma cutter support** — I do not personally own either type of machine, so this hasn't been prioritized; might revisit depending on future need
 
 ---
 
@@ -221,4 +207,4 @@ CNC machines are physical hardware — please read the [Security Policy](SECURIT
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE).
