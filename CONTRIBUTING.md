@@ -227,4 +227,4 @@ Do **not** open a public issue for security vulnerabilities. See [SECURITY.md](S
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE) that covers this project.
+By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE) that covers this project.
