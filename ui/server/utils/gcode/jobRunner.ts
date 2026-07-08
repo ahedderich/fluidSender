@@ -20,6 +20,7 @@ import {
   unregisterToolchangeResolveHandler,
   setLoadedTool,
   getLoadedToolForMachine,
+  getConnection,
   pushToast,
   type PatchOp,
   type ToolchangeModalProps,
@@ -1034,12 +1035,7 @@ class JobRunner {
   }
 
   private async _getActiveMachineId(): Promise<string | null> {
-    try {
-      const config = await getConfig() as { machines?: Array<{ id: string }> }
-      return (config.machines?.[0]?.id) ?? null
-    } catch {
-      return null
-    }
+    return getConnection().machineId
   }
 
   private async _getToolchangeConfig(): Promise<ToolchangeConfig> {
