@@ -1,9 +1,18 @@
 import { machineConnection } from './connection'
 import { parseStatusLine, resetWco } from './statusParser'
+import { broadcastPatch, pushToast } from '../appState'
 import type { MachineStatus } from './types'
 
 const POLL_INTERVAL_MS = 200
 const POSITION_TOLERANCE = 0.001
+
+// FluidNC defaults `$10` (status_mask) to 1 — Position bit only. The Buffer bit
+// (`$10=3`) must be explicitly enabled or the sender's completion detection
+// (sender.ts _checkCompletion/onBufUpdate) can never confirm a chunk drained,
+// permanently wedging machine mode at 'sending'. Nudge it on every connect, and
+// retry a few times in case the first attempt races a busy/rejecting firmware.
+const BUFFER_WATCHDOG_POLLS = 10 // ~2s at POLL_INTERVAL_MS between retries
+const BUFFER_WATCHDOG_MAX_RETRIES = 3
 
 // Broadcast function — injected at startup to avoid circular imports with appState
 let _broadcast: ((msg: unknown) => void) | null = null
@@ -14,17 +23,32 @@ export function initPoller(broadcastFn: (msg: unknown) => void) {
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let lastStatus: MachineStatus | null = null
+let _bufferSeen = false
+let _bufferWatchdogPolls = 0
+let _bufferWatchdogRetries = 0
 
 /** Returns the last known machine status for inclusion in WS snapshots. */
 export function getLastMachineStatus(): MachineStatus | null {
   return lastStatus
 }
 
+/** Whether this connection's firmware has ever included `Bf:`/`Buf:` in a status report. */
+export function hasBufferReporting(): boolean {
+  return _bufferSeen
+}
+
 export function startPoller() {
   if (pollTimer) return
+  _bufferSeen = false
+  _bufferWatchdogPolls = 0
+  _bufferWatchdogRetries = 0
+  // $-commands aren't blocked by Alarm state, so this is safe to send immediately,
+  // before homing. Idempotent — a no-op on firmware where it's already set.
+  machineConnection.sendRaw('$10=3')
   pollTimer = setInterval(() => {
     if (machineConnection.isConnected) {
       machineConnection.sendByte(0x3F)
+      _checkBufferWatchdog()
     }
   }, POLL_INTERVAL_MS)
 }
@@ -32,12 +56,32 @@ export function startPoller() {
 export function stopPoller() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   lastStatus = null
+  _bufferSeen = false
   resetWco()
+}
+
+function _checkBufferWatchdog(): void {
+  if (_bufferSeen) return
+  _bufferWatchdogPolls++
+  if (_bufferWatchdogPolls < BUFFER_WATCHDOG_POLLS) return
+  _bufferWatchdogPolls = 0
+  if (_bufferWatchdogRetries >= BUFFER_WATCHDOG_MAX_RETRIES) return
+  _bufferWatchdogRetries++
+  machineConnection.sendRaw('$10=3')
+  if (_bufferWatchdogRetries >= BUFFER_WATCHDOG_MAX_RETRIES) {
+    broadcastPatch([pushToast({
+      id: `buf-report-warn-${Date.now()}`,
+      type: 'warning',
+      message: 'Machine did not confirm buffer status reporting ($10=3) — job/probe completion may be delayed.',
+      timeout: 8000,
+    })])
+  }
 }
 
 export function onStatusLine(line: string) {
   const status = parseStatusLine(line)
   if (!status) return
+  if (status.bufferReported) _bufferSeen = true
   const changed = _changed(lastStatus, status)
   lastStatus = status  // always update so buffer.planner is current for Buf routing
   if (changed) {
