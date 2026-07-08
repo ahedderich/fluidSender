@@ -64,7 +64,7 @@ import {
   getSenderStatus,
   isJobActive,
 } from '../utils/machine/sender'
-import { sendJog, cancelJog, onJogStatusUpdate } from '../utils/machine/jogger'
+import { sendJog, cancelJog, onJogStatusUpdate, onJogOk } from '../utils/machine/jogger'
 import { jobRunner } from '../utils/gcode/jobRunner'
 import { loadRuntimeLog } from '../utils/tool/runtimeLog'
 import { probingRunner } from '../utils/probing/probingRunner'
@@ -312,6 +312,7 @@ machineConnection.on('event', (ev) => {
       // error:N is a rejected-command acknowledgement — counts as an ack
       if (ev.line.startsWith('error:')) {
         onOk()
+        onJogOk()
       }
       const ver = parseGreetingVersion(ev.line)
       if (ver) {
@@ -344,6 +345,7 @@ machineConnection.on('event', (ev) => {
         break
       }
       onOk()
+      onJogOk()
       if (!isJobActive()) {
         broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
       }

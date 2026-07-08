@@ -5,6 +5,7 @@ import { useMovementEnabled } from './useMovementEnabled'
 
 const JOG_INTERVAL_MS = 50
 const JOG_LOOKAHEAD = 1.5
+const JOG_DECISION_MS = 200
 
 // Singleton state shared across all useJog() calls in this browser tab
 const _isJogging = ref(false)
@@ -14,6 +15,7 @@ const _xyStepSize = ref(1.0)
 const _zStepSize = ref(0.5)
 let _jogInterval: ReturnType<typeof setInterval> | null = null
 let _jogTimeout: ReturnType<typeof setTimeout> | null = null
+let _pendingTap: { dx: number; dy: number; dz: number } | null = null
 
 export function useJog() {
   const sync = useSyncStore()
@@ -61,24 +63,34 @@ export function useJog() {
   function startJog(dx: number, dy: number, dz: number) {
     if (!canJog.value) return
     _isJogging.value = true
+    _pendingTap = { dx, dy, dz }
     wsSend({ t: 'ui:jog:start' })
-    sendTapJog(dx, dy, dz)
+    // Decide tap-vs-continuous before issuing any command: nothing is sent until
+    // either the key/button is released (tap) or the decision window elapses (continuous).
     _jogTimeout = setTimeout(() => {
+      _jogTimeout = null
+      _pendingTap = null
+      sendContinuousJog(dx, dy, dz)
       _jogInterval = setInterval(() => sendContinuousJog(dx, dy, dz), JOG_INTERVAL_MS)
-    }, 400)
+    }, JOG_DECISION_MS)
   }
 
   function stopJog() {
+    const wasContinuous = _jogInterval !== null
     if (_jogTimeout) clearTimeout(_jogTimeout)
-    const wasRunning = _jogInterval !== null
     if (_jogInterval) clearInterval(_jogInterval)
     _jogTimeout = null
     _jogInterval = null
     if (_isJogging.value) {
       _isJogging.value = false
-      if (wasRunning) wsSend({ t: 'machine:jog:cancel' })
+      if (wasContinuous) {
+        wsSend({ t: 'machine:jog:cancel' })
+      } else if (_pendingTap) {
+        sendTapJog(_pendingTap.dx, _pendingTap.dy, _pendingTap.dz)
+      }
       wsSend({ t: 'ui:jog:stop' })
     }
+    _pendingTap = null
   }
 
   function onJoystickMove({ x, y, magnitude }: { x: number; y: number; magnitude: number }) {
