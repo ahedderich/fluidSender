@@ -257,6 +257,7 @@ export const useSettingsStore = defineStore('settings', () => {
       }
       return {
         ...m,
+        toolchange: m.toolchange ?? { strategy: 'manual-basic' as const },
         macros: _migrateMacros(m.macros ?? []),
       }
     })

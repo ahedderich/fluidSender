@@ -31,6 +31,21 @@ jobs:
         with:
           bun-version: latest
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fluid-sim/sim/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('fluid-sim/sim/Cargo.lock') }}
+
+      - name: Build simulator
+        working-directory: fluid-sim/sim
+        run: cargo build --release
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -40,8 +55,26 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Start simulator
+        working-directory: fluid-sim/sim
+        run: |
+          ./target/release/fluidsim &
+          echo $! > /tmp/fluidsim.pid
+          for i in $(seq 1 20); do
+            (echo > /dev/tcp/127.0.0.1/8766) >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+
       - name: Test
+        env:
+          SIM_HOST: 127.0.0.1
+          SIM_PORT: 8765
+          SIM_CONTROL_PORT: 8766
         run: bun run test
+
+      - name: Stop simulator
+        if: always()
+        run: kill "$(cat /tmp/fluidsim.pid)" 2>/dev/null || true
 
       - name: Build
         run: bun run build

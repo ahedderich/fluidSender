@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info, warn};
@@ -87,25 +87,73 @@ fn log_console(console: &ConsoleBroadcast, dir: &'static str, source: &str, text
     });
 }
 
-/// Split a raw chunk (bytes up to and including `\n`) into the text line and any
-/// real-time bytes that were embedded in it.  Real-time bytes (0x85, 0x18, `?`, etc.)
-/// are binary commands that FluidNC clients may send without a newline; they can end up
-/// concatenated with the next newline-terminated line in the TCP buffer.  Extracting them
-/// first lets us handle them without attempting invalid UTF-8 decoding via `lines()`.
-fn extract_line_and_rt(buf: &[u8]) -> (String, Vec<u8>) {
-    let mut line_bytes: Vec<u8> = Vec::with_capacity(buf.len());
-    let mut rt_bytes: Vec<u8> = Vec::new();
-    for &b in buf {
-        if crate::protocol::parser::is_realtime_byte(b) {
-            rt_bytes.push(b);
-        } else {
-            line_bytes.push(b);
-        }
-    }
+/// Pulls one complete newline-terminated line out of `raw_buf`, if one is already
+/// buffered (a single socket read can return several commands at once), and decides
+/// whether it should be dispatched. `saw_rt` tracks whether a real-time byte (`?`,
+/// jog-cancel, etc.) was seen since the last completed line: a client may send one of
+/// those with no framing of its own (e.g. `?\n`), so once the trailing `\n` shows up
+/// the "line" left behind is empty — that must be swallowed, not dispatched as a
+/// spurious blank command (which would send an extra, unrequested `ok`). A genuine
+/// blank line (no real-time bytes involved) still dispatches normally. Resets
+/// `saw_rt` to false once a line is taken, regardless of outcome.
+fn take_buffered_line(raw_buf: &mut Vec<u8>, saw_rt: &mut bool) -> Option<String> {
+    let pos = raw_buf.iter().position(|&b| b == b'\n')?;
+    let line_bytes: Vec<u8> = raw_buf.drain(..=pos).collect();
+    let had_rt = std::mem::replace(saw_rt, false);
     let line = String::from_utf8_lossy(&line_bytes)
         .trim_end_matches(['\n', '\r'])
         .to_string();
-    (line, rt_bytes)
+    if line.is_empty() && had_rt {
+        None
+    } else {
+        Some(line)
+    }
+}
+
+/// Repeatedly drains suppressed (real-time-only) empty lines from `raw_buf` until it
+/// finds one worth dispatching, or the buffer runs out of complete lines. Needed
+/// because a single read can leave several newline-terminated chunks queued up.
+fn next_dispatchable_line(raw_buf: &mut Vec<u8>, saw_rt: &mut bool) -> Option<String> {
+    while raw_buf.contains(&b'\n') {
+        if let Some(line) = take_buffered_line(raw_buf, saw_rt) {
+            return Some(line);
+        }
+    }
+    None
+}
+
+/// Handles one command line received while a B2 op (probe/dwell/homing/M0) is
+/// pending: defers it for replay once the op resolves, and — if `in_pause` (M0
+/// waiting on cycle-start) — checks whether Hold has since been exited. Real-time
+/// bytes in the line have already been stripped and dispatched by the caller.
+/// Returns `true` if the pending-wait loop should break (M0 resumed).
+async fn process_pending_line(
+    ql: String,
+    in_pause: bool,
+    shared: &SharedMachineState,
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    console: &ConsoleBroadcast,
+    peer: &str,
+    deferred: &mut std::collections::VecDeque<String>,
+) -> anyhow::Result<bool> {
+    // Real-time bytes (including `?`) are stripped and dispatched by the caller before
+    // `ql` is assembled, so `ql` is always a genuine command/blank line here — including
+    // blank lines, which still need to be deferred so they get their `ok` in turn.
+    log_console(console, "rx", peer, &ql);
+    deferred.push_back(ql);
+    if in_pause {
+        // CycleStart (~) sets state to Idle via handle_realtime.
+        // Check whether Hold was exited by any means.
+        let state = shared.read().await;
+        if !matches!(state.status, MachineStatus::Hold) {
+            drop(state);
+            let resp = response::ok();
+            writer.write_all(resp.as_bytes()).await?;
+            log_console(console, "tx", peer, resp.trim_end());
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 async fn handle_connection(
@@ -119,6 +167,8 @@ async fn handle_connection(
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut raw_buf: Vec<u8> = Vec::new();
+    let mut saw_rt = false;
+    let mut chunk = [0u8; 1024];
     // Channel for async alarm messages from background move-result monitors.
     let (alarm_tx, mut alarm_rx) = mpsc::channel::<String>(32);
 
@@ -138,10 +188,15 @@ async fn handle_connection(
             Eof,
         }
 
-        // Deferred lines run first; otherwise read from the socket.
+        // Deferred lines run first; then any line already fully buffered from a
+        // previous socket read (one `read()` can return several newline-terminated
+        // commands at once); only then wait on the socket.
         let next = if let Some(l) = deferred.pop_front() {
             // Already rx-logged when it was received during the pending wait.
             Next::Line(l)
+        } else if let Some(line) = next_dispatchable_line(&mut raw_buf, &mut saw_rt) {
+            log_console(&console, "rx", &peer, &line);
+            Next::Line(line)
         } else {
             tokio::select! {
                 biased;
@@ -153,35 +208,34 @@ async fn handle_connection(
                     Next::Skip
                 }
 
-                // read_until reads raw bytes — no UTF-8 validation — so real-time bytes like
-                // 0x85 (jog cancel) never cause the UTF-8 decode error that `lines()` would.
-                n = reader.read_until(b'\n', &mut raw_buf) => {
+                // Real-time bytes (0x85 jog cancel, `?` status, etc.) have no line framing —
+                // real FluidNC answers them the instant they arrive. Dispatch each one as soon
+                // as it's read instead of waiting for a `\n` to show up later in the stream
+                // (waiting on read_until here would let a lone `?` sit unanswered for as long as
+                // the connection stays otherwise idle).
+                n = reader.read(&mut chunk) => {
                     let n = n?;
                     if n == 0 {
                         Next::Eof
                     } else {
-                        let (line, rt_bytes) = extract_line_and_rt(&raw_buf);
-                        raw_buf.clear();
-
-                        log_console(&console, "rx", &peer, &line);
-
-                        // Handle real-time bytes extracted from this chunk.
-                        for b in &rt_bytes {
-                            let response = handle_realtime(classify(*b), &shared, &broadcast).await;
-                            if let Some(resp) = response {
-                                writer.write_all(resp.as_bytes()).await?;
-                                log_console(&console, "tx", &peer, resp.trim_end());
+                        for &b in &chunk[..n] {
+                            if crate::protocol::parser::is_realtime_byte(b) {
+                                saw_rt = true;
+                                let response = handle_realtime(classify(b), &shared, &broadcast).await;
+                                if let Some(resp) = response {
+                                    writer.write_all(resp.as_bytes()).await?;
+                                    log_console(&console, "tx", &peer, resp.trim_end());
+                                }
+                            } else {
+                                raw_buf.push(b);
                             }
                         }
 
-                        // Only dispatch a line command if there is actual text content, OR if
-                        // the chunk was a bare blank line (no RT bytes mixed in).  A chunk that
-                        // contained only real-time bytes (e.g. \x85 flushed out by the next \n)
-                        // should not generate a spurious `ok`.
-                        if line.is_empty() && !rt_bytes.is_empty() {
-                            Next::Skip
-                        } else {
+                        if let Some(line) = next_dispatchable_line(&mut raw_buf, &mut saw_rt) {
+                            log_console(&console, "rx", &peer, &line);
                             Next::Line(line)
+                        } else {
+                            Next::Skip
                         }
                     }
                 }
@@ -210,6 +264,25 @@ async fn handle_connection(
             // for ~ (cycle-start) before sending ok and breaking.
             let mut in_pause = false;
             loop {
+                // Service any command already fully buffered from a previous read
+                // before touching the socket again (see the outer loop's comment).
+                if let Some(ql) = next_dispatchable_line(&mut raw_buf, &mut saw_rt) {
+                    if process_pending_line(
+                        ql,
+                        in_pause,
+                        &shared,
+                        &mut writer,
+                        &console,
+                        &peer,
+                        &mut deferred,
+                    )
+                    .await?
+                    {
+                        break;
+                    }
+                    continue;
+                }
+
                 tokio::select! {
                     // Guard prevents polling a consumed oneshot in the pause phase.
                     result = &mut rx, if !in_pause => {
@@ -233,46 +306,28 @@ async fn handle_connection(
                             break;
                         }
                     }
-                    inner_n = reader.read_until(b'\n', &mut raw_buf) => {
-                        match inner_n? {
-                            0 => return Ok(()), // EOF
-                            _ => {
-                                let (ql, ql_rt) = extract_line_and_rt(&raw_buf);
-                                raw_buf.clear();
-
-                                log_console(&console, "rx", &peer, &ql);
-
-                                for b in &ql_rt {
-                                    let resp = handle_realtime(classify(*b), &shared, &broadcast).await;
-                                    if let Some(r) = resp {
-                                        writer.write_all(r.as_bytes()).await?;
-                                        log_console(&console, "tx", &peer, r.trim_end());
-                                    }
+                    // Real-time bytes (`?` status, etc.) are dispatched the instant they
+                    // arrive rather than waiting for a `\n` — see the outer loop's comment.
+                    n = reader.read(&mut chunk) => {
+                        let n = n?;
+                        if n == 0 {
+                            return Ok(()); // EOF
+                        }
+                        for &b in &chunk[..n] {
+                            if crate::protocol::parser::is_realtime_byte(b) {
+                                saw_rt = true;
+                                let resp = handle_realtime(classify(b), &shared, &broadcast).await;
+                                if let Some(r) = resp {
+                                    writer.write_all(r.as_bytes()).await?;
+                                    log_console(&console, "tx", &peer, r.trim_end());
                                 }
-
-                                // Status queries are answered in real time; every other
-                                // command line is deferred until the pending op resolves
-                                // (skipping RT-only chunks, same as the outer loop).
-                                if matches!(parse_line(&ql), ParsedLine::StatusQuery) {
-                                    let state = shared.read().await;
-                                    let resp = response::status(&state);
-                                    writer.write_all(resp.as_bytes()).await?;
-                                    log_console(&console, "tx", &peer, resp.trim_end());
-                                } else if !ql.is_empty() || ql_rt.is_empty() {
-                                    deferred.push_back(ql);
-                                }
-                                if in_pause {
-                                    // CycleStart (~) sets state to Idle via handle_realtime.
-                                    // Check whether Hold was exited by any means.
-                                    let state = shared.read().await;
-                                    if !matches!(state.status, MachineStatus::Hold) {
-                                        drop(state);
-                                        let resp = response::ok();
-                                        writer.write_all(resp.as_bytes()).await?;
-                                        log_console(&console, "tx", &peer, resp.trim_end());
-                                        break;
-                                    }
-                                }
+                            } else {
+                                raw_buf.push(b);
+                            }
+                        }
+                        if let Some(ql) = next_dispatchable_line(&mut raw_buf, &mut saw_rt) {
+                            if process_pending_line(ql, in_pause, &shared, &mut writer, &console, &peer, &mut deferred).await? {
+                                break;
                             }
                         }
                     }
