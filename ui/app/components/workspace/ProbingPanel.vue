@@ -684,6 +684,7 @@ const probeCompensation = computed(() => probeTool.value?.probeCompensation ?? D
 const cornerCfg = reactive({
   safeHeightMm: 20,
   buffer: 10,
+  probeHeightMm: -3,
   skipX: false,
   skipY: false,
   skipZ: false,
@@ -693,6 +694,7 @@ const cornerCfg = reactive({
 const centerOutCfg = reactive({
   safeHeightMm: 20,
   buffer: 10,
+  probeHeightMm: -3,
   skipX: false,
   skipY: false,
   skipZ: false,
