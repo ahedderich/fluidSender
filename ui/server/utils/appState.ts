@@ -189,7 +189,11 @@ const DEFAULT_CONFIG: AppConfig = {
     units: 'mm',
     macros: [],
     viewport: { defaultView: 'iso', showGrid: true, showAxes: true },
-    jog: { slowSpeed: 100, mediumSpeed: 500, fastSpeed: 2000, xyStep: 1.0, zStep: 0.5 },
+    jog: {
+      slow: { speed: 100, xyStep: 0.1, zStep: 0.05 },
+      medium: { speed: 500, xyStep: 1.0, zStep: 0.5 },
+      fast: { speed: 2000, xyStep: 5.0, zStep: 2.0 },
+    },
     shortcuts: {
       jogXPos: 'ArrowRight',
       jogXNeg: 'ArrowLeft',
