@@ -161,15 +161,13 @@ See [CLAUDE.md](CLAUDE.md) for detailed phase specifications.
 
 ## GRBL Compatibility
 
-FluidSender is purpose-built for FluidNC and there are no plans to pursue GRBL compatibility at this point in time.
+FluidSender is purpose-built for FluidNC and there are no current plans to pursue broader GRBL-family compatibility.
 
-The intent is to maintain a GCode sender that does not compromise on features or functionality in order to accommodate backwards compatibility with legacy GRBL firmware. Unless a future GRBL release were to support the same feature set and internal structure as FluidNC in a comparable way, there is no straightforward path to meaningful compatibility.
+The original [grbl](https://github.com/gnea/grbl) project is discontinued (no commits since August 2019); its own wiki points to [grblHAL](https://github.com/grblHAL), [µCNC](https://github.com/Paciente8159/uCNC), [FluidNC](https://github.com/bdring/FluidNC), and [RabbitGRBL](https://github.com/SourceRabbit/RabbitGRBL) as the active successor projects. FluidSender's job execution engine tracks planner state via the GRBL v1.1 `Bf:` status field (planner-free / RX-free block counts) to determine which commands have physically left the planner, not merely which lines have been sent — this is what backs crash detection and pause/resume recovery. That mechanism is inherited GRBL v1.1 protocol, not a FluidNC-specific feature: grblHAL reports an identical `Bf:` field under the same `$10` status-mask bit, and µCNC reports the equivalent data under a `Buf:` field name. So the buffer-tracking approach itself is likely portable to other GRBL-successor firmware with modest changes, not a fundamental blocker.
 
-The most significant blocker is execution tracking. FluidSender's job execution engine relies on FluidNC's planner queue reporting via the `Bf:` field to determine, with a high degree of confidence, which commands have physically left the planner and been executed — not merely which lines have been sent. This distinction is fundamental to the crash detection and pause/resume recovery features. Supporting an alternative firmware would require separate execution tracking logic, conditional code paths, and significant testing effort — all for a use case that would still be limited by the capabilities of the connected firmware.
+The real blocker is firmware configuration handling. FluidSender's settings UI reads and writes FluidNC's hierarchical `$Config` YAML document as a single structured payload. None of the other successor projects expose an equivalent: grblHAL's closest analog (`$EG`/`$ESG`/`$ESH`) is a hierarchical *enumeration* delivered as many flat, prefixed lines that would need to be reassembled into a tree client-side, and µCNC/RabbitGRBL expose only flat, numbered `$`-style settings with no structured readback at all. Supporting any of them would mean a genuinely different settings data model, not just a parser tweak.
 
-The firmware configuration handling is another area of divergence: FluidNC's hierarchical YAML-based config structure has no direct equivalent in standard GRBL.
-
-None of this is to say it would be impossible, but for now the added complexity offers little value relative to the investment required.
+None of this has been tested against real hardware other than FluidNC. It's plausible that core connectivity, jogging, and job execution would work against grblHAL or µCNC with limited changes — but until it's actually tried on real hardware, that's an informed guess, not a claim of compatibility.
 
 ---
 
