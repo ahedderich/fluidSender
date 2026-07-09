@@ -239,7 +239,11 @@ pub fn gcode_params(state: &MachineState) -> String {
 
     let mut out = String::new();
     for wcs in 0..6u8 {
-        let offset = if wcs == state.modal.wcs { &active_wco } else { &zero };
+        let offset = if wcs == state.modal.wcs {
+            &active_wco
+        } else {
+            &zero
+        };
         out.push_str(&format!("[G{}:{}]\r\n", 54 + wcs, offset));
     }
     out.push_str(&format!("[G28:{}]\r\n", zero));
