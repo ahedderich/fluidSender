@@ -77,7 +77,7 @@
     </div>
 
     <!-- Loaded tool (bottom-left, above progress bar) -->
-    <div v-if="machine.connected" class="absolute bottom-14 left-2.5 z-10 flex items-center gap-2 px-2.5 py-1.5 bg-slate-800/80 backdrop-blur-sm border border-slate-600/50 rounded-md text-xs">
+    <div v-if="machine.connected" class="group absolute bottom-14 left-2.5 z-10 flex items-center gap-2 px-2.5 py-1.5 bg-slate-800/80 backdrop-blur-sm border border-slate-600/50 rounded-md text-xs">
       <template v-if="loadedLibTool">
         <span :class="loadedBadgeClass" class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0">{{ loadedLibTool.number }}</span>
         <span class="text-slate-300 max-w-36 truncate">{{ loadedLibTool.name }}</span>
@@ -93,6 +93,40 @@
         </svg>
         <span class="text-slate-500 italic">No tool loaded</span>
       </template>
+
+      <template v-if="toolchangeStrategy !== 'manual-basic'">
+      <span class="w-px h-4 bg-slate-600/50 shrink-0" />
+
+      <span
+        v-if="machine.toolLengthOffset !== null"
+        class="text-slate-400 font-mono whitespace-nowrap"
+        title="Currently active tool length offset (G43.1), as confirmed by the machine"
+      >TLO {{ machine.toolLengthOffset.toFixed(3) }}</span>
+      <span
+        v-else
+        class="flex items-center gap-1 text-amber-400 whitespace-nowrap"
+        title="Tool length offset not confirmed this session — probe the loaded tool on the toolsetter before starting a job"
+      >
+        <svg class="w-3 h-3 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2 1 21h22L12 2zm0 5.5 6.9 12H5.1L12 7.5zM11 10v5h2v-5h-2zm0 6.5v2h2v-2h-2z"/></svg>
+        TLO not set
+      </span>
+      </template>
+
+      <!-- Measure offset: always shown while TLO is unset, otherwise reveals on hover -->
+      <button
+        v-if="toolchangeStrategy === 'manual-toolsetter'"
+        :class="machine.toolLengthOffset === null
+          ? 'opacity-100'
+          : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'"
+        class="flex items-center gap-1 px-1.5 py-0.5 bg-slate-700/80 hover:bg-blue-600 text-slate-300 hover:text-white rounded transition-[opacity,background-color] whitespace-nowrap"
+        title="Probe and set the tool length offset for the loaded tool"
+        @click="handleMeasureOffset"
+      >
+        <svg class="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+        </svg>
+        Measure
+      </button>
     </div>
 
     <!-- Progress bar (bottom) -->
@@ -126,11 +160,14 @@ import type * as THREE from 'three'
 import { useMachineStore } from '~/stores/machine'
 import { useSettingsStore } from '~/stores/settings'
 import { useJobControl } from '~/composables/useJobControl'
+import { useConfirm } from '~/composables/useConfirm'
+import { wsSend } from '~/composables/useWsSend'
 import type { LineVector } from '~/types/job'
 
 const machine = useMachineStore()
 const settings = useSettingsStore()
 const { job } = useJobControl()
+const { confirm } = useConfirm()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -177,6 +214,8 @@ const etaLabel = computed(() => {
   return `ETA: ${new Date(eta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
 })
 
+const toolchangeStrategy = computed(() => settings.activeMachine?.toolchange?.strategy ?? 'manual-basic')
+
 const allToolLibrary = computed(() => [
   ...machine.toolLibrary.machine,
   ...machine.toolLibrary.app,
@@ -205,6 +244,16 @@ const loadedBadgeClass = computed(() => {
 })
 
 const toolDiameter = computed(() => loadedLibTool.value?.diameter ?? 8)
+
+async function handleMeasureOffset() {
+  const ok = await confirm({
+    title: 'Measure Tool Offset',
+    message: 'The machine must be homed. This will move to the toolsetter position (in machine coordinates) and probe the currently loaded tool. Start the measurement now?',
+    confirmLabel: 'Start Measurement',
+  })
+  if (!ok) return
+  wsSend({ t: 'tool:measureOffset', payload: {} })
+}
 
 const machineBounds = computed(() => {
   const axes = settings.activeMachine?.fluidncConfig?.axes

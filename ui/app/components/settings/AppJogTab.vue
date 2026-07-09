@@ -1,43 +1,30 @@
 <template>
   <SettingsCard title="Speed Presets">
-    <SettingsRow label="Slow">
-      <div class="flex items-center gap-1.5">
-        <input v-model.number="s.app.jog.slowSpeed" type="number" min="1" class="settings-input w-28 font-mono" />
-        <span class="text-xs text-gray-400 dark:text-slate-500">mm/min</span>
-      </div>
-    </SettingsRow>
-    <SettingsRow label="Medium">
-      <div class="flex items-center gap-1.5">
-        <input v-model.number="s.app.jog.mediumSpeed" type="number" min="1" class="settings-input w-28 font-mono" />
-        <span class="text-xs text-gray-400 dark:text-slate-500">mm/min</span>
-      </div>
-    </SettingsRow>
-    <SettingsRow label="Fast">
-      <div class="flex items-center gap-1.5">
-        <input v-model.number="s.app.jog.fastSpeed" type="number" min="1" class="settings-input w-28 font-mono" />
-        <span class="text-xs text-gray-400 dark:text-slate-500">mm/min</span>
-      </div>
-    </SettingsRow>
-  </SettingsCard>
+    <div class="grid grid-cols-4 gap-2 px-3 py-2 items-center">
+      <div />
+      <div class="text-xs text-gray-400 dark:text-slate-500 text-center">Speed (mm/min)</div>
+      <div class="text-xs text-gray-400 dark:text-slate-500 text-center">XY Step (mm)</div>
+      <div class="text-xs text-gray-400 dark:text-slate-500 text-center">Z Step (mm)</div>
 
-  <SettingsCard title="Step Size">
-    <SettingsRow label="XY Step">
-      <div class="flex items-center gap-1.5">
-        <input v-model.number="s.app.jog.xyStep" type="number" min="0.001" step="0.1" class="settings-input w-28 font-mono" />
-        <span class="text-xs text-gray-400 dark:text-slate-500">mm / press</span>
-      </div>
-    </SettingsRow>
-    <SettingsRow label="Z Step">
-      <div class="flex items-center gap-1.5">
-        <input v-model.number="s.app.jog.zStep" type="number" min="0.001" step="0.1" class="settings-input w-28 font-mono" />
-        <span class="text-xs text-gray-400 dark:text-slate-500">mm / press</span>
-      </div>
-    </SettingsRow>
+      <template v-for="level in levels" :key="level.key">
+        <div class="text-sm text-gray-700 dark:text-slate-300">{{ level.label }}</div>
+        <input v-model.number="s.app.jog[level.key].speed" type="number" min="1" class="settings-input w-full font-mono text-center" />
+        <input v-model.number="s.app.jog[level.key].xyStep" type="number" min="0.001" step="0.1" class="settings-input w-full font-mono text-center" />
+        <input v-model.number="s.app.jog[level.key].zStep" type="number" min="0.001" step="0.1" class="settings-input w-full font-mono text-center" />
+      </template>
+    </div>
   </SettingsCard>
 </template>
 
 <script setup lang="ts">
+import type { JogSettings } from '~/stores/settings'
 import { useSettingsStore } from '~/stores/settings'
 
 const s = useSettingsStore()
+
+const levels: Array<{ key: keyof JogSettings; label: string }> = [
+  { key: 'slow', label: 'Slow' },
+  { key: 'medium', label: 'Medium' },
+  { key: 'fast', label: 'Fast' },
+]
 </script>

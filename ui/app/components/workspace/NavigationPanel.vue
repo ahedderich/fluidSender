@@ -147,11 +147,12 @@
       <!-- Col 5: Goto / parking buttons -->
       <div class="flex flex-col gap-1 shrink-0 w-16 ml-4">
         <button
-          :disabled="!movementEnabled"
-          @click="machine.sendCommand('$H')"
+          :disabled="!movementEnabled || !parkPosition"
+          :title="parkPosition ? '' : 'Configure a parking position in machine settings first'"
+          @click="gotoParking"
           class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors truncate disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Parking
+          Park
         </button>
         <button
           :disabled="!movementEnabled"
@@ -261,6 +262,7 @@
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
+import { useSettingsStore } from '~/stores/settings'
 import { useSyncStore } from '~/stores/sync'
 import { useNav } from '~/composables/useNav'
 import { useModals } from '~/composables/useModals'
@@ -268,10 +270,22 @@ import { useMovementEnabled } from '~/composables/useMovementEnabled'
 import { useJog } from '~/composables/useJog'
 
 const machine = useMachineStore()
+const settings = useSettingsStore()
 const sync = useSyncStore()
 const { navMode } = useNav()
 const modals = useModals()
 const movementEnabled = useMovementEnabled()
+
+const parkPosition = computed(() => settings.activeMachine?.parkPosition)
+
+function gotoParking() {
+  const park = parkPosition.value
+  if (!park) return
+  machine.sendCommand('G90')
+  machine.sendCommand('G0 G54 Z0')
+  machine.sendCommand(`G0 G54 X${park.x.toFixed(3)} Y${park.y.toFixed(3)}`)
+  machine.sendCommand(`G0 G54 Z${park.z.toFixed(3)}`)
+}
 
 const {
   canJog,

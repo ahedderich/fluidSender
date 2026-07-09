@@ -24,11 +24,15 @@ export function useJog() {
 
   const canJog = computed(() => movementEnabled.value && (!sync.jogActive || _isJogging.value))
 
-  const speedPresets = computed(() => [
-    { label: 'Slow', feedRate: settings.app.jog.slowSpeed, xyStep: 0.1, zStep: 0.05 },
-    { label: 'Med', feedRate: settings.app.jog.mediumSpeed, xyStep: 1.0, zStep: 0.5 },
-    { label: 'Fast', feedRate: settings.app.jog.fastSpeed, xyStep: 5.0, zStep: 2.0 },
-  ])
+  const speedPresets = computed(() => {
+    const override = settings.activeMachine?.jogOverride
+    const speeds = override?.enabled ? override : settings.app.jog
+    return [
+      { label: 'Slow', feedRate: speeds.slow.speed, xyStep: speeds.slow.xyStep, zStep: speeds.slow.zStep },
+      { label: 'Med', feedRate: speeds.medium.speed, xyStep: speeds.medium.xyStep, zStep: speeds.medium.zStep },
+      { label: 'Fast', feedRate: speeds.fast.speed, xyStep: speeds.fast.xyStep, zStep: speeds.fast.zStep },
+    ]
+  })
 
   function selectSpeed(i: number) {
     _activeSpeedIndex.value = i

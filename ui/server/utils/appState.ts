@@ -68,6 +68,8 @@ export interface ConnectionState {
   status: string
   firmwareVersion: string
   simulatorMode: boolean
+  /** Null = unknown/unverified this session — never a bare 0 (see toolLengthState.ts). */
+  toolLengthOffset: number | null
 }
 
 // ─── Shared UI state (server-authoritative, pushed to every client) ─────────────
@@ -189,7 +191,11 @@ const DEFAULT_CONFIG: AppConfig = {
     units: 'mm',
     macros: [],
     viewport: { defaultView: 'iso', showGrid: true, showAxes: true },
-    jog: { slowSpeed: 100, mediumSpeed: 500, fastSpeed: 2000, xyStep: 1.0, zStep: 0.5 },
+    jog: {
+      slow: { speed: 100, xyStep: 0.1, zStep: 0.05 },
+      medium: { speed: 500, xyStep: 1.0, zStep: 0.5 },
+      fast: { speed: 2000, xyStep: 5.0, zStep: 2.0 },
+    },
     shortcuts: {
       jogXPos: 'ArrowRight',
       jogXNeg: 'ArrowLeft',
@@ -308,6 +314,7 @@ const connection: ConnectionState = {
   status: 'DISCONNECTED',
   firmwareVersion: '',
   simulatorMode: false,
+  toolLengthOffset: null,
 }
 
 // ─── Peer registry ────────────────────────────────────────────────────────────
@@ -420,7 +427,7 @@ export interface ToolchangeModalProps {
   currentToolNumber: number | null
   nextToolNumber: number | null
   isJobContext: boolean
-  operation?: 'load' | 'unload'
+  operation?: 'load' | 'unload' | 'measure'
   probedOffset?: number
   errorMessage?: string
 }

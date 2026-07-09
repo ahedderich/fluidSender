@@ -38,6 +38,8 @@ pub enum ParsedLine {
     LocalFsShow(String),
     /// `$G` — report active GCode modal state
     GCodeQuery,
+    /// `$#` — report GCode parameters (WCS/G92 offsets, TLO, last probe result)
+    GCodeParams,
     /// `$Config/key` — read a single config key
     ConfigRead(String),
     /// `$key=value` — write a config/settings value
@@ -107,6 +109,9 @@ fn parse_dollar(rest: &str) -> ParsedLine {
     }
     if rest == "G" {
         return ParsedLine::GCodeQuery;
+    }
+    if rest == "#" {
+        return ParsedLine::GCodeParams;
     }
     if rest == "H" {
         return ParsedLine::Home;

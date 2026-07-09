@@ -57,10 +57,6 @@
         <input v-model.number="(tc as any).position.toolsetterApproachZ" type="number" step="0.1" class="settings-input w-28 font-mono" />
         <span class="text-xs text-gray-400 ml-1.5">mm</span>
       </SettingsRow>
-      <SettingsRow label="Reference Z">
-        <input v-model.number="(tc as any).position.toolsetterReferenceZ" type="number" step="0.001" class="settings-input w-28 font-mono" />
-        <span class="text-xs text-gray-400 ml-1.5">mm</span>
-      </SettingsRow>
       <SettingsRow label="Max Probe Travel">
         <input v-model.number="(tc as any).position.probeDistance" type="number" min="1" step="1" class="settings-input w-28 font-mono" />
         <span class="text-xs text-gray-400 ml-1.5">mm</span>
@@ -178,6 +174,14 @@
       </template>
     </SettingsCard>
   </template>
+
+  <!-- shared across every strategy except manual-basic, where there is no offset to track -->
+  <SettingsCard v-if="tc.strategy !== 'manual-basic'" title="Job Safety">
+    <SettingsRow label="Warn on Unconfirmed Tool Offset">
+      <UiToggleSwitch v-model="confirmMissingOffset" />
+      <span class="text-xs text-gray-400 ml-1.5">Confirm before starting/resuming a job if the tool length offset hasn't been verified this session</span>
+    </SettingsRow>
+  </SettingsCard>
 </template>
 
 <script setup lang="ts">
@@ -193,7 +197,7 @@ const tc = computed<ToolchangeConfig>(() => {
 const TOOLSETTER_DEFAULTS = {
   safeZ: -10, toolchangeX: 0, toolchangeY: 0, toolchangeZ: -30,
   toolsetterX: 0, toolsetterY: 0, toolsetterApproachZ: -20,
-  toolsetterReferenceZ: -50, probeDistance: 30, zOffset: 0, confirmAfterProbe: true,
+  probeDistance: 30, zOffset: 0, confirmAfterProbe: true,
   probeConfig: { wiggleEnabled: false, fastFeedMmPerMin: 300, slowFeedMmPerMin: 60, cycles: 2, averageN: 1 },
 }
 
@@ -203,13 +207,24 @@ function changeStrategy(newStrategy: ToolchangeConfig['strategy']) {
   let newTc: ToolchangeConfig
   switch (newStrategy) {
     case 'manual-basic':  newTc = { strategy: 'manual-basic' }; break
-    case 'manual-toolsetter': newTc = { strategy: 'manual-toolsetter', position: { ...TOOLSETTER_DEFAULTS } }; break
-    case 'atc-passthrough': newTc = { strategy: 'atc-passthrough', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [] }; break
-    case 'atc-managed': newTc = { strategy: 'atc-managed', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [] }; break
-    case 'custom-macro': newTc = { strategy: 'custom-macro', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [] }; break
+    case 'manual-toolsetter': newTc = { strategy: 'manual-toolsetter', position: { ...TOOLSETTER_DEFAULTS }, confirmMissingOffset: true }; break
+    case 'atc-passthrough': newTc = { strategy: 'atc-passthrough', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [], confirmMissingOffset: true }; break
+    case 'atc-managed': newTc = { strategy: 'atc-managed', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [], confirmMissingOffset: true }; break
+    case 'custom-macro': newTc = { strategy: 'custom-macro', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [], confirmMissingOffset: true }; break
   }
   machine.value.toolchange = newTc
 }
+
+const confirmMissingOffset = computed<boolean>({
+  get: () => {
+    const t = tc.value
+    return t.strategy === 'manual-basic' ? true : (t.confirmMissingOffset ?? true)
+  },
+  set: (val: boolean) => {
+    const t = tc.value
+    if (t.strategy !== 'manual-basic') t.confirmMissingOffset = val
+  },
+})
 
 const strategyDescription = computed(() => {
   switch (tc.value.strategy) {

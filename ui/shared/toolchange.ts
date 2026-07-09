@@ -17,7 +17,6 @@ export interface ToolsetterConfig extends ToolchangeSpatialConfig {
   toolsetterX: number
   toolsetterY: number
   toolsetterApproachZ: number
-  toolsetterReferenceZ: number
   probeDistance: number
   probeConfig: ProbeConfig
   zOffset: number
@@ -31,21 +30,24 @@ export interface MagazineConfig {
 
 export type ToolchangeConfig =
   | { strategy: 'manual-basic' }
-  | { strategy: 'manual-toolsetter'; position: ToolsetterConfig }
+  | { strategy: 'manual-toolsetter'; position: ToolsetterConfig; confirmMissingOffset?: boolean }
   | {
       strategy: 'atc-passthrough'
       magazine: MagazineConfig
       magazineSlots: (number | null)[]
+      confirmMissingOffset?: boolean
     }
   | {
       strategy: 'atc-managed'
       macro: string
       magazine: MagazineConfig
       magazineSlots: (number | null)[]
+      confirmMissingOffset?: boolean
     }
   | {
       strategy: 'custom-macro'
       macro: string
       magazine: MagazineConfig
       magazineSlots: (number | null)[]
+      confirmMissingOffset?: boolean
     }

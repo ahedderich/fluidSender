@@ -45,6 +45,7 @@ export interface ServerConnectionState {
   status: string
   firmwareVersion: string
   simulatorMode: boolean
+  toolLengthOffset: number | null
 }
 
 export const useMachineStore = defineStore('machine', () => {
@@ -54,6 +55,7 @@ export const useMachineStore = defineStore('machine', () => {
   const connectedMachineId = ref<string | null>(null)
   const firmwareVersion = ref('')
   const simulatorMode = ref(false)
+  const toolLengthOffset = ref<number | null>(null)
   const machineState = ref<MachineStatus['state']>('Disconnected')
 
   const machinePos = ref<Position>({ x: 0, y: 0, z: 0 })
@@ -106,6 +108,7 @@ export const useMachineStore = defineStore('machine', () => {
     connectedMachineId.value = state.machineId
     firmwareVersion.value = state.firmwareVersion ?? ''
     simulatorMode.value = state.simulatorMode ?? false
+    toolLengthOffset.value = state.toolLengthOffset ?? null
 
     if (!state.connected) {
       limitSwitches.value = []
@@ -183,6 +186,7 @@ export const useMachineStore = defineStore('machine', () => {
     connectedMachineId,
     firmwareVersion,
     simulatorMode,
+    toolLengthOffset,
     machineState,
     machinePos,
     workPos,
