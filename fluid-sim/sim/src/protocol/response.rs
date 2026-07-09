@@ -228,6 +228,29 @@ pub fn gc_state(state: &MachineState) -> String {
     )
 }
 
+/// `$#` response: WCS/G92 offsets, TLO, last probe result.
+/// Real FluidNC reports each of G54-G59 individually; the simulator only tracks
+/// the currently active WCS offset, so the inactive slots report zero.
+pub fn gcode_params(state: &MachineState) -> String {
+    let n = state.axis_count.min(AXIS_COUNT);
+    let zero = format_axes(&[0.0; AXIS_COUNT], n);
+    let active_wco = format_axes(&state.wco, n);
+    let g92 = format_axes(&state.modal.g92_offset, n);
+
+    let mut out = String::new();
+    for wcs in 0..6u8 {
+        let offset = if wcs == state.modal.wcs { &active_wco } else { &zero };
+        out.push_str(&format!("[G{}:{}]\r\n", 54 + wcs, offset));
+    }
+    out.push_str(&format!("[G28:{}]\r\n", zero));
+    out.push_str(&format!("[G30:{}]\r\n", zero));
+    out.push_str(&format!("[G92:{}]\r\n", g92));
+    out.push_str("[TLO:0.000]\r\n");
+    out.push_str("[PRB:0.000,0.000,0.000:0]\r\n");
+    out.push_str(&ok());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

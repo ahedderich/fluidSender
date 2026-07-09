@@ -225,8 +225,8 @@ async function _onFetchOk() {
       if (!isJobActive()) broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
       return
     }
-    const zStr = tloLine.slice(5, -1).split(',')[2]
-    const tloZ = zStr !== undefined ? Number(zStr) : NaN
+    // FluidNC reports TLO as a single scalar: [TLO:0.000]
+    const tloZ = Number(tloLine.slice(5, -1))
     // A bare 0 is indistinguishable from FluidNC's post-boot default — treat as unknown.
     setToolLengthOffset(Number.isFinite(tloZ) && tloZ !== 0 ? tloZ : null)
     const next = setConnection({ toolLengthOffset: getToolLengthOffset() })
@@ -330,8 +330,14 @@ machineConnection.on('event', (ev) => {
           broadcastPatch([pushConsole({ type: 'recv', text: ev.line, ts: Date.now() })])
           onOk()
           clearTimeout(_fetch.timer)
+          // The tlo phase is a best-effort enrichment on top of an already-loaded
+          // config file (e.g. firmware rejects $# with error:8 when not Idle/Alarm) —
+          // don't report it as a config load failure.
+          const wasTloPhase = _fetch.phase === 'tlo'
           _fetch = null
-          broadcastPatch([pushToast({ id: `fw-cfg-err-${Date.now()}`, type: 'warning', message: 'Failed to read firmware configuration file', timeout: 4000 })])
+          if (!wasTloPhase) {
+            broadcastPatch([pushToast({ id: `fw-cfg-err-${Date.now()}`, type: 'warning', message: 'Failed to read firmware configuration file', timeout: 4000 })])
+          }
         }
         break
       }
