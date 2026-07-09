@@ -19,7 +19,16 @@
     >
       <!-- Split divider line -->
       <div v-if="viewMode === 'split'" class="absolute left-0 top-0 bottom-0 w-px bg-slate-700 z-10" />
-      <div class="text-center">
+
+      <!-- Stream only mounts while a cam-showing mode is active — kills the connection/decode on hide -->
+      <WorkspaceWebcamPlayer
+        v-if="webcam?.enabled && webcam.streamUrl"
+        :key="webcam.streamUrl"
+        :stream-url="webcam.streamUrl"
+        :stream-type="webcam.streamType"
+        class="w-full h-full"
+      />
+      <div v-else class="text-center">
         <svg class="w-8 h-8 text-slate-600 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
         </svg>
@@ -163,6 +172,7 @@ import { useJobControl } from '~/composables/useJobControl'
 import { useConfirm } from '~/composables/useConfirm'
 import { wsSend } from '~/composables/useWsSend'
 import type { LineVector } from '~/types/job'
+import type { CamMode } from '~/types/webcam'
 
 const machine = useMachineStore()
 const settings = useSettingsStore()
@@ -173,8 +183,15 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
 const ready = ref(false)
 
-type CamMode = '3d' | 'split' | 'cam' | 'pip'
-const viewMode = ref<CamMode>('3d')
+const webcam = computed(() => settings.activeMachine?.webcam)
+
+const viewMode = ref<CamMode>(webcam.value?.defaultMode ?? '3d')
+// Each machine has its own default view — jump back to it when switching machines,
+// rather than carrying the previous machine's cam mode over.
+watch(() => settings.activeMachineId, () => {
+  viewMode.value = webcam.value?.defaultMode ?? '3d'
+})
+
 const viewModes = [
   { key: '3d' as CamMode, label: '3D' },
   { key: 'split' as CamMode, label: '⬛⬛' },

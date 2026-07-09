@@ -2,9 +2,11 @@ import { defineStore } from 'pinia'
 import type { Macro, MacroTrigger, MacroVariable } from '~/types/macro'
 import { wsSend } from '~/composables/useWsSend'
 import type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig } from '~/../../shared/toolchange'
+import type { WebcamConfig } from '~/types/webcam'
 
 export type { Macro, MacroTrigger, MacroVariable }
 export type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig }
+export type { WebcamConfig }
 
 export type ConnectionType = 'usb' | 'tcp'
 export type MachineType = 'router' | 'laser' | 'plasma'
@@ -101,6 +103,8 @@ export interface MachineProfile {
   jogOverride?: MachineJogOverride
   /** Safe parking position in work coordinates (G54); undefined until configured */
   parkPosition?: ParkPosition
+  /** Webcam view config; undefined until configured in the Webcam settings tab */
+  webcam?: WebcamConfig
 }
 
 // ─── App-level settings types ─────────────────────────────────────────────────
