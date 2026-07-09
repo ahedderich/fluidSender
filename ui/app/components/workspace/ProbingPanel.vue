@@ -424,9 +424,22 @@
               <div
                 v-for="(val, i) in ps.heightmap.values"
                 :key="i"
-                class="rounded aspect-square"
+                class="relative rounded aspect-square group/cell"
                 :style="{ backgroundColor: heightmapCellColor(val, heightmapMinMax) }"
-              />
+              >
+                <span
+                  v-if="val !== null && !isHeightmapDense"
+                  class="absolute inset-0 flex items-center justify-center text-[9px] font-mono text-white [text-shadow:0_1px_1px_rgba(0,0,0,0.6)] pointer-events-none"
+                >{{ val.toFixed(2) }}</span>
+                <span
+                  v-else-if="val !== null"
+                  class="absolute inset-0 hidden group-hover/cell:flex items-center justify-center z-10 pointer-events-none"
+                >
+                  <span class="whitespace-nowrap bg-gray-900 dark:bg-slate-700 text-white text-[10px] font-mono px-1.5 py-0.5 rounded shadow-lg">
+                    {{ val.toFixed(2) }}
+                  </span>
+                </span>
+              </div>
             </div>
             <div class="flex justify-between mt-3 text-xs text-gray-400 dark:text-slate-500">
               <span>{{ heightmapMinMax[0].toFixed(3) }} mm</span>
@@ -860,6 +873,14 @@ const heightmapMinMax = computed<[number, number]>(() => {
   const vals = (ps.heightmap?.values ?? []).filter((v): v is number => v !== null)
   if (vals.length === 0) return [0, 0]
   return [Math.min(...vals), Math.max(...vals)]
+})
+
+// Tiles are too small to keep every value inline once either axis is dense —
+// show the value on hover instead of cluttering the whole grid.
+const isHeightmapDense = computed(() => {
+  const hm = ps.heightmap
+  if (!hm) return false
+  return hm.colCount > 8 || hm.rowCount > 8
 })
 
 function heightmapCellColor(val: number | null, [min, max]: [number, number]): string {

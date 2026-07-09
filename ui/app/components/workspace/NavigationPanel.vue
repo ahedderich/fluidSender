@@ -281,10 +281,12 @@ const parkPosition = computed(() => settings.activeMachine?.parkPosition)
 function gotoParking() {
   const park = parkPosition.value
   if (!park) return
+  // Parking is a machine-relative safe spot, unrelated to the WCS/stock — always
+  // move in machine coordinates (G53), never the active work coordinate system.
   machine.sendCommand('G90')
-  machine.sendCommand('G0 G54 Z0')
-  machine.sendCommand(`G0 G54 X${park.x.toFixed(3)} Y${park.y.toFixed(3)}`)
-  machine.sendCommand(`G0 G54 Z${park.z.toFixed(3)}`)
+  machine.sendCommand('G53 G0 Z0')
+  machine.sendCommand(`G53 G0 X${park.x.toFixed(3)} Y${park.y.toFixed(3)}`)
+  machine.sendCommand(`G53 G0 Z${park.z.toFixed(3)}`)
 }
 
 const {

@@ -170,6 +170,7 @@ import { useMachineStore } from '~/stores/machine'
 import { useSettingsStore } from '~/stores/settings'
 import { useJobControl } from '~/composables/useJobControl'
 import { useConfirm } from '~/composables/useConfirm'
+import { useToast } from '~/composables/useToast'
 import { wsSend } from '~/composables/useWsSend'
 import type { LineVector } from '~/types/job'
 import type { CamMode } from '~/types/webcam'
@@ -178,6 +179,7 @@ const machine = useMachineStore()
 const settings = useSettingsStore()
 const { job } = useJobControl()
 const { confirm } = useConfirm()
+const { error: toastError } = useToast()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -955,6 +957,7 @@ async function fetchAndLoadVectors(fileId: string) {
     loadToolpathSegments(vectors)
   } catch (err) {
     console.warn('[GCodeViewport] vectors not available:', err)
+    toastError('Failed to load toolpath preview')
   }
 }
 

@@ -19,7 +19,7 @@
     </div>
   </SettingsCard>
 
-  <SettingsCard title="Parking Position  (work coordinates, G54)">
+  <SettingsCard title="Parking Position  (machine coordinates, G53)">
     <div class="grid grid-cols-3 gap-2 px-3 py-2">
       <div v-for="axis in (['x', 'y', 'z'] as const)" :key="axis">
         <label class="text-xs text-gray-400 dark:text-slate-500 block mb-1 text-center">{{ axis.toUpperCase() }} (mm)</label>

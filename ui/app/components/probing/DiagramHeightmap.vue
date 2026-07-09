@@ -15,6 +15,11 @@
     <circle v-for="(dot, i) in gridDots" :key="i"
       :cx="dot.x" :cy="dot.y" r="2.5" :fill="c.dot"/>
 
+    <!-- Fallback notice: grid too dense to preview point-by-point -->
+    <text v-if="tooManyPoints" x="150" y="205" text-anchor="middle" font-size="7" :fill="c.callout">
+      grid too dense to preview individually
+    </text>
+
     <!-- Probe descent arrow above first dot -->
     <line :x1="probeAbove.x" :y1="probeAbove.y"
           :x2="gridDots[0]?.x ?? probeAbove.x" :y2="gridDots[0]?.y ?? probeAbove.y"
@@ -55,7 +60,7 @@
     </g>
 
     <!-- Callout: resolution (between adjacent dots) -->
-    <g v-if="resCallout" :class="hl === 'resolution' ? 'animate-pulse' : ''"
+    <g v-if="resCallout && !tooManyPoints" :class="hl === 'resolution' ? 'animate-pulse' : ''"
        :opacity="hl && hl !== 'resolution' ? 0.15 : 1">
       <line :x1="resCallout.from.x - 3" :y1="resCallout.from.y - 1" :x2="resCallout.from.x + 3" :y2="resCallout.from.y + 1"
         :stroke="hlC('resolution')" stroke-width="1"/>
@@ -94,17 +99,51 @@ const topFace   = `${pt(0,0,.85)} ${pt(2,0,.85)} ${pt(2,1,.85)} ${pt(0,1,.85)}`
 const rightFace = `${pt(2,0,0)} ${pt(2,0,.85)} ${pt(2,1,.85)} ${pt(2,1,0)}`
 const frontFace = `${pt(0,1,0)} ${pt(2,1,0)} ${pt(2,1,.85)} ${pt(0,1,.85)}`
 
-// Reactive grid dots matching server-side formula from _runHeightmap
-const gridDots = computed(() => {
-  const W = props.stockWidth
-  const H = props.stockHeight
-  const eo = props.edgeOffset
+// Above this, an individually-positioned preview isn't useful (and the full
+// row/col loop below shouldn't run on every keystroke for a huge grid) — show
+// a fixed placeholder pattern instead.
+const MAX_PREVIEW_POINTS = 100
+const FALLBACK_COLS = 6
+const FALLBACK_ROWS = 4
+
+function fallbackDots() {
+  const dots: { x: number; y: number }[] = []
+  for (let r = 0; r < FALLBACK_ROWS; r++) {
+    for (let c = 0; c < FALLBACK_COLS; c++) {
+      const modelX = 0.15 + (c / (FALLBACK_COLS - 1)) * 1.7
+      const modelY = 0.1 + (r / (FALLBACK_ROWS - 1)) * 0.8
+      dots.push(iso(modelX, modelY, 0.85))
+    }
+  }
+  return dots
+}
+
+// Mirrors the server-side formula from _runHeightmap — compute the grid size
+// up front so an extreme config (or a resolution of 0 while the user is
+// mid-edit) can bail before the full nested loop runs.
+const gridInfo = computed(() => {
+  const effW = props.stockWidth - 2 * props.edgeOffset
+  const effH = props.stockHeight - 2 * props.edgeOffset
   const res = props.resolution
 
-  const effW = W - 2 * eo
-  const effH = H - 2 * eo
+  if (!(res > 0) || !(effW > 0) || !(effH > 0)) return null
+
   const colCount = Math.max(2, Math.floor(effW / res) + 1)
   const rowCount = Math.max(2, Math.floor(effH / res) + 1)
+  if (colCount * rowCount > MAX_PREVIEW_POINTS) return null
+
+  return { colCount, rowCount, effW, effH }
+})
+
+const tooManyPoints = computed(() => gridInfo.value === null)
+
+const gridDots = computed(() => {
+  const info = gridInfo.value
+  if (!info) return fallbackDots()
+
+  const { colCount, rowCount, effW, effH } = info
+  const W = props.stockWidth
+  const H = props.stockHeight
   const spacingX = effW / (colCount - 1)
   const spacingY = effH / (rowCount - 1)
 
@@ -118,7 +157,7 @@ const gridDots = computed(() => {
       dots.push(iso(modelX, modelY, 0.85))
     }
   }
-  return dots.slice(0, 200)
+  return dots
 })
 
 const probeAbove = computed(() => {
