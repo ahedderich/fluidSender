@@ -424,11 +424,14 @@ export async function runHeightmap(
   const stockWidth = stock?.shape === 'round' ? (stock.diameter ?? 100) : (stock?.width ?? 100)
   const stockHeight = stock?.shape === 'round' ? (stock.diameter ?? 100) : (stock?.height ?? 100)
 
-  const edgeOffset = config.edgeOffset ?? 5
-  const resolution = config.resolution ?? 10
+  const edgeOffset = Math.max(0, config.edgeOffset ?? 5)
+  const resolution = Math.max(1, config.resolution ?? 10)
 
   const effectiveW = stockWidth - 2 * edgeOffset
   const effectiveH = stockHeight - 2 * edgeOffset
+  if (effectiveW <= 0 || effectiveH <= 0) {
+    throw new Error('Edge offset leaves no probing area within the stock')
+  }
   const colCount = Math.max(2, Math.floor(effectiveW / resolution) + 1)
   const rowCount = Math.max(2, Math.floor(effectiveH / resolution) + 1)
   const spacingX = effectiveW / (colCount - 1)
