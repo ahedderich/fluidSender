@@ -14,8 +14,8 @@
         <!-- Body -->
         <div class="px-5 py-4 space-y-4">
 
-          <!-- Step indicator (manual-toolsetter) -->
-          <div v-if="isToolsetterStrategy" class="flex items-center gap-3 text-xs">
+          <!-- Step indicator (manual-toolsetter, skipped for the measure-only flow which has no position/swap step) -->
+          <div v-if="showStepIndicator" class="flex items-center gap-3 text-xs">
             <div class="flex items-center gap-1.5">
               <span
                 :class="phase !== 'waiting_for_swap' ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400 font-semibold'"
@@ -193,7 +193,7 @@ const props = computed(() => {
     currentToolNumber: (p?.currentToolNumber ?? null) as number | null,
     nextToolNumber: (p?.nextToolNumber ?? null) as number | null,
     isJobContext: (p?.isJobContext ?? true) as boolean,
-    operation: (p?.operation ?? undefined) as 'load' | 'unload' | undefined,
+    operation: (p?.operation ?? undefined) as 'load' | 'unload' | 'measure' | undefined,
     probedOffset: (p?.probedOffset ?? undefined) as number | undefined,
     errorMessage: (p?.errorMessage ?? undefined) as string | undefined,
   }
@@ -206,7 +206,12 @@ const isToolsetterStrategy = computed(() => {
   return tc?.strategy === 'manual-toolsetter'
 })
 
+// The measure-only flow starts directly at the probing phase — there's no
+// toolchange-position/swap step to show progress against.
+const showStepIndicator = computed(() => isToolsetterStrategy.value && props.value.operation !== 'measure')
+
 const dialogTitle = computed(() => {
+  if (props.value.operation === 'measure') return 'Measure Tool Offset'
   if (props.value.isJobContext) return 'Tool Change'
   if (props.value.operation === 'unload') return 'Unload Tool'
   if (props.value.nextToolNumber !== null) return `Load Tool T${props.value.nextToolNumber}`

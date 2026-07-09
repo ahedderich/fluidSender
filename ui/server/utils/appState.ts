@@ -427,7 +427,7 @@ export interface ToolchangeModalProps {
   currentToolNumber: number | null
   nextToolNumber: number | null
   isJobContext: boolean
-  operation?: 'load' | 'unload'
+  operation?: 'load' | 'unload' | 'measure'
   probedOffset?: number
   errorMessage?: string
 }

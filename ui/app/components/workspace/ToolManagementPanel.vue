@@ -21,18 +21,32 @@
     <div class="px-3 py-2.5 border-b border-gray-100 dark:border-slate-700 shrink-0">
       <div class="flex items-center justify-between mb-2">
         <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Loaded Tool</p>
-        <button
-          v-if="loadedTool && machine.connected"
-          :disabled="isViewer"
-          class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-red-600 hover:text-white text-gray-600 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Remove tool from spindle"
-          @click="handleUnload"
-        >
-          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-          Unload
-        </button>
+        <div class="flex items-center gap-1.5">
+          <button
+            v-if="showMeasureOffsetButton"
+            :disabled="isViewer"
+            class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white text-gray-600 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Probe and set the tool length offset for the loaded tool"
+            @click="handleMeasureOffset"
+          >
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+            </svg>
+            Measure Offset
+          </button>
+          <button
+            v-if="loadedTool && machine.connected"
+            :disabled="isViewer"
+            class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-red-600 hover:text-white text-gray-600 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Remove tool from spindle"
+            @click="handleUnload"
+          >
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            Unload
+          </button>
+        </div>
       </div>
 
       <template v-if="!machine.connected">
@@ -1019,6 +1033,14 @@ const isAtcStrategy = computed(() => {
   return tc?.strategy === 'atc-passthrough' || tc?.strategy === 'atc-managed' || tc?.strategy === 'custom-macro'
 })
 
+// Typical session start for a toolsetter machine: home, then measure — TLO always
+// resets to null on (re)connect since FluidNC never persists G43.1 across sessions.
+const showMeasureOffsetButton = computed(() =>
+  machine.connected
+  && settings.activeMachine?.toolchange?.strategy === 'manual-toolsetter'
+  && machine.toolLengthOffset === null,
+)
+
 const magazineConfig = computed(() => {
   const tc = settings.activeMachine?.toolchange
   if (!tc || !('magazine' in tc)) return null
@@ -1228,6 +1250,16 @@ async function deleteFromModal() {
 
 function handleUnload() {
   wsSend({ t: 'tool:unload', payload: {} })
+}
+
+async function handleMeasureOffset() {
+  const ok = await confirm({
+    title: 'Measure Tool Offset',
+    message: 'The machine must be homed. This will move to the toolsetter position (in machine coordinates) and probe the currently loaded tool. Start the measurement now?',
+    confirmLabel: 'Start Measurement',
+  })
+  if (!ok) return
+  wsSend({ t: 'tool:measureOffset', payload: {} })
 }
 
 function clearRuntime() {

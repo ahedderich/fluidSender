@@ -614,6 +614,13 @@ export default defineWebSocketHandler({
         })
         break
       }
+      case 'tool:measureOffset': {
+        if (!requireRole(peer, 'operator')) break
+        jobRunner.runStandaloneMeasure().catch((e: unknown) => {
+          console.error('[ws] tool:measureOffset error:', e)
+        })
+        break
+      }
       case 'toolchange:confirm': {
         if (!requireRole(peer, 'operator')) break
         jobRunner.resumeToolsetterProbe(jobRunner.status === 'tool_change').catch((e: unknown) => {
