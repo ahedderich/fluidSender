@@ -174,6 +174,14 @@
       </template>
     </SettingsCard>
   </template>
+
+  <!-- shared across every strategy except manual-basic, where there is no offset to track -->
+  <SettingsCard v-if="tc.strategy !== 'manual-basic'" title="Job Safety">
+    <SettingsRow label="Warn on Unconfirmed Tool Offset">
+      <UiToggleSwitch v-model="confirmMissingOffset" />
+      <span class="text-xs text-gray-400 ml-1.5">Confirm before starting/resuming a job if the tool length offset hasn't been verified this session</span>
+    </SettingsRow>
+  </SettingsCard>
 </template>
 
 <script setup lang="ts">
@@ -199,13 +207,24 @@ function changeStrategy(newStrategy: ToolchangeConfig['strategy']) {
   let newTc: ToolchangeConfig
   switch (newStrategy) {
     case 'manual-basic':  newTc = { strategy: 'manual-basic' }; break
-    case 'manual-toolsetter': newTc = { strategy: 'manual-toolsetter', position: { ...TOOLSETTER_DEFAULTS } }; break
-    case 'atc-passthrough': newTc = { strategy: 'atc-passthrough', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [] }; break
-    case 'atc-managed': newTc = { strategy: 'atc-managed', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [] }; break
-    case 'custom-macro': newTc = { strategy: 'custom-macro', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [] }; break
+    case 'manual-toolsetter': newTc = { strategy: 'manual-toolsetter', position: { ...TOOLSETTER_DEFAULTS }, confirmMissingOffset: true }; break
+    case 'atc-passthrough': newTc = { strategy: 'atc-passthrough', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [], confirmMissingOffset: true }; break
+    case 'atc-managed': newTc = { strategy: 'atc-managed', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [], confirmMissingOffset: true }; break
+    case 'custom-macro': newTc = { strategy: 'custom-macro', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [], confirmMissingOffset: true }; break
   }
   machine.value.toolchange = newTc
 }
+
+const confirmMissingOffset = computed<boolean>({
+  get: () => {
+    const t = tc.value
+    return t.strategy === 'manual-basic' ? true : (t.confirmMissingOffset ?? true)
+  },
+  set: (val: boolean) => {
+    const t = tc.value
+    if (t.strategy !== 'manual-basic') t.confirmMissingOffset = val
+  },
+})
 
 const strategyDescription = computed(() => {
   switch (tc.value.strategy) {

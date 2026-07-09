@@ -372,7 +372,10 @@ const cycleStartEnabled = computed(() =>
 
 async function cycleStartAction() {
   const isResume = job.value?.status === 'paused'
-  if (machine.toolLengthOffset === null) {
+  const tc = s.activeMachine?.toolchange
+  // manual-basic has no TLO concept at all — tools are touched off by hand each swap.
+  const offsetCheckApplies = tc && tc.strategy !== 'manual-basic' && (tc.confirmMissingOffset ?? true)
+  if (offsetCheckApplies && machine.toolLengthOffset === null) {
     const ok = await confirm({
       title: 'Tool length offset not confirmed',
       message: `No tool length offset has been verified this session — the machine may not know how long the loaded tool actually is. ${isResume ? 'Resuming' : 'Starting'} now could plunge the tool into the workpiece. Probe the loaded tool on the toolsetter first, or continue if you know what you're doing.`,

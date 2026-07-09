@@ -94,6 +94,7 @@
         <span class="text-slate-500 italic">No tool loaded</span>
       </template>
 
+      <template v-if="toolchangeStrategy !== 'manual-basic'">
       <span class="w-px h-4 bg-slate-600/50 shrink-0" />
 
       <span
@@ -109,6 +110,7 @@
         <svg class="w-3 h-3 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2 1 21h22L12 2zm0 5.5 6.9 12H5.1L12 7.5zM11 10v5h2v-5h-2zm0 6.5v2h2v-2h-2z"/></svg>
         TLO not set
       </span>
+      </template>
     </div>
 
     <!-- Progress bar (bottom) -->
@@ -192,6 +194,8 @@ const etaLabel = computed(() => {
   const eta = job.value.startWallClock + job.value.estimatedTotalMs
   return `ETA: ${new Date(eta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
 })
+
+const toolchangeStrategy = computed(() => settings.activeMachine?.toolchange?.strategy ?? 'manual-basic')
 
 const allToolLibrary = computed(() => [
   ...machine.toolLibrary.machine,
