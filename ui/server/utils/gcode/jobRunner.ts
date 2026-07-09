@@ -21,6 +21,7 @@ import {
   setLoadedTool,
   getLoadedToolForMachine,
   getConnection,
+  setConnection,
   pushToast,
   type PatchOp,
   type ToolchangeModalProps,
@@ -34,6 +35,7 @@ import { toolStore } from '../tool/toolStore'
 import { appendRuntimeSession } from '../tool/runtimeLog'
 import { buildToolchangePositionSequence, buildToolsetterApproachSequence } from './toolchangeSequences'
 import { runToolsetterProbe } from '../machine/toolsetterProbe'
+import { setToolLengthOffset } from '../machine/toolLengthState'
 import { applyTransforms } from './transform'
 import type { SendHandle, SenderStatusEvent } from '../machine/types'
 import type { GCodeLine, GCodeModalState, JobState, ToolSection, TransformMode } from './types'
@@ -1130,6 +1132,11 @@ class JobRunner {
             },
           )
         })
+
+        // We just commanded and confirmed this exact value — no need to round-trip
+        // a $# query to know it, unlike the "on connect" case in ws.ts.
+        setToolLengthOffset(toolHeight)
+        broadcastPatch([{ path: 'connection', set: { ...setConnection({ toolLengthOffset: toolHeight }) } }])
 
         if (pos.confirmAfterProbe) {
           this._updateToolchangeDialog({ phase: 'probe_result', probedOffset: toolHeight })

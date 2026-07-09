@@ -52,6 +52,7 @@ import {
   initPoller,
 } from '../utils/machine/poller'
 import { parseGreetingVersion } from '../utils/machine/statusParser'
+import { getToolLengthOffset, setToolLengthOffset, resetToolLengthSession } from '../utils/machine/toolLengthState'
 import { setActiveFirmwareVersion } from '../utils/gcode/classifier'
 import { initMachineMode } from '../utils/machine/machineMode'
 import {
@@ -102,7 +103,7 @@ jobRunner.bootRestore().then((mode) => {
 
 // ─── Firmware config fetch ($I → $SS → $LocalFS/Show) ────────────────────────
 
-type ConfigFetchPhase = 'version' | 'startup-log' | 'config-file'
+type ConfigFetchPhase = 'version' | 'startup-log' | 'config-file' | 'tlo'
 
 interface ConfigFetchState {
   phase: ConfigFetchPhase
@@ -208,14 +209,36 @@ async function _onFetchOk() {
       return
     }
     await _finishConfigFetch(lines)
+    if (!_fetch) return // _finishConfigFetch cleared it (shouldn't happen, but guard anyway)
+    _fetch.phase = 'tlo'
+    _fetch.lines = []
+    machineConnection.sendRaw('$#')
+    return
+  }
+
+  if (phase === 'tlo') {
+    const tloLine = lines.find((l) => l.startsWith('[TLO:'))
+    if (!tloLine) {
+      // Spurious ok before $# has responded — discard and keep waiting
+      _fetch.lines = []
+      onOk()
+      if (!isJobActive()) broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
+      return
+    }
+    const zStr = tloLine.slice(5, -1).split(',')[2]
+    const tloZ = zStr !== undefined ? Number(zStr) : NaN
+    // A bare 0 is indistinguishable from FluidNC's post-boot default — treat as unknown.
+    setToolLengthOffset(Number.isFinite(tloZ) && tloZ !== 0 ? tloZ : null)
+    const next = setConnection({ toolLengthOffset: getToolLengthOffset() })
+    broadcastPatch([{ path: 'connection', set: { ...next } }])
+    clearTimeout(_fetch.timer)
+    _fetch = null
   }
 }
 
 async function _finishConfigFetch(lines: string[]) {
   if (!_fetch) return
   const { machineIp, configFilename, manual } = _fetch
-  clearTimeout(_fetch.timer)
-  _fetch = null
 
   const machineId = getConnection().machineId
   if (!machineId) return
@@ -250,7 +273,10 @@ async function _finishConfigFetch(lines: string[]) {
 machineConnection.on('event', (ev) => {
   switch (ev.type) {
     case 'connected': {
-      const next = setConnection({ connected: true, status: 'Idle', firmwareVersion: '' })
+      // New connection lifecycle — any TLO/baseline tracked from a prior connection
+      // (this machine or another) can no longer be trusted.
+      resetToolLengthSession()
+      const next = setConnection({ connected: true, status: 'Idle', firmwareVersion: '', toolLengthOffset: null })
       broadcastPatch([
         { path: 'connection', set: { ...next } },
         pushConsole({ type: 'info', text: `TCP connected to ${ev.host}:${ev.port}`, ts: Date.now() }),
@@ -275,10 +301,11 @@ machineConnection.on('event', (ev) => {
       if (_fetch) { clearTimeout(_fetch.timer); _fetch = null }
       stopPoller()
       setActiveFirmwareVersion(null)
+      resetToolLengthSession()
       // jobRunner must update status before sender fires its terminal event
       jobRunner.onMachineDisconnected()
       senderDisconnected()
-      const next = setConnection({ machineId: null, connected: false, status: 'DISCONNECTED', firmwareVersion: '', simulatorMode: false })
+      const next = setConnection({ machineId: null, connected: false, status: 'DISCONNECTED', firmwareVersion: '', simulatorMode: false, toolLengthOffset: null })
       broadcastPatch([
         { path: 'connection', set: { ...next } },
         clearLoadedToolDisplay(),

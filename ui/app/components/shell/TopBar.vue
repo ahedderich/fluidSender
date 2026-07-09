@@ -370,8 +370,18 @@ const cycleStartEnabled = computed(() =>
   )
 )
 
-function cycleStartAction() {
-  if (job.value?.status === 'paused') resumeJob()
+async function cycleStartAction() {
+  const isResume = job.value?.status === 'paused'
+  if (machine.toolLengthOffset === null) {
+    const ok = await confirm({
+      title: 'Tool length offset not confirmed',
+      message: `No tool length offset has been verified this session — the machine may not know how long the loaded tool actually is. ${isResume ? 'Resuming' : 'Starting'} now could plunge the tool into the workpiece. Probe the loaded tool on the toolsetter first, or continue if you know what you're doing.`,
+      confirmLabel: isResume ? 'Resume anyway' : 'Start anyway',
+      danger: true,
+    })
+    if (!ok) return
+  }
+  if (isResume) resumeJob()
   else startJob()
 }
 const route = useRoute()

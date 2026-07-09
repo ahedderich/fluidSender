@@ -68,6 +68,8 @@ export interface ConnectionState {
   status: string
   firmwareVersion: string
   simulatorMode: boolean
+  /** Null = unknown/unverified this session — never a bare 0 (see toolLengthState.ts). */
+  toolLengthOffset: number | null
 }
 
 // ─── Shared UI state (server-authoritative, pushed to every client) ─────────────
@@ -312,6 +314,7 @@ const connection: ConnectionState = {
   status: 'DISCONNECTED',
   firmwareVersion: '',
   simulatorMode: false,
+  toolLengthOffset: null,
 }
 
 // ─── Peer registry ────────────────────────────────────────────────────────────

@@ -17,7 +17,6 @@ export interface ToolsetterConfig extends ToolchangeSpatialConfig {
   toolsetterX: number
   toolsetterY: number
   toolsetterApproachZ: number
-  toolsetterReferenceZ: number
   probeDistance: number
   probeConfig: ProbeConfig
   zOffset: number

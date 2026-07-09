@@ -93,6 +93,22 @@
         </svg>
         <span class="text-slate-500 italic">No tool loaded</span>
       </template>
+
+      <span class="w-px h-4 bg-slate-600/50 shrink-0" />
+
+      <span
+        v-if="machine.toolLengthOffset !== null"
+        class="text-slate-400 font-mono whitespace-nowrap"
+        title="Currently active tool length offset (G43.1), as confirmed by the machine"
+      >TLO {{ machine.toolLengthOffset.toFixed(3) }}</span>
+      <span
+        v-else
+        class="flex items-center gap-1 text-amber-400 whitespace-nowrap"
+        title="Tool length offset not confirmed this session — probe the loaded tool on the toolsetter before starting a job"
+      >
+        <svg class="w-3 h-3 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2 1 21h22L12 2zm0 5.5 6.9 12H5.1L12 7.5zM11 10v5h2v-5h-2zm0 6.5v2h2v-2h-2z"/></svg>
+        TLO not set
+      </span>
     </div>
 
     <!-- Progress bar (bottom) -->
