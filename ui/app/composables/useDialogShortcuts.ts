@@ -11,10 +11,14 @@ export function useDialogShortcuts(
 
   function onKeyDown(e: KeyboardEvent) {
     if (!isOpen()) return
-    // Single-character bindings (the 'c' default for confirm) must not hijack normal
-    // typing in a dialog's own form fields; Escape and other non-printable keys are
-    // safe to act on regardless of focus.
-    if (isInputFocused() && e.key.length === 1) return
+    // Single-character bindings must not hijack normal typing in a dialog's own form
+    // fields, and Enter (the confirm default) must not hijack newline entry in a
+    // multi-line textarea (e.g. a macro's GCode editor). Escape and other bindings
+    // are safe to act on regardless of focus.
+    if (isInputFocused()) {
+      const isTextarea = document.activeElement?.tagName === 'TEXTAREA'
+      if (e.key.length === 1 || (e.key === 'Enter' && isTextarea)) return
+    }
 
     if (handlers.onCancel && fires('dialogCancel', e)) {
       e.preventDefault()

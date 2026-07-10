@@ -244,7 +244,7 @@ export const useSettingsStore = defineStore('settings', () => {
       speedMedium: 'a',
       speedFast: 'q',
       dialogCancel: 'Escape',
-      dialogConfirm: 'c',
+      dialogConfirm: 'Enter',
     } as KeyboardShortcuts,
     auth: {
       enabled: false,
