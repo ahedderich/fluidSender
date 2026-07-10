@@ -34,6 +34,32 @@
         </div>
       </div>
 
+      <!-- Tool info from library -->
+      <div v-if="props.nextToolNumber !== null && phase !== 'error'" class="bg-gray-50 dark:bg-slate-700/50 rounded-lg px-4 py-3 text-xs">
+        <template v-if="toolInfo">
+          <p class="font-semibold text-gray-800 dark:text-slate-200">{{ toolInfo.name }}</p>
+          <dl class="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-gray-600 dark:text-slate-400">
+            <div class="flex justify-between gap-2">
+              <dt>Diameter</dt>
+              <dd class="font-mono">⌀{{ toolInfo.diameter }}mm</dd>
+            </div>
+            <div v-if="toolInfo.fluteCount" class="flex justify-between gap-2">
+              <dt>Flutes</dt>
+              <dd class="font-mono">{{ toolInfo.fluteCount }}</dd>
+            </div>
+            <div v-if="toolInfo.overallLength" class="flex justify-between gap-2">
+              <dt>Length</dt>
+              <dd class="font-mono">{{ toolInfo.overallLength }}mm</dd>
+            </div>
+            <div v-if="toolInfo.material" class="flex justify-between gap-2">
+              <dt>Material</dt>
+              <dd>{{ toolInfo.material }}</dd>
+            </div>
+          </dl>
+        </template>
+        <p v-else class="text-gray-500 dark:text-slate-400">No library entry for T{{ props.nextToolNumber }}</p>
+      </div>
+
       <!-- Phase: waiting_for_swap -->
       <template v-if="phase === 'waiting_for_swap'">
         <div class="flex items-center gap-4">
@@ -145,10 +171,12 @@
 import { useModals } from '~/composables/useModals'
 import { wsSend } from '~/composables/useWsSend'
 import { useSettingsStore } from '~/stores/settings'
+import { useMachineStore } from '~/stores/machine'
 import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const modals = useModals()
 const settings = useSettingsStore()
+const machine = useMachineStore()
 
 const modal = modals.active('toolchange')
 
@@ -166,6 +194,12 @@ const props = computed(() => {
 })
 
 const phase = computed(() => props.value.phase)
+
+const toolInfo = computed(() => {
+  const n = props.value.nextToolNumber
+  if (n === null) return null
+  return [...machine.toolLibrary.machine, ...machine.toolLibrary.app].find((t) => t.number === n) ?? null
+})
 
 const isToolsetterStrategy = computed(() => {
   const tc = settings.activeMachine?.toolchange

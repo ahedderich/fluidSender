@@ -63,8 +63,8 @@
       </div>
 
       <template #footer>
-        <DialogsDialogButton variant="neutral" shortcut="dialogCancel" class="flex-1" @click="dismiss">
-          Close
+        <DialogsDialogButton variant="primary" shortcut="dialogConfirm" class="flex-1" @click="dismiss">
+          OK
         </DialogsDialogButton>
       </template>
     </DialogsDialogFrame>
@@ -112,7 +112,7 @@ useDialogShortcuts(() => onNonWorkspacePage() && ps.phase === 'running' && !!ps.
   onCancel: () => wsSend({ t: 'probing:abort' }),
 })
 
-useDialogShortcuts(() => onNonWorkspacePage() && !!showResult.value, { onCancel: dismiss })
+useDialogShortcuts(() => onNonWorkspacePage() && !!showResult.value, { onConfirm: dismiss, onCancel: dismiss })
 
 const wizardTitles: Record<string, string> = {
   'corner':     'Corner Probing (XYZ)',

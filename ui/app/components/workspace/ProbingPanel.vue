@@ -527,11 +527,11 @@
           </button>
 
           <div class="flex gap-2">
-            <DialogsDialogButton variant="neutral" shortcut="dialogCancel" class="flex-1" @click="closeResult">
-              Close
-            </DialogsDialogButton>
-            <DialogsDialogButton variant="primary" shortcut="dialogConfirm" class="flex-1" @click="repeatWizard">
+            <DialogsDialogButton variant="neutral" class="flex-1" @click="repeatWizard">
               Repeat
+            </DialogsDialogButton>
+            <DialogsDialogButton variant="primary" shortcut="dialogConfirm" class="flex-1" @click="closeResult">
+              OK
             </DialogsDialogButton>
           </div>
         </template>
@@ -722,7 +722,16 @@ useDialogShortcuts(() => ps.phase === 'running' && !!ps.wizardKey, {
   onCancel: () => wsSend({ t: 'probing:abort' }),
 })
 
-useDialogShortcuts(() => (ps.phase === 'completed' || ps.phase === 'aborted') && !!ps.wizardKey && !resultDismissed.value, {
+// Completed: OK is the primary/default action (results are already recorded,
+// so dismissing isn't a "cancel") — Repeat is a deliberate, click-only action.
+useDialogShortcuts(() => ps.phase === 'completed' && !!ps.wizardKey && !resultDismissed.value, {
+  onConfirm: closeResult,
+  onCancel: closeResult,
+})
+
+// Aborted: Retry stays the primary/default action — retrying is the obvious
+// next step when a probe failed.
+useDialogShortcuts(() => ps.phase === 'aborted' && !!ps.wizardKey && !resultDismissed.value, {
   onConfirm: repeatWizard,
   onCancel: closeResult,
 })
