@@ -13,9 +13,13 @@ RUN bun run build
 # distroless: no shell, no package manager, no npm — nothing to exploit
 # beyond the app itself. Port listing no longer shells out to `udevadm`
 # (see server/api/serial-ports.get.ts), so udev isn't needed here either.
+# debian13 (trixie), not debian12 (bookworm): bookworm's libssl3 build lagged
+# behind upstream OpenSSL fixes at time of writing (CVE-2026-31789 and
+# others), failing the Trivy gate; trixie ships a newer package baseline.
+# Re-check both lines' CVE status if this recurs.
 # :nonroot runs as uid/gid 65532 by default; see docker-compose.yaml for
 # the device/volume permission setup this requires.
-FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runner
+FROM gcr.io/distroless/nodejs22-debian13:nonroot AS runner
 WORKDIR /app
 
 COPY --from=builder --chown=65532:65532 /app/.output ./.output
@@ -26,4 +30,5 @@ ENV NUXT_HOST=0.0.0.0
 ENV NUXT_PORT=3000
 USER 65532:65532
 
-CMD ["node", ".output/server/index.mjs"]
+# ENTRYPOINT is already ["node"] in this base image — CMD is just its args.
+CMD [".output/server/index.mjs"]
