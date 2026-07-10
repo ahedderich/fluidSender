@@ -22,6 +22,10 @@
           <span class="inline-block w-2 h-2 rounded-full bg-amber-400" />
           {{ s.stock.point.label }}
         </span>
+        <span v-if="s.toolsetter.enabled" class="flex items-center gap-1.5">
+          <span class="inline-block w-3 h-3 rounded-full border-2 border-violet-500" />
+          Tool-Setter
+        </span>
         <span class="flex items-center gap-1.5">
           <span class="inline-block w-3 h-0.5 bg-red-500 rounded-full" />
           Tool
@@ -85,6 +89,16 @@
               <line x1="-5" y1="0" x2="5" y2="0" stroke="#f59e0b" stroke-width="0.8" />
               <line x1="0" y1="-5" x2="0" y2="5" stroke="#f59e0b" stroke-width="0.8" />
               <text x="4" y="-4" font-size="4" fill="#f59e0b">{{ s.stock.point.label }}</text>
+            </g>
+
+            <!-- Tool-setter marker — XY position + contact radius only. Trigger height
+                 is deliberately not visualized here; it stays hidden in the panel too,
+                 since the point is to calibrate against it via FluidSender, not read it off. -->
+            <g v-if="s.toolsetter.enabled" :transform="`translate(${s.toolsetter.x}, ${-s.toolsetter.y})`">
+              <circle :r="s.toolsetter.radius" fill="#8b5cf6" fill-opacity="0.15" stroke="#8b5cf6" stroke-width="0.8" />
+              <line x1="-3" y1="0" x2="3" y2="0" stroke="#8b5cf6" stroke-width="0.6" />
+              <line x1="0" y1="-3" x2="0" y2="3" stroke="#8b5cf6" stroke-width="0.6" />
+              <text x="4" y="-4" font-size="4" fill="#8b5cf6">TS</text>
             </g>
 
             <!-- Machine origin dot (home position) -->

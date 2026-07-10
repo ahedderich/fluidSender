@@ -15,6 +15,7 @@
       class="w-full py-1.5 text-xs font-medium bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400 rounded-lg transition-colors"
     >
       Abort Probing
+      <UiShortcutBadge action="dialogCancel" />
     </button>
   </div>
 </template>

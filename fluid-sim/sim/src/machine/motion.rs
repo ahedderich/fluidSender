@@ -2,7 +2,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time; // used in tests
 
-use crate::machine::probe::{check_probe_contact, ProbeHit};
+use crate::machine::probe::{check_probe_contact, ProbeDeviations, ProbeHit};
 use crate::machine::state::{
     MachineState, MachineStatus, SharedMachineState, StateBroadcast, AXIS_COUNT,
 };
@@ -267,14 +267,42 @@ async fn execute_linear(
                         let pos3 = [state.pos[0], state.pos[1], state.pos[2]];
                         let manual = state.probe.triggered;
 
-                        let probe_hit = check_probe_contact(
-                            pos3,
-                            dir3,
-                            probe_cfg.probe_away,
-                            &state.probe.deviations,
-                            manual,
-                            state.stock.as_ref(),
-                        );
+                        // A tool-setter is a mechanical switch, not the workpiece — it is
+                        // checked first (with zero deviation, since it has no trigger-offset
+                        // profile of its own) and only falls back to the stock/edge-finder
+                        // check when disabled or not hit, so the two stay independent.
+                        let toolsetter_vol = state.toolsetter_volume();
+                        let probe_hit = if let Some(ts_vol) = &toolsetter_vol {
+                            let hit = check_probe_contact(
+                                pos3,
+                                dir3,
+                                probe_cfg.probe_away,
+                                &ProbeDeviations::default(),
+                                manual,
+                                Some(ts_vol),
+                            );
+                            if matches!(hit, ProbeHit::Contact(_)) {
+                                hit
+                            } else {
+                                check_probe_contact(
+                                    pos3,
+                                    dir3,
+                                    probe_cfg.probe_away,
+                                    &state.probe.deviations,
+                                    manual,
+                                    state.stock.as_ref(),
+                                )
+                            }
+                        } else {
+                            check_probe_contact(
+                                pos3,
+                                dir3,
+                                probe_cfg.probe_away,
+                                &state.probe.deviations,
+                                manual,
+                                state.stock.as_ref(),
+                            )
+                        };
                         if let ProbeHit::Contact(reported) = probe_hit {
                             state.probe.triggered = false;
                             state.status = MachineStatus::Idle;
@@ -557,6 +585,100 @@ mod tests {
             state.planned_pos, state.pos,
             "planned_pos must snap to the contact position"
         );
+    }
+
+    #[tokio::test]
+    async fn toolsetter_contact_reflects_current_tool_length() {
+        use crate::machine::state::ToolsetterConfig;
+
+        let (shared, bcast) = make_shared();
+        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+
+        let target = {
+            let mut s = shared.write().await;
+            s.toolsetter = ToolsetterConfig {
+                enabled: true,
+                x: s.pos[0],
+                y: s.pos[1],
+                radius: 4.0,
+                trigger_z: -60.0,
+            };
+            s.tool_length = 20.0;
+            let mut t = s.pos;
+            t[2] = -80.0;
+            s.planned_pos = t;
+            t
+        };
+
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        tx.send((
+            PendingMove {
+                kind: MoveKind::Linear,
+                target,
+                feed: 600.0,
+                probe: Some(ProbeConfig {
+                    error_on_miss: false,
+                    probe_away: false,
+                }),
+            },
+            result_tx,
+        ))
+        .await
+        .unwrap();
+
+        let result = result_rx.await.unwrap();
+        assert!(matches!(result, MoveResult::ProbeContact(_)), "{result:?}");
+
+        let state = shared.read().await;
+        // trigger_z(-60) + tool_length(20) = -40: a longer tool contacts the switch
+        // higher up (less travel down) than a zero-length reference tool would.
+        assert!((state.pos[2] - (-40.0)).abs() < 1.0, "z={}", state.pos[2]);
+    }
+
+    #[tokio::test]
+    async fn toolsetter_ignores_probe_outside_its_radius() {
+        use crate::machine::state::ToolsetterConfig;
+
+        let (shared, bcast) = make_shared();
+        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+
+        // Toolsetter configured far from the probe's XY — and no stock defined —
+        // so a misconfigured (or unsynced) toolsetter position must miss entirely,
+        // exactly like a real undersized switch would.
+        let target = {
+            let mut s = shared.write().await;
+            s.toolsetter = ToolsetterConfig {
+                enabled: true,
+                x: s.pos[0] + 50.0,
+                y: s.pos[1] + 50.0,
+                radius: 4.0,
+                trigger_z: -60.0,
+            };
+            s.tool_length = 0.0;
+            let mut t = s.pos;
+            t[2] = -20.0;
+            s.planned_pos = t;
+            t
+        };
+
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        tx.send((
+            PendingMove {
+                kind: MoveKind::Linear,
+                target,
+                feed: 3000.0,
+                probe: Some(ProbeConfig {
+                    error_on_miss: false,
+                    probe_away: false,
+                }),
+            },
+            result_tx,
+        ))
+        .await
+        .unwrap();
+
+        let result = result_rx.await.unwrap();
+        assert!(matches!(result, MoveResult::ProbeNoContact), "{result:?}");
     }
 
     #[tokio::test]

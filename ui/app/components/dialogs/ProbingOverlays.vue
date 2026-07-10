@@ -19,6 +19,7 @@
               class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
             >
               Continue
+              <UiShortcutBadge action="dialogConfirm" />
             </button>
           </template>
         </div>
@@ -26,65 +27,63 @@
     </Teleport>
 
     <!-- Result overlay — suppressed when calibration owns the probe sequence -->
-    <Teleport to="body">
-      <div
-        v-if="showResult && !sync.calibrationActive"
-        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
-        @click.self="dismiss"
-      >
-        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-lg">
-          <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-slate-700">
-            <h3 class="text-base font-semibold text-gray-900 dark:text-slate-100">{{ wizardTitles[ps.wizardKey!] ?? ps.wizardKey }}</h3>
-            <button @click="dismiss" class="p-1 text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 rounded-md transition-colors">
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-          <div class="p-5 space-y-4">
-            <template v-if="ps.phase === 'completed'">
-              <div class="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg p-3 space-y-1.5">
-                <p class="text-xs font-semibold text-emerald-800 dark:text-emerald-300 uppercase tracking-wide">Probing Complete</p>
-                <template v-if="ps.measuredWidth !== null">
-                  <p class="text-xs text-emerald-700 dark:text-emerald-400">Width: {{ ps.measuredWidth!.toFixed(3) }} mm</p>
-                </template>
-                <template v-if="ps.measuredHeight !== null">
-                  <p class="text-xs text-emerald-700 dark:text-emerald-400">Height: {{ ps.measuredHeight!.toFixed(3) }} mm</p>
-                </template>
-                <template v-if="ps.measuredDiameter !== null">
-                  <p class="text-xs text-emerald-700 dark:text-emerald-400">Diameter: {{ ps.measuredDiameter!.toFixed(3) }} mm</p>
-                </template>
-                <template v-for="r in ps.stepResults" :key="`${r.axis}${r.direction}`">
-                  <p class="text-xs text-emerald-700 dark:text-emerald-400">{{ r.axis }}{{ r.direction }}: {{ r.edgeWpos.toFixed(3) }} mm</p>
-                </template>
-              </div>
-              <p class="text-xs text-center text-gray-400 dark:text-slate-500">Go to workspace to repeat or review full results.</p>
+    <DialogsDialogFrame
+      :open="!!showResult && !sync.calibrationActive"
+      :title="ps.wizardKey ? (wizardTitles[ps.wizardKey] ?? ps.wizardKey) : ''"
+      size="lg"
+      @close="dismiss"
+    >
+      <div class="space-y-4">
+        <template v-if="ps.phase === 'completed'">
+          <div class="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg p-3 space-y-1.5">
+            <p class="text-xs font-semibold text-emerald-800 dark:text-emerald-300 uppercase tracking-wide">Probing Complete</p>
+            <template v-if="ps.measuredWidth !== null">
+              <p class="text-xs text-emerald-700 dark:text-emerald-400">Width: {{ ps.measuredWidth!.toFixed(3) }} mm</p>
             </template>
-            <template v-else-if="ps.phase === 'aborted'">
-              <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-3">
-                <p class="text-xs font-semibold text-red-800 dark:text-red-300 uppercase tracking-wide">
-                  {{ ps.errorMessage ? 'Probing Failed' : 'Probing Stopped' }}
-                </p>
-                <p v-if="ps.errorMessage" class="text-xs text-red-700 dark:text-red-400 mt-1">{{ ps.errorMessage }}</p>
-              </div>
+            <template v-if="ps.measuredHeight !== null">
+              <p class="text-xs text-emerald-700 dark:text-emerald-400">Height: {{ ps.measuredHeight!.toFixed(3) }} mm</p>
             </template>
-            <button @click="dismiss" class="w-full py-2.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors">
-              Close
-            </button>
+            <template v-if="ps.measuredDiameter !== null">
+              <p class="text-xs text-emerald-700 dark:text-emerald-400">Diameter: {{ ps.measuredDiameter!.toFixed(3) }} mm</p>
+            </template>
+            <template v-for="r in ps.stepResults" :key="`${r.axis}${r.direction}`">
+              <p class="text-xs text-emerald-700 dark:text-emerald-400">{{ r.axis }}{{ r.direction }}: {{ r.edgeWpos.toFixed(3) }} mm</p>
+            </template>
           </div>
-        </div>
+          <p class="text-xs text-center text-gray-400 dark:text-slate-500">Go to workspace to repeat or review full results.</p>
+        </template>
+        <template v-else-if="ps.phase === 'aborted'">
+          <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-3">
+            <p class="text-xs font-semibold text-red-800 dark:text-red-300 uppercase tracking-wide">
+              {{ ps.errorMessage ? 'Probing Failed' : 'Probing Stopped' }}
+            </p>
+            <p v-if="ps.errorMessage" class="text-xs text-red-700 dark:text-red-400 mt-1">{{ ps.errorMessage }}</p>
+          </div>
+        </template>
       </div>
-    </Teleport>
+
+      <template #footer>
+        <DialogsDialogButton variant="neutral" shortcut="dialogCancel" class="flex-1" @click="dismiss">
+          Close
+        </DialogsDialogButton>
+      </template>
+    </DialogsDialogFrame>
   </template>
 </template>
 
 <script setup lang="ts">
 import { useSyncStore } from '~/stores/sync'
 import { wsSend } from '~/composables/useWsSend'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const sync = useSyncStore()
 const ps = sync.probingState
 const route = useRoute()
+
+// Gated by route, matching the template's own v-if — the workspace page ('/') has
+// its own copy of these overlays (ProbingPanel.vue) with its own shortcut wiring;
+// without this guard both would fire for the same keypress.
+const onNonWorkspacePage = () => route.path !== '/'
 
 const resultDismissed = ref(true)
 
@@ -104,6 +103,16 @@ watch(() => ps.phase, (phase, prevPhase) => {
 function dismiss() {
   resultDismissed.value = true
 }
+
+const showContinue = computed(() =>
+  ps.phase === 'running' && ps.wizardKey === 'center-in' && !!ps.currentStepLabel?.includes('Continue'),
+)
+useDialogShortcuts(() => onNonWorkspacePage() && ps.phase === 'running' && !!ps.wizardKey, {
+  onConfirm: () => { if (showContinue.value) wsSend({ t: 'probing:continue' }) },
+  onCancel: () => wsSend({ t: 'probing:abort' }),
+})
+
+useDialogShortcuts(() => onNonWorkspacePage() && !!showResult.value, { onCancel: dismiss })
 
 const wizardTitles: Record<string, string> = {
   'corner':     'Corner Probing (XYZ)',

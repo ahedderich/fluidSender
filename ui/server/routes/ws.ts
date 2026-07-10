@@ -642,6 +642,13 @@ export default defineWebSocketHandler({
         })
         break
       }
+      case 'toolchange:setBaseline': {
+        if (!requireRole(peer, 'operator')) break
+        jobRunner.setProbedBaseline().catch((e: unknown) => {
+          console.error('[ws] toolchange:setBaseline error:', e)
+        })
+        break
+      }
       case 'toolchange:abort': {
         if (!requireRole(peer, 'operator')) break
         jobRunner.stop()

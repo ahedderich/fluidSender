@@ -17,6 +17,16 @@ export interface ConsoleLine {
 export const AXES = ['x', 'y', 'z', 'a', 'b', 'c'] as const
 export type AxisKey = (typeof AXES)[number]
 
+/** Simplified tool library entry — same Fusion 360 import schema as FluidSender's
+ *  UI, trimmed to only what the tool-setter physics need. */
+export interface SimTool {
+  id: string
+  number: number
+  name: string
+  diameter: number
+  shoulderLength: number
+}
+
 export interface Scenario {
   id: string
   name: string
@@ -93,6 +103,28 @@ export const useSimStore = defineStore('sim', () => {
     triggered: false,
     deviations: { xPlus: 0, xMinus: 0, yPlus: 0, yMinus: 0, zMinus: 0 },
   })
+
+  // Tool library — the operator-swap stand-in. M6 never reaches the sim for
+  // FluidSender's manual/toolsetter strategies (it's intercepted client-side there),
+  // so "installing" a tool here is how a tester simulates the physical swap.
+  const tools = ref<SimTool[]>([])
+  const loadedToolNumber = ref<number | null>(null)
+
+  // Tool-setter trigger geometry. X/Y should match FluidSender's toolchange settings
+  // (the probe motion has to physically arrive there) — but triggerZ is sim-only
+  // ground truth. Don't copy it into FluidSender's TOL baseline; the point is to
+  // exercise FluidSender's own "measure + apply baseline" calibration flow against it.
+  const toolsetter = reactive({
+    enabled: false,
+    x: 0,
+    y: 0,
+    radius: 4,
+    triggerZ: -60,
+  })
+
+  // Read-only: the TLO the sim last received via G43.1 (Z axis). Display-only feedback
+  // that FluidSender's probe sequence actually reached the firmware and took effect.
+  const toolLengthOffset = ref(0)
 
   // Limit switches + door sensor
   const limits = reactive<Record<LimitKey, boolean>>({
@@ -266,6 +298,97 @@ export const useSimStore = defineStore('sim', () => {
     }).catch(() => {})
   }
 
+  // --- Tool library + tool-setter ---
+
+  async function persistTools() {
+    await $fetch('/api/tools', {
+      method: 'POST',
+      body: { loadedNumber: loadedToolNumber.value, tools: tools.value },
+    }).catch(() => {})
+  }
+
+  function addTool() {
+    tools.value.push({
+      id: crypto.randomUUID(),
+      number: (Math.max(0, ...tools.value.map((t) => t.number)) + 1),
+      name: 'New Tool',
+      diameter: 6,
+      shoulderLength: 25,
+    })
+    persistTools()
+  }
+
+  function removeTool(id: string) {
+    const removed = tools.value.find((t) => t.id === id)
+    tools.value = tools.value.filter((t) => t.id !== id)
+    if (removed && loadedToolNumber.value === removed.number) setLoadedTool(null)
+    else persistTools()
+  }
+
+  async function pushLoadedToolToSim() {
+    const tool = tools.value.find((t) => t.number === loadedToolNumber.value)
+    await $fetch('/api/sim/tool/current', {
+      method: 'POST',
+      body: { length: tool?.shoulderLength ?? 0 },
+    }).catch(() => {})
+  }
+
+  async function setLoadedTool(number: number | null) {
+    loadedToolNumber.value = number
+    await Promise.all([pushLoadedToolToSim(), persistTools()])
+  }
+
+  async function importTools(parsed: SimTool[]) {
+    tools.value = parsed
+    await persistTools()
+  }
+
+  async function pushToolsetterToSim() {
+    await $fetch('/api/sim/machine/toolsetter', {
+      method: 'POST',
+      body: { ...toolsetter },
+    }).catch(() => {})
+  }
+
+  async function persistToolsetter() {
+    await $fetch('/api/toolsetter', {
+      method: 'POST',
+      body: { ...toolsetter },
+    }).catch(() => {})
+  }
+
+  // Debounced push+persist of tool-setter edits, mirroring the probe-config watcher
+  // below — without it, local edits never reach the sim or survive a page reload.
+  let toolsetterPushTimer: ReturnType<typeof setTimeout> | null = null
+  watch(
+    () => ({ ...toolsetter }),
+    () => {
+      if (toolsetterPushTimer) clearTimeout(toolsetterPushTimer)
+      toolsetterPushTimer = setTimeout(() => {
+        toolsetterPushTimer = null
+        pushToolsetterToSim()
+        persistToolsetter()
+      }, 300)
+    },
+  )
+
+  // Loads tool library + tool-setter config from the sim-ui's own persisted storage.
+  // Must resolve (and be awaited) BEFORE the WS connects: connect-time re-pushes
+  // (pushToolsetterToSim/pushLoadedToolToSim) would otherwise send whatever this
+  // store's in-memory defaults happen to be, silently overwriting a previously
+  // configured tool-setter in the Rust sim on every page reload.
+  async function loadPersistedConfig() {
+    const [toolsData, toolsetterData] = await Promise.all([
+      $fetch<{ loadedNumber: number | null; tools: SimTool[] }>('/api/tools').catch(() => null),
+      $fetch<{ enabled: boolean; x: number; y: number; radius: number; triggerZ: number }>('/api/toolsetter').catch(() => null),
+    ])
+    if (toolsData) {
+      tools.value = toolsData.tools
+      loadedToolNumber.value = toolsData.loadedNumber
+    }
+    if (toolsetterData) Object.assign(toolsetter, toolsetterData)
+  }
+
   async function applyScenario(scenario: Scenario) {
     machineState.value = scenario.machineState
     for (const a of AXES) {
@@ -309,5 +432,8 @@ export const useSimStore = defineStore('sim', () => {
     triggerProbe, triggerLimit, softReset, triggerAlarm,
     setSimSpeed, setPosition, setWco, setTravel, pushProbeConfig, pushStockToSim,
     applyScenario, scenarios, defaultScenarioId, applyDefaultScenario,
+    tools, loadedToolNumber, toolsetter, toolLengthOffset,
+    persistTools, addTool, removeTool, setLoadedTool, importTools,
+    pushToolsetterToSim, pushLoadedToolToSim, persistToolsetter, loadPersistedConfig,
   }
 })

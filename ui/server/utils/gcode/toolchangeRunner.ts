@@ -13,6 +13,7 @@ import {
   getConnection,
   setConnection,
   pushToast,
+  setTolBaseline,
   type ToolchangeModalProps,
 } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
@@ -67,6 +68,10 @@ class ToolchangeRunner {
 
   // Toolchange modal id (null when no toolchange dialog is open)
   private _toolchangeModalId: string | null = null
+
+  // Raw machine-Z from the most recent toolsetter probe — kept only so a subsequent
+  // "set as baseline" action can persist it without re-probing. Not used for offset math.
+  private _lastProbeRawZ: number | null = null
 
   constructor(deps: ToolchangeRunnerDeps) {
     this.deps = deps
@@ -264,7 +269,8 @@ class ToolchangeRunner {
         return
       }
       try {
-        const probeResult = await runToolsetterProbe(pos)
+        const { offset: probeResult, rawZ } = await runToolsetterProbe(pos)
+        this._lastProbeRawZ = rawZ
         const toolHeight = probeResult + pos.zOffset
         await new Promise<void>((resolve, reject) => {
           sendGCode(
@@ -318,6 +324,35 @@ class ToolchangeRunner {
     const tc = await getToolchangeConfig()
     if (tc.strategy !== 'manual-toolsetter') return
     this._runToolsetterProbeSequence(tc.position)
+  }
+
+  /** Persists the last probe's raw machine-Z as the new tolBaseline. Triggered from the
+   *  Settings "TOL Baseline" row (not the toolchange dialog) — the intended flow is:
+   *  zero the baseline, measure whichever tool/probe should become the new zero
+   *  reference, then apply it here. This only updates the stored baseline value used
+   *  for future offset math (rawZ - tolBaseline); it deliberately does NOT re-probe or
+   *  resend G43.1, since the machine's current tool length offset already reflects the
+   *  measurement that was just taken and must be left untouched. */
+  async setProbedBaseline(): Promise<void> {
+    if (this._lastProbeRawZ === null) {
+      broadcastPatch([pushToast({
+        id: `tc-baseline-${Date.now()}`,
+        type: 'error',
+        message: 'No tool measurement to apply yet — use "Measure Tool Offset" first, then apply it as the baseline',
+        timeout: 4000,
+      })])
+      return
+    }
+    const tc = await getToolchangeConfig()
+    if (tc.strategy !== 'manual-toolsetter') return
+    const machineId = await this._getActiveMachineId()
+    if (!machineId) return
+
+    const patch = await setTolBaseline(machineId, this._lastProbeRawZ)
+    broadcastPatch([
+      patch,
+      pushToast({ id: `tc-baseline-${Date.now()}`, type: 'success', message: 'TOL baseline updated', timeout: 4000 }),
+    ])
   }
 
   async runStandaloneToolchange(targetToolNumber: number | null, operation: 'load' | 'unload'): Promise<void> {

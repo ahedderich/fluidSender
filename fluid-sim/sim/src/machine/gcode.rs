@@ -175,13 +175,18 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
     let modal_axes = extract_axes(words);
     let has_axis_words = modal_axes.iter().any(|a| a.is_some());
 
+    // G53: non-modal "this line only" override — axis words are used as literal
+    // machine coordinates, bypassing WCS/G92/TLO entirely (matches FluidNC's
+    // NonModal::AbsoluteOverride handling in GCode.cpp).
+    let machine_coords = gs.iter().any(|&g| (g - 53.0).abs() < 0.01);
+
     // Motion / coordinate G codes.
     for &g in &gs {
         match g {
             // G0 rapid, G1 linear — category A
             g if g == 0.0 || g == 1.0 => {
                 let axes = extract_axes(words);
-                let target = resolve_target(state, axes);
+                let target = resolve_target(state, axes, machine_coords);
                 if soft_limit_violated(&target, state) {
                     state.status = MachineStatus::Alarm;
                     return InterpretResult::Alarm(2);
@@ -202,7 +207,7 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
             // G2/G3 arc — category A
             g if g == 2.0 || g == 3.0 => {
                 let axes = extract_axes(words);
-                let target = resolve_target(state, axes);
+                let target = resolve_target(state, axes, machine_coords);
                 if soft_limit_violated(&target, state) {
                     state.status = MachineStatus::Alarm;
                     return InterpretResult::Alarm(2);
@@ -303,7 +308,7 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
                 || (g - 38.5).abs() < 0.01 =>
             {
                 let axes = extract_axes(words);
-                let target = resolve_target(state, axes);
+                let target = resolve_target(state, axes, machine_coords);
                 let feed = state.modal_feed;
                 let error_on_miss = (g - 38.2).abs() < 0.01 || (g - 38.4).abs() < 0.01;
                 let away = (g - 38.4).abs() < 0.01 || (g - 38.5).abs() < 0.01;
@@ -318,7 +323,7 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
                     }),
                 });
             }
-            53.0 => {}
+            53.0 => {} // consumed via `machine_coords` above, not here
             // G92 set coordinate offset — B1 (FORCE_BUFFER_SYNC_DURING_WCO_CHANGE)
             92.0 => {
                 let axes = extract_axes(words);
@@ -343,6 +348,26 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
                     InterpretResult::DrainAndApply
                 };
             }
+            // G43.1 dynamic tool length offset (Z only) — B1 (FORCE_BUFFER_SYNC_DURING_WCO_CHANGE)
+            g if (g - 43.1).abs() < 0.01 => {
+                if let Some(z) = word_val(words, 'Z') {
+                    state.tool_length_offset[2] = state.modal.units.to_mm(z);
+                }
+                return if pause_needed {
+                    InterpretResult::ProgramPause
+                } else {
+                    InterpretResult::DrainAndApply
+                };
+            }
+            // G49 cancel tool length offset — B1
+            49.0 => {
+                state.tool_length_offset = [0.0; AXIS_COUNT];
+                return if pause_needed {
+                    InterpretResult::ProgramPause
+                } else {
+                    InterpretResult::DrainAndApply
+                };
+            }
             _ => {}
         }
     }
@@ -352,7 +377,7 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
     // persistent motion mode — mirrors FluidNC's execute_line() behaviour for CAM
     // files that omit the G word after the first occurrence.
     if !has_explicit_motion && !has_blocking_g && has_axis_words && !pause_needed && !drain_needed {
-        let target = resolve_target(state, modal_axes);
+        let target = resolve_target(state, modal_axes, machine_coords);
         if soft_limit_violated(&target, state) {
             state.status = MachineStatus::Alarm;
             return InterpretResult::Alarm(2);
@@ -401,14 +426,26 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
 /// Unspecified axes stay at `planned_pos`; relative offsets are applied to `planned_pos`
 /// so that queued G91 commands chain off the planned end of the previous move rather
 /// than the live mid-move position.
-pub fn resolve_target(state: &MachineState, axes: [Option<f64>; AXIS_COUNT]) -> [f64; AXIS_COUNT] {
+///
+/// `machine_coords` is true when G53 was present on this line — per FluidNC's
+/// NonModal::AbsoluteOverride handling, the programmed value is then used as a
+/// literal machine coordinate, bypassing WCS/G92/TLO (and distance mode) entirely.
+pub fn resolve_target(
+    state: &MachineState,
+    axes: [Option<f64>; AXIS_COUNT],
+    machine_coords: bool,
+) -> [f64; AXIS_COUNT] {
     let mut target = state.planned_pos;
     for i in 0..AXIS_COUNT {
         let Some(v) = axes[i] else { continue };
         let v_mm = state.modal.units.to_mm(v);
-        target[i] = match state.modal.distance {
-            DistanceMode::Absolute => v_mm + state.wco[i],
-            DistanceMode::Relative => state.planned_pos[i] + v_mm,
+        target[i] = if machine_coords {
+            v_mm
+        } else {
+            match state.modal.distance {
+                DistanceMode::Absolute => v_mm + state.wco[i] + state.tool_length_offset[i],
+                DistanceMode::Relative => state.planned_pos[i] + v_mm,
+            }
         };
     }
     target
@@ -463,7 +500,8 @@ pub fn interpret_jog(words: &[Word], state: &mut MachineState) -> Option<Pending
     // Temporarily swap modal for target calculation
     let saved_modal = std::mem::replace(&mut state.modal, jog_modal);
     let axes = extract_axes(words);
-    let target = resolve_target(state, axes);
+    // $J= jogs never carry G53.
+    let target = resolve_target(state, axes, false);
     state.modal = saved_modal;
 
     let feed = word_val(words, 'F').unwrap_or(state.modal_feed).max(1.0);
@@ -513,6 +551,79 @@ mod tests {
             "wco.x={}",
             state.wco[0]
         );
+    }
+
+    #[test]
+    fn g53_bypasses_wco_and_tlo_for_this_line_only() {
+        let mut state = default_state();
+        // Non-zero WCO and TLO, both of which G53 must ignore. Kept small enough
+        // that the second (non-G53) move below still lands within travel.z=80.
+        state.wco[2] = -20.0;
+        state.tool_length_offset[2] = 3.5;
+
+        let words = parse_gcode_words("G53 G0 Z-10").unwrap();
+        let result = interpret(&words, &mut state);
+        match result {
+            InterpretResult::Move(mv) => {
+                assert!(
+                    (mv.target[2] - (-10.0)).abs() < 1e-9,
+                    "G53 target.z should be the literal machine coordinate, got {}",
+                    mv.target[2]
+                );
+            }
+            _ => panic!("expected a move"),
+        }
+
+        // G53 is non-modal — the very next line (no G53) must resolve through
+        // WCO/TLO again, exactly as before. `interpret()` already advanced
+        // planned_pos to the G53 move's target, so this chains off that.
+        let words = parse_gcode_words("G0 Z-10").unwrap();
+        let result = interpret(&words, &mut state);
+        match result {
+            InterpretResult::Move(mv) => {
+                assert!(
+                    (mv.target[2] - (-10.0 - 20.0 + 3.5)).abs() < 1e-9,
+                    "target.z={}",
+                    mv.target[2]
+                );
+            }
+            _ => panic!("expected a move"),
+        }
+    }
+
+    #[test]
+    fn g43_1_sets_tool_length_offset_and_shifts_target() {
+        let mut state = default_state();
+        let words = parse_gcode_words("G43.1 Z1.234").unwrap();
+        let result = interpret(&words, &mut state);
+        assert!(matches!(result, InterpretResult::DrainAndApply));
+        assert!((state.tool_length_offset[2] - 1.234).abs() < 1e-9);
+
+        // A subsequent absolute Z move must resolve through the new TLO, exactly
+        // like it already does through WCO.
+        let words = parse_gcode_words("G1 Z0 F100").unwrap();
+        let result = interpret(&words, &mut state);
+        match result {
+            InterpretResult::Move(mv) => {
+                assert!(
+                    (mv.target[2] - 1.234).abs() < 1e-9,
+                    "target.z={}",
+                    mv.target[2]
+                );
+            }
+            _ => panic!("expected a move"),
+        }
+    }
+
+    #[test]
+    fn g49_clears_tool_length_offset() {
+        let mut state = default_state();
+        interpret(&parse_gcode_words("G43.1 Z5.0").unwrap(), &mut state);
+        assert!((state.tool_length_offset[2] - 5.0).abs() < 1e-9);
+
+        let result = interpret(&parse_gcode_words("G49").unwrap(), &mut state);
+        assert!(matches!(result, InterpretResult::DrainAndApply));
+        assert_eq!(state.tool_length_offset, [0.0; AXIS_COUNT]);
     }
 
     #[test]

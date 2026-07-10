@@ -923,6 +923,10 @@ class JobRunner {
     return this.toolchangeRunner.runReprobe()
   }
 
+  async setProbedBaseline(): Promise<void> {
+    return this.toolchangeRunner.setProbedBaseline()
+  }
+
   async runStandaloneToolchange(targetToolNumber: number | null, operation: 'load' | 'unload'): Promise<void> {
     return this.toolchangeRunner.runStandaloneToolchange(targetToolNumber, operation)
   }

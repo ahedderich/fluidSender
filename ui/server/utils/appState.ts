@@ -465,6 +465,20 @@ export async function updateMagazineSlots(machineId: string, slots: (number | nu
   return { path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }
 }
 
+export async function setTolBaseline(machineId: string, value: number): Promise<PatchOp> {
+  const config = await getConfig()
+  const machines = (config.machines ?? []) as Array<Record<string, unknown>>
+  const machine = machines.find((m) => m.id === machineId)
+  if (machine && machine.toolchange && typeof machine.toolchange === 'object') {
+    const tc = machine.toolchange as Record<string, unknown>
+    if (tc.strategy === 'manual-toolsetter' && tc.position && typeof tc.position === 'object') {
+      (tc.position as Record<string, unknown>).tolBaseline = value
+      await setConfig(config)
+    }
+  }
+  return { path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }
+}
+
 export function pushToast(toast: Toast): PatchOp {
   ui.toasts.push(toast)
   return { path: 'toasts', push: toast }

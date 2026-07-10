@@ -122,7 +122,14 @@ pub fn alarm(code: u32) -> String {
 pub fn status(state: &MachineState) -> String {
     let n = state.axis_count.min(AXIS_COUNT);
     let mpos = format_axes(&state.pos, n);
-    let wco = format_axes(&state.wco, n);
+    // Real FluidNC folds the tool length offset into the reported WCO
+    // (System.cpp: wco[axis] += gc_state.tool_length_offset[axis]) so clients that
+    // compute WPos = MPos - WCO see the corrected work position without knowing TLO exists.
+    let mut reported_wco = state.wco;
+    for (rw, tlo) in reported_wco.iter_mut().zip(state.tool_length_offset.iter()) {
+        *rw += tlo;
+    }
+    let wco = format_axes(&reported_wco, n);
     let f = state.feed as u64;
     let s = state.spindle_speed as u64;
     let pn = state.limits.pn_string(state.probe.triggered, state.door);
@@ -249,7 +256,7 @@ pub fn gcode_params(state: &MachineState) -> String {
     out.push_str(&format!("[G28:{}]\r\n", zero));
     out.push_str(&format!("[G30:{}]\r\n", zero));
     out.push_str(&format!("[G92:{}]\r\n", g92));
-    out.push_str("[TLO:0.000]\r\n");
+    out.push_str(&format!("[TLO:{:.3}]\r\n", state.tool_length_offset[2]));
     out.push_str("[PRB:0.000,0.000,0.000:0]\r\n");
     out.push_str(&ok());
     out
@@ -312,5 +319,29 @@ mod tests {
         state.limits.x_min = true;
         let s = status(&state);
         assert!(s.contains("Pn:X"), "status: {}", s);
+    }
+
+    #[test]
+    fn status_folds_tlo_into_reported_wco() {
+        let mut state = test_state();
+        state.tool_length_offset[2] = 2.5;
+        let s = status(&state);
+        let wco_start = s.find("WCO:").unwrap() + 4;
+        let wco_end = s[wco_start..].find('|').map(|i| wco_start + i).unwrap();
+        let z: f64 = s[wco_start..wco_end]
+            .split(',')
+            .nth(2)
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!((z - 2.5).abs() < 1e-6, "wco.z={}", z);
+    }
+
+    #[test]
+    fn gcode_params_reports_tool_length_offset() {
+        let mut state = test_state();
+        state.tool_length_offset[2] = -3.75;
+        let out = gcode_params(&state);
+        assert!(out.contains("[TLO:-3.750]"), "out: {}", out);
     }
 }

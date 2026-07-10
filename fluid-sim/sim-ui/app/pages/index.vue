@@ -14,6 +14,12 @@
       <StockPanel />
     </div>
 
+    <!-- Row 2.5: tool-setter | tool library -->
+    <div class="grid gap-2 shrink-0" style="grid-template-columns: 1fr 2fr; height: 16rem">
+      <ToolsetterPanel />
+      <ToolLibraryPanel />
+    </div>
+
     <!-- Row 3: protocol console (2/3) | FluidNC config (1/3) -->
     <div class="grid gap-2 shrink-0" style="grid-template-columns: 2fr 1fr; height: 18rem">
       <ConsolePanel />
