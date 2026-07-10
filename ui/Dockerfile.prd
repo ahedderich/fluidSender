@@ -18,6 +18,12 @@ WORKDIR /app
 # request fails.
 RUN apt-get update -y && apt-get install -y udev --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
+# node:22-slim bundles a global npm install we never use (build happens via
+# bun in the builder stage; CMD runs node directly). npm's own internal deps
+# (picomatch, @sigstore/bundle) show up as CVEs in image scans despite not
+# being FluidSender dependencies — remove the whole thing.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 COPY --from=builder /app/.output ./.output
 
 EXPOSE 3000
