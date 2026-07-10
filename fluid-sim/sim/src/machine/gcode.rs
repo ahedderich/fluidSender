@@ -343,6 +343,26 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
                     InterpretResult::DrainAndApply
                 };
             }
+            // G43.1 dynamic tool length offset (Z only) — B1 (FORCE_BUFFER_SYNC_DURING_WCO_CHANGE)
+            g if (g - 43.1).abs() < 0.01 => {
+                if let Some(z) = word_val(words, 'Z') {
+                    state.tool_length_offset[2] = state.modal.units.to_mm(z);
+                }
+                return if pause_needed {
+                    InterpretResult::ProgramPause
+                } else {
+                    InterpretResult::DrainAndApply
+                };
+            }
+            // G49 cancel tool length offset — B1
+            49.0 => {
+                state.tool_length_offset = [0.0; AXIS_COUNT];
+                return if pause_needed {
+                    InterpretResult::ProgramPause
+                } else {
+                    InterpretResult::DrainAndApply
+                };
+            }
             _ => {}
         }
     }
@@ -407,7 +427,7 @@ pub fn resolve_target(state: &MachineState, axes: [Option<f64>; AXIS_COUNT]) -> 
         let Some(v) = axes[i] else { continue };
         let v_mm = state.modal.units.to_mm(v);
         target[i] = match state.modal.distance {
-            DistanceMode::Absolute => v_mm + state.wco[i],
+            DistanceMode::Absolute => v_mm + state.wco[i] + state.tool_length_offset[i],
             DistanceMode::Relative => state.planned_pos[i] + v_mm,
         };
     }
@@ -513,6 +533,41 @@ mod tests {
             "wco.x={}",
             state.wco[0]
         );
+    }
+
+    #[test]
+    fn g43_1_sets_tool_length_offset_and_shifts_target() {
+        let mut state = default_state();
+        let words = parse_gcode_words("G43.1 Z1.234").unwrap();
+        let result = interpret(&words, &mut state);
+        assert!(matches!(result, InterpretResult::DrainAndApply));
+        assert!((state.tool_length_offset[2] - 1.234).abs() < 1e-9);
+
+        // A subsequent absolute Z move must resolve through the new TLO, exactly
+        // like it already does through WCO.
+        let words = parse_gcode_words("G1 Z0 F100").unwrap();
+        let result = interpret(&words, &mut state);
+        match result {
+            InterpretResult::Move(mv) => {
+                assert!(
+                    (mv.target[2] - 1.234).abs() < 1e-9,
+                    "target.z={}",
+                    mv.target[2]
+                );
+            }
+            _ => panic!("expected a move"),
+        }
+    }
+
+    #[test]
+    fn g49_clears_tool_length_offset() {
+        let mut state = default_state();
+        interpret(&parse_gcode_words("G43.1 Z5.0").unwrap(), &mut state);
+        assert!((state.tool_length_offset[2] - 5.0).abs() < 1e-9);
+
+        let result = interpret(&parse_gcode_words("G49").unwrap(), &mut state);
+        assert!(matches!(result, InterpretResult::DrainAndApply));
+        assert_eq!(state.tool_length_offset, [0.0; AXIS_COUNT]);
     }
 
     #[test]

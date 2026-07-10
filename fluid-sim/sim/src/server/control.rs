@@ -19,7 +19,7 @@ use tracing::info;
 use crate::machine::probe::ProbeDeviations;
 use crate::machine::state::{
     AxisMap, ConsoleBroadcast, LimitState, MachineState, MachineStatus, SharedMachineState,
-    StateBroadcast, AXIS_COUNT,
+    StateBroadcast, ToolsetterConfig, AXIS_COUNT,
 };
 use crate::machine::stock::StockDefinition;
 
@@ -50,6 +50,9 @@ pub struct SimState {
     pub axis_count: usize,
     pub travel: AxisMap,
     pub fluid_config: HashMap<String, String>,
+    pub tool_length: f64,
+    pub tool_length_offset: f64,
+    pub toolsetter: ToolsetterConfig,
 }
 
 impl SimState {
@@ -70,6 +73,9 @@ impl SimState {
             axis_count: s.axis_count,
             travel: AxisMap::from_arr(&s.travel),
             fluid_config: s.fluid_config.clone(),
+            tool_length: s.tool_length,
+            tool_length_offset: s.tool_length_offset[2],
+            toolsetter: s.toolsetter.clone(),
         }
     }
 }
@@ -86,6 +92,8 @@ pub fn router(app: AppState) -> Router {
         .route("/api/machine/wco", post(set_wco))
         .route("/api/machine/config", post(set_machine_config))
         .route("/api/stock", post(set_stock))
+        .route("/api/tool/current", post(set_tool_current))
+        .route("/api/machine/toolsetter", post(set_toolsetter))
         .route("/ws/state", get(ws_state_handler))
         .route("/ws/console", get(ws_console_handler))
         .layer(TraceLayer::new_for_http())
@@ -294,6 +302,34 @@ async fn set_stock(State(app): State<AppState>, Json(stock): Json<StockDefinitio
     info!("Stock updated: {:?}", stock.shape);
     let mut state = app.machine.write().await;
     state.stock = Some(stock);
+    StatusCode::NO_CONTENT
+}
+
+#[derive(Deserialize)]
+struct SetToolCurrentBody {
+    length: f64,
+}
+
+/// Sets the physical length of the tool currently "in the spindle" — the sim-ui's
+/// stand-in for an operator physically swapping the tool, since M6 never reaches
+/// the sim for FluidSender's manual/toolsetter toolchange strategies.
+async fn set_tool_current(
+    State(app): State<AppState>,
+    Json(body): Json<SetToolCurrentBody>,
+) -> StatusCode {
+    let mut state = app.machine.write().await;
+    state.tool_length = body.length;
+    let _ = app.broadcast.send(());
+    StatusCode::NO_CONTENT
+}
+
+async fn set_toolsetter(
+    State(app): State<AppState>,
+    Json(cfg): Json<ToolsetterConfig>,
+) -> StatusCode {
+    let mut state = app.machine.write().await;
+    state.toolsetter = cfg;
+    let _ = app.broadcast.send(());
     StatusCode::NO_CONTENT
 }
 
