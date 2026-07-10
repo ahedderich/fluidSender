@@ -9,4 +9,23 @@ jobs:
     name: Status Gate
     runs-on: ubuntu-latest
     steps:
+      - name: Enforce branch targeting policy
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          case "$HEAD_REF" in
+            feat/*|fix/*)
+              if [ "$BASE_REF" != "test" ]; then
+                echo "::error::'$HEAD_REF' may only open a PR into 'test' (got base '$BASE_REF')."
+                exit 1
+              fi
+              ;;
+            hotfix/*|test)
+              if [ "$BASE_REF" != "main" ] && [ "$BASE_REF" != "test" ]; then
+                echo "::error::'$HEAD_REF' may only target 'main' or 'test' (got base '$BASE_REF')."
+                exit 1
+              fi
+              ;;
+          esac
       - run: echo "OK"

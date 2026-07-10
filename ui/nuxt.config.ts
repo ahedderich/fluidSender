@@ -1,4 +1,5 @@
 import tailwindcss from '@tailwindcss/vite'
+import { version } from './package.json'
 
 const THREE_CDN = 'https://cdn.jsdelivr.net/npm/three@0.184.0'
 
@@ -61,6 +62,9 @@ export default defineNuxtConfig({
     configPath: process.env.NUXT_CONFIG_PATH ?? '/app/config',
     dataPath: process.env.NUXT_DATA_PATH ?? '/app/data',
     jwtSecret: process.env.NUXT_JWT_SECRET ?? 'dev-secret-change-in-production',
+    public: {
+      appVersion: version,
+    },
   },
 
   compatibilityDate: '2026-06-23',

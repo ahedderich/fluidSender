@@ -1,0 +1,91 @@
+name: PR Title Convention
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  validate-title:
+    name: Validate Conventional Commit Title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            chore
+            test
+            ci
+            build
+            revert
+
+  label-bump-estimate:
+    name: Label Estimated Version Bump
+    needs: validate-title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute and apply bump label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.pull_request.title;
+            const body = context.payload.pull_request.body || '';
+            const match = title.match(/^(\w+)(\([\w.-]+\))?(!)?:\s.+/);
+
+            let bump = 'none';
+            if (match) {
+              const type = match[1];
+              const breaking = Boolean(match[3]) || /BREAKING CHANGE/.test(body);
+              if (breaking) bump = 'major';
+              else if (type === 'feat') bump = 'minor';
+              else if (type === 'fix' || type === 'perf') bump = 'patch';
+            }
+
+            const colors = { major: 'd73a4a', minor: '0e8a16', patch: '1d76db', none: 'c5def5' };
+            const labelName = `bump:${bump}`;
+
+            try {
+              await github.rest.issues.getLabel({ owner: context.repo.owner, repo: context.repo.repo, name: labelName });
+            } catch {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: labelName,
+                color: colors[bump],
+                description: `Estimated release-please version bump: ${bump}`,
+              });
+            }
+
+            const { data: existing } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            for (const label of existing) {
+              if (label.name.startsWith('bump:') && label.name !== labelName) {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  name: label.name,
+                });
+              }
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: [labelName],
+            });
