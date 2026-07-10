@@ -1,28 +1,11 @@
 <template>
-  <Teleport to="body">
-    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div class="absolute inset-0 bg-black/30" @click="$emit('close')" />
-      <div
-        class="relative bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-600 shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col"
-        @click.stop
-      >
-        <!-- Header -->
-        <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-slate-700 shrink-0">
-          <h2 class="text-sm font-semibold text-gray-900 dark:text-slate-100">
-            {{ props.macro ? 'Edit Macro' : 'New Macro' }}
-          </h2>
-          <button
-            type="button"
-            @click="$emit('close')"
-            class="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
-          >
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <div class="overflow-y-auto flex-1 px-5 py-4 space-y-5">
+  <DialogsDialogFrame
+    :open="true"
+    :title="props.macro ? 'Edit Macro' : 'New Macro'"
+    size="2xl"
+    @close="$emit('close')"
+  >
+        <div class="space-y-5">
           <!-- Section 1: Basic settings -->
           <div class="space-y-3">
             <div>
@@ -221,29 +204,16 @@
           </div>
         </div>
 
-        <!-- Footer -->
-        <div class="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-200 dark:border-slate-700 shrink-0">
-          <button
-            type="button"
-            @click="$emit('close')"
-            class="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 hover:text-gray-800 dark:hover:text-slate-100 transition-colors"
-          >
-            Cancel
-            <UiShortcutBadge action="dialogCancel" />
-          </button>
-          <button
-            type="button"
-            @click="save"
-            :disabled="saving"
-            class="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
-          >
-            {{ saving ? 'Saving…' : 'Save' }}
-            <UiShortcutBadge action="dialogConfirm" />
-          </button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
+    <template #footer>
+      <div class="flex-1" />
+      <DialogsDialogButton variant="neutral" shortcut="dialogCancel" @click="$emit('close')">
+        Cancel
+      </DialogsDialogButton>
+      <DialogsDialogButton variant="primary" shortcut="dialogConfirm" :disabled="saving" @click="save">
+        {{ saving ? 'Saving…' : 'Save' }}
+      </DialogsDialogButton>
+    </template>
+  </DialogsDialogFrame>
 </template>
 
 <script setup lang="ts">

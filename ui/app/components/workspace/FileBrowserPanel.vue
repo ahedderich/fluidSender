@@ -92,29 +92,20 @@
     </div>
 
     <!-- Analysis loading overlay -->
-    <Teleport to="body">
-      <div
-        v-if="isAnalyzing"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      >
-        <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-gray-200 dark:border-slate-700 p-6 w-80">
-          <h3 class="text-sm font-semibold text-gray-800 dark:text-slate-100 mb-1">Analysing GCode</h3>
-          <p class="text-xs text-gray-500 dark:text-slate-400 mb-4">
-            {{ analyzingFilename }} — calculating time estimate, tool sections and 3D path…
-          </p>
-          <div class="h-2 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden mb-4">
-            <div class="h-full bg-blue-500 rounded-full transition-all duration-300" :style="{ width: analyzeProgress + '%' }" />
-          </div>
-          <div class="flex items-center justify-between">
-            <span class="text-xs text-gray-400 dark:text-slate-500">{{ analyzeProgress }}%</span>
-            <button class="text-xs px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded transition-colors font-medium" @click="abortAnalysis()">
-              Abort
-              <UiShortcutBadge action="dialogCancel" />
-            </button>
-          </div>
-        </div>
+    <DialogsDialogFrame :open="isAnalyzing" title="Analysing GCode" size="sm" :dismissible="false" :closable="false">
+      <p class="text-xs text-gray-500 dark:text-slate-400 mb-4">
+        {{ analyzingFilename }} — calculating time estimate, tool sections and 3D path…
+      </p>
+      <div class="h-2 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden mb-4">
+        <div class="h-full bg-blue-500 rounded-full transition-all duration-300" :style="{ width: analyzeProgress + '%' }" />
       </div>
-    </Teleport>
+      <div class="flex items-center justify-between">
+        <span class="text-xs text-gray-400 dark:text-slate-500">{{ analyzeProgress }}%</span>
+        <DialogsDialogButton variant="danger" shortcut="dialogCancel" @click="abortAnalysis()">
+          Abort
+        </DialogsDialogButton>
+      </div>
+    </DialogsDialogFrame>
 
     <!-- Table -->
     <div class="flex-1 overflow-auto min-h-0">
@@ -273,31 +264,6 @@
         </p>
       </div>
     </div>
-
-    <!-- Local confirm dialog (not synced to other browsers) -->
-    <Teleport to="body">
-      <Transition enter-active-class="transition duration-100" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition duration-75" leave-from-class="opacity-100" leave-to-class="opacity-0">
-        <div v-if="confirmState.open" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div class="absolute inset-0 bg-black/20" @click="confirmState.open = false" />
-          <Transition enter-active-class="transition duration-100" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition duration-75" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
-            <div v-if="confirmState.open" class="relative bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-600 shadow-2xl p-5 w-80 max-w-full" @click.stop>
-              <h3 class="text-sm font-semibold text-gray-900 dark:text-slate-100">{{ confirmState.title }}</h3>
-              <p v-if="confirmState.message" class="mt-1.5 text-sm text-gray-500 dark:text-slate-400 leading-relaxed">{{ confirmState.message }}</p>
-              <div class="flex gap-2 mt-4">
-                <button class="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium transition-colors" @click="runConfirmed">
-                  Delete
-                  <UiShortcutBadge action="dialogConfirm" />
-                </button>
-                <button class="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors" @click="confirmState.open = false">
-                  Cancel
-                  <UiShortcutBadge action="dialogCancel" />
-                </button>
-              </div>
-            </div>
-          </Transition>
-        </div>
-      </Transition>
-    </Teleport>
   </div>
 </template>
 
@@ -305,6 +271,7 @@
 import { useJobControl } from '~/composables/useJobControl'
 import { useCurrentUser } from '~/composables/useCurrentUser'
 import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
+import { useConfirm } from '~/composables/useConfirm'
 
 // ----- types -----
 
@@ -358,13 +325,7 @@ const isAnalyzing = computed(() => job.value?.status === 'analyzing')
 const analyzeProgress = computed(() => job.value?.analyzeProgress ?? 0)
 const analyzingFilename = computed(() => job.value?.filename ?? '')
 
-const confirmState = reactive({
-  open: false,
-  title: '',
-  message: '',
-  pendingPath: '',
-  pendingType: 'file' as 'file' | 'folder',
-})
+const { confirm } = useConfirm()
 
 // ----- data fetching -----
 
@@ -481,24 +442,20 @@ async function createFolder() {
   await refresh()
 }
 
-function confirmDelete(path: string, type: 'file' | 'folder', name: string) {
-  confirmState.title = type === 'folder' ? `Delete folder "${name}"?` : `Delete "${name}"?`
-  confirmState.message = type === 'folder'
-    ? 'This will permanently delete the folder and all files inside it.'
-    : 'This file will be permanently deleted.'
-  confirmState.pendingPath = path
-  confirmState.pendingType = type
-  confirmState.open = true
-}
-
-async function runConfirmed() {
-  confirmState.open = false
-  const { pendingPath, pendingType } = confirmState
-  await $fetch(`/api/files?path=${encodeURIComponent(pendingPath)}&type=${pendingType}`, { method: 'DELETE' })
+async function confirmDelete(path: string, type: 'file' | 'folder', name: string) {
+  const ok = await confirm({
+    title: type === 'folder' ? `Delete folder "${name}"?` : `Delete "${name}"?`,
+    message: type === 'folder'
+      ? 'This will permanently delete the folder and all files inside it.'
+      : 'This file will be permanently deleted.',
+    confirmLabel: 'Delete',
+    danger: true,
+  })
+  if (!ok) return
+  await $fetch(`/api/files?path=${encodeURIComponent(path)}&type=${type}`, { method: 'DELETE' })
   await refresh()
 }
 
-useDialogShortcuts(() => confirmState.open, { onConfirm: runConfirmed, onCancel: () => { confirmState.open = false } })
 useDialogShortcuts(() => isAnalyzing.value, { onCancel: () => abortAnalysis() })
 
 // ----- formatting -----
