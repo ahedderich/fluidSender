@@ -81,17 +81,19 @@
         </div>
       </div>
 
-      <!-- Col 2: Speed preset buttons -->
+      <!-- Col 2: Speed preset buttons — displayed fast-on-top, slow-on-bottom, though
+           speeds/activeSpeedIndex/selectSpeed all stay indexed [slow, med, fast] since
+           that ordering is relied on elsewhere (keyboard shortcuts, useJog). -->
       <div class="flex flex-col gap-1 shrink-0 w-14">
         <button
-          v-for="(speed, i) in speeds"
-          :key="speed.label"
+          v-for="i in SPEED_DISPLAY_ORDER"
+          :key="speeds[i]!.label"
           @click="selectSpeed(i)"
           :disabled="!movementEnabled"
           :class="activeSpeedIndex === i ? 'bg-blue-600 text-white' : (!movementEnabled ? 'bg-gray-100 dark:bg-slate-700 opacity-40 cursor-not-allowed text-gray-700 dark:text-slate-300' : 'bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300')"
           class="w-full flex-1 rounded-md text-xs font-medium transition-colors"
         >
-          {{ speed.label }}
+          {{ speeds[i]!.label }}
         </button>
       </div>
 
@@ -306,6 +308,9 @@ const {
 } = useJog()
 
 const speeds = speedPresets
+
+// speeds is indexed [slow, medium, fast]; displayed fast-on-top, slow-on-bottom.
+const SPEED_DISPLAY_ORDER = [2, 1, 0]
 
 const isJobActive = computed(() => {
   const s = sync.job?.status
