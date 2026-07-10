@@ -45,6 +45,11 @@ jobs:
 
       - name: Trivy scan
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          # Not exposed as a trivy-action input; show ignored/suppressed
+          # findings (from .trivyignore) in the report without affecting
+          # exit-code or severity gating.
+          TRIVY_SHOW_SUPPRESSED: true
         with:
           image-ref: ghcr.io/ahedderich/fluidsender:${{ steps.meta.outputs.version }}
           format: table
