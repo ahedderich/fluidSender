@@ -4,6 +4,12 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    # The image runs as a fixed non-root user (uid/gid 65532). Bind-mounted
+    # ./config and ./data must be readable/writable by that uid — either
+    # `chown -R 65532:65532 ./config ./data` once before first start, or
+    # override to your own host user below (uncomment) if you'd rather match
+    # existing directory ownership instead:
+    # user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - ./config:/app/config
       - ./data:/app/data
@@ -12,8 +18,18 @@ services:
       # match your host (e.g. /dev/ttyACM0), or add more lines for multiple
       # machines.
       - "/dev/ttyUSB0:/dev/ttyUSB0"
+    group_add:
+      # The container's non-root user needs group membership matching the
+      # host group that owns the serial device (commonly "dialout") to open
+      # it. Run `getent group dialout` on the host and adjust this GID if
+      # it's not 20.
+      - "20"
     environment:
       NODE_ENV: production
       NUXT_HOST: "0.0.0.0"
       NUXT_PORT: "3000"
       NUXT_JWT_SECRET: "change-this-to-a-long-random-secret"   # required when auth.enabled = true
+      # Optional friendly names for the serial ports listed above, shown in
+      # the port picker instead of the bare path. Format: path:label pairs,
+      # comma-separated.
+      # FLUIDSENDER_SERIAL_LABELS: "/dev/ttyUSB0:Router"
