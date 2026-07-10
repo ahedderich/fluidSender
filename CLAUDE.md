@@ -192,12 +192,12 @@ hotfix/xyz         ← urgent post-release fixes, cut from `main`
 
 ## Commit & PR Title Convention
 
-Versioning is entirely automated by **Release Please**, which reads the commit history on `main`. Since PRs into `main` are squash-merged, each PR collapses into exactly one commit whose message is the **PR title** — so the PR title is what actually drives the version bump. Individual commits within a `feat/`/`fix/` branch are not parsed by Release Please and don't need to follow this format; only the title of the PR that lands on `main` (a `test → main` or `hotfix/* → main` PR) does.
+Versioning is automated by **Release Please**, which reads the commit history on `main`. Since PRs into `main` are squash-merged, each PR collapses into exactly one commit whose message is the **PR title** — so the PR title is what actually drives the version bump. Only that title is enforced in CI.
 
-- PR titles targeting `main` must follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope)!: subject` (e.g. `feat(jog): add continuous jog mode`).
+- PR titles targeting `main` must follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope)!: subject` (e.g. `feat(jog): add continuous jog mode`). Enforced by `pr-title-lint.yaml`, which validates the title and labels the PR with its estimated bump (`bump:major`/`bump:minor`/`bump:patch`/`bump:none`) so the effect is visible before merging. The label is only an estimate of what Release Please will do — Release Please itself is the source of truth.
 - Allowed types: `feat`, `fix`, `perf`, `refactor`, `docs`, `chore`, `test`, `ci`, `build`, `revert`.
 - Bump mapping (per `bump-minor-pre-major: true` in `.release-please-config.json`, so pre-1.0 `feat` bumps minor, not major): `feat` → minor, `fix`/`perf` → patch, a `!` after the type/scope or a `BREAKING CHANGE:` footer → major, everything else → no release.
-- Enforced by `pr-title-lint.yaml`, which validates the title and labels the PR with its estimated bump (`bump:major`/`bump:minor`/`bump:patch`/`bump:none`) so the effect is visible before merging. This is only an estimate of what Release Please will do — Release Please itself is the source of truth.
+- As a matter of style — not CI-enforced — individual commit messages (including ones Claude authors) should also follow this format. It costs nothing, keeps history readable, and means Release Please still has something sane to parse in the edge case where a PR into `main` ends up merged with a regular merge commit instead of squashed. But no workflow blocks a PR over it; only the PR title into `main` is a hard gate.
 
 ---
 
