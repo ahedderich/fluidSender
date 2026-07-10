@@ -31,11 +31,27 @@ jobs:
           tags: |
             type=raw,value=test
 
-      - name: Build and push
+      - name: Build (local, not pushed yet)
         uses: docker/build-push-action@v6
         with:
           context: ./ui
           file: ./ui/Dockerfile.prd
-          push: true
+          push: false
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/ahedderich/fluidsender:test
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          trivyignores: .trivyignore
+
+      - name: Push
+        run: |
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && docker push "$tag"
+          done <<< "${{ steps.meta.outputs.tags }}"
