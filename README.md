@@ -6,6 +6,14 @@ FluidSender is a native FluidNC client — not a generic GRBL sender. It impleme
 
 ---
 
+## Pre-Release Version Note
+
+FluidSender is currently in pre release development. This means no release is currently considered as "stable". With Version 1.0.0 the first
+release will be published in the future until then the feature set should not change since the focus until the first release is on stability,
+performance, security and bug hunting. Please feel free to use the pre release for testing both via simulator or physical maschine. It is not yet meant for production use.
+
+---
+
 ## Features
 
 - **Multi-machine management** — configure, switch, and monitor multiple FluidNC machines from a single interface
@@ -170,6 +178,7 @@ None of this has been tested against real hardware other than FluidNC. It's plau
 
 Planned features and areas of future development, roughly in order of priority:
 
+- **Testing, Testing, Testing** — Since this release is still an early alpha i intend to test all functionallities as much as possible on a real maschine. Latest fixes have been mostly ui polishing and minior bugfixes but that is not to say there aren't any bugs left. Besides the real live testing the CI/CD testsuite needs to refined and expended. The project is to complex to retest everything by hand so reliable automatic testing is curcial.
 - **Stock definition via STEP file** — import a STEP model as the stock definition instead of defining a simple rectangular or round shape manually
 - **Extended probing wizards** — guided probing workflows for more complex stock geometry, building on the existing edge-finding and corner-probing primitives
 - **Firmware update check** — automatic check for newer FluidNC firmware releases on connect, with a visible indicator when an update is available
