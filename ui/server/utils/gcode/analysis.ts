@@ -61,6 +61,7 @@ function clampRanges(axisRanges: AxisRanges): void {
 export function analyzeGCode(
   content: string,
   maxRapidMmPerMin = DEFAULT_MAX_RAPID_MM_PER_MIN,
+  onProgress?: (pct: number) => void,
 ): AnalysisResult {
   const rawLines = content.split(/\r?\n/)
 
@@ -128,6 +129,8 @@ export function analyzeGCode(
   const lines: GCodeLine[] = []
   const vectors: Array<LineVector | null> = []
   const modalStates: GCodeModalState[] = []
+  const lastLineIdx = Math.max(1, rawLines.length - 1)
+  let lastReportedPct = -1
 
   for (let i = 0; i < rawLines.length; i++) {
     const raw = rawLines[i]!
@@ -437,6 +440,14 @@ export function analyzeGCode(
     })
     vectors.push(vec)
     modalStates.push(structuredClone(state))
+
+    if (onProgress) {
+      const pct = Math.floor((i / lastLineIdx) * 100)
+      if (pct !== lastReportedPct) {
+        lastReportedPct = pct
+        onProgress(pct)
+      }
+    }
   }
 
   // Finalise last section's lineCount
