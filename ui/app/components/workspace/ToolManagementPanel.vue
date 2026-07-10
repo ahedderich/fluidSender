@@ -746,6 +746,7 @@
               @click="showToolModal = false"
             >
               Cancel
+              <UiShortcutBadge action="dialogCancel" />
             </button>
             <button
               v-if="modalTab !== 'presets' && modalTab !== 'lifecycle'"
@@ -754,6 +755,7 @@
               @click="saveModal"
             >
               {{ editingTool ? 'Save Changes' : 'Add Tool' }}
+              <UiShortcutBadge action="dialogConfirm" />
             </button>
           </div>
         </div>
@@ -834,6 +836,7 @@
               @click="showExportModal = false"
             >
               Cancel
+              <UiShortcutBadge action="dialogCancel" />
             </button>
             <button
               :disabled="exportToolCount === 0"
@@ -844,6 +847,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
               Export {{ exportToolCount }} Tool{{ exportToolCount !== 1 ? 's' : '' }}
+              <UiShortcutBadge action="dialogConfirm" />
             </button>
           </div>
         </div>
@@ -894,9 +898,11 @@
           <div class="flex gap-3 px-5 pb-5">
             <button class="flex-1 py-2.5 text-sm bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg transition-colors font-medium" @click="showImportModal = false">
               Cancel
+              <UiShortcutBadge action="dialogCancel" />
             </button>
             <button class="flex-1 py-2.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors font-medium" @click="confirmImport">
               Import
+              <UiShortcutBadge action="dialogConfirm" />
             </button>
           </div>
         </div>
@@ -916,6 +922,7 @@ import { useModals } from '~/composables/useModals'
 import { useConfirm } from '~/composables/useConfirm'
 import { wsSend } from '~/composables/useWsSend'
 import { useCurrentUser } from '~/composables/useCurrentUser'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 const SourceBadge = defineComponent({
   props: { source: { type: String as () => 'M' | 'A', required: true } },
   setup(props) {
@@ -1234,6 +1241,11 @@ function saveModal() {
   showToolModal.value = false
 }
 
+useDialogShortcuts(() => showToolModal.value, {
+  onConfirm: () => { if (modalTab.value !== 'presets' && modalTab.value !== 'lifecycle') saveModal() },
+  onCancel: () => { showToolModal.value = false },
+})
+
 async function deleteFromModal() {
   if (!editingTool.value) return
   const ok = await confirm({
@@ -1280,6 +1292,11 @@ async function doExport() {
   a.click()
   showExportModal.value = false
 }
+
+useDialogShortcuts(() => showExportModal.value, {
+  onConfirm: () => { if (exportToolCount.value > 0) doExport() },
+  onCancel: () => { showExportModal.value = false },
+})
 
 const jobToolNumbers = computed(() => {
   const sections = job.value?.toolSections ?? []
@@ -1411,4 +1428,9 @@ async function confirmImport() {
   pendingImportData.value = null
   showImportModal.value = false
 }
+
+useDialogShortcuts(() => showImportModal.value, {
+  onConfirm: confirmImport,
+  onCancel: () => { showImportModal.value = false },
+})
 </script>

@@ -111,6 +111,7 @@
               class="px-4 py-2 text-sm bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg transition-colors"
             >
               Abort Job
+              <UiShortcutBadge action="dialogCancel" />
             </button>
             <button
               v-else
@@ -118,6 +119,7 @@
               class="px-4 py-2 text-sm bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg transition-colors"
             >
               Cancel
+              <UiShortcutBadge action="dialogCancel" />
             </button>
             <button
               @click="send('toolchange:confirm')"
@@ -127,6 +129,7 @@
               <template v-else-if="isToolsetterStrategy">Tool installed — Probe Length</template>
               <template v-else-if="!props.isJobContext">Tool loaded — Confirm</template>
               <template v-else>Tool installed — Continue</template>
+              <UiShortcutBadge action="dialogConfirm" />
             </button>
           </template>
 
@@ -140,6 +143,15 @@
               class="px-4 py-2 text-sm bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg transition-colors"
             >
               Abort
+              <UiShortcutBadge action="dialogCancel" />
+            </button>
+            <button
+              v-if="props.operation === 'measure'"
+              @click="send('toolchange:setBaseline')"
+              class="px-4 py-2 text-sm bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg transition-colors"
+              title="Only use this with the machine's zero-reference tool (e.g. the touch probe) loaded — it redefines what TOL 0 means for every future probe"
+            >
+              Set as Baseline
             </button>
             <button
               @click="send('toolchange:reprobe')"
@@ -152,6 +164,7 @@
               class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors font-medium"
             >
               {{ props.isJobContext ? 'Resume Job' : 'Apply & Done' }}
+              <UiShortcutBadge action="dialogConfirm" />
             </button>
           </template>
 
@@ -161,12 +174,14 @@
               class="px-4 py-2 text-sm bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg transition-colors"
             >
               Abort
+              <UiShortcutBadge action="dialogCancel" />
             </button>
             <button
               @click="send('toolchange:reprobe')"
               class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors font-medium"
             >
               Retry
+              <UiShortcutBadge action="dialogConfirm" />
             </button>
           </template>
         </div>
@@ -180,6 +195,7 @@
 import { useModals } from '~/composables/useModals'
 import { wsSend } from '~/composables/useWsSend'
 import { useSettingsStore } from '~/stores/settings'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const modals = useModals()
 const settings = useSettingsStore()
@@ -225,4 +241,24 @@ function send(t: string) {
 function closeModal() {
   if (modal.value) modals.resolve(modal.value.id)
 }
+
+function handleConfirm() {
+  if (phase.value === 'waiting_for_swap') send('toolchange:confirm')
+  else if (phase.value === 'probe_result') send('toolchange:resume')
+  else if (phase.value === 'error') send('toolchange:reprobe')
+}
+
+function handleCancel() {
+  if (phase.value === 'waiting_for_swap') {
+    send('toolchange:abort')
+    if (!props.value.isJobContext) closeModal()
+  } else if (phase.value === 'probe_result') {
+    send('toolchange:abort')
+  } else if (phase.value === 'error') {
+    send('toolchange:abort')
+    closeModal()
+  }
+}
+
+useDialogShortcuts(() => !!modal.value, { onConfirm: handleConfirm, onCancel: handleCancel })
 </script>

@@ -123,6 +123,8 @@ export type ShortcutActionId =
   | 'speedSlow'
   | 'speedMedium'
   | 'speedFast'
+  | 'dialogCancel'
+  | 'dialogConfirm'
 
 export type SafetyKeyOption = 'shift' | 'ctrl' | 'alt' | 'none'
 
@@ -142,6 +144,8 @@ export interface KeyboardShortcuts {
   speedSlow: string
   speedMedium: string
   speedFast: string
+  dialogCancel: string
+  dialogConfirm: string
 }
 
 interface PersistedConfig {
@@ -218,12 +222,13 @@ export const useSettingsStore = defineStore('settings', () => {
       fast: { speed: 2000, xyStep: 5.0, zStep: 2.0 },
     } as JogSettings,
     shortcuts: {
-      safetyKey: 'shift' as SafetyKeyOption,
+      safetyKey: 'none' as SafetyKeyOption,
       requiresSafetyKey: {
         jogXPos: true, jogXNeg: true, jogYPos: true, jogYNeg: true,
         jogZPos: true, jogZNeg: true,
         feedHold: true, cycleStart: true, softReset: true, home: true,
         speedSlow: true, speedMedium: true, speedFast: true,
+        dialogCancel: false, dialogConfirm: false,
       },
       jogXPos: 'ArrowRight',
       jogXNeg: 'ArrowLeft',
@@ -235,9 +240,11 @@ export const useSettingsStore = defineStore('settings', () => {
       cycleStart: 'c',
       softReset: 'r',
       home: 'h',
-      speedSlow: 'y',
+      speedSlow: 'z',
       speedMedium: 'a',
       speedFast: 'q',
+      dialogCancel: 'Escape',
+      dialogConfirm: 'c',
     } as KeyboardShortcuts,
     auth: {
       enabled: false,

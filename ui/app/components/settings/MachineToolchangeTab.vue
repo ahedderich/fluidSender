@@ -61,6 +61,16 @@
         <input v-model.number="(tc as any).position.probeDistance" type="number" min="1" step="1" class="settings-input w-28 font-mono" />
         <span class="text-xs text-gray-400 ml-1.5">mm</span>
       </SettingsRow>
+      <SettingsRow label="TOL Baseline">
+        <input v-model.number="(tc as any).position.tolBaseline" type="number" step="0.001" class="settings-input w-28 font-mono" />
+        <span class="text-xs text-gray-400 ml-1.5">mm (machine coords)</span>
+      </SettingsRow>
+      <p class="px-3 pb-2 text-xs text-gray-500 dark:text-slate-400">
+        Machine-Z position of the tool-setter's trigger point when the zero-reference tool (e.g. your touch probe) is loaded.
+        Every other tool's length is measured relative to this point, so it stays correct across reboots — G43.1 itself resets
+        to 0 on every FluidNC boot. Recalibrate via "Measure Tool Offset" → "Set as Baseline" (with the zero-reference tool
+        loaded) if the tool-setter is moved, replaced, or repositioned.
+      </p>
     </SettingsCard>
 
     <SettingsCard title="Probe Settings">
@@ -197,7 +207,7 @@ const tc = computed<ToolchangeConfig>(() => {
 const TOOLSETTER_DEFAULTS = {
   safeZ: -10, toolchangeX: 0, toolchangeY: 0, toolchangeZ: -30,
   toolsetterX: 0, toolsetterY: 0, toolsetterApproachZ: -20,
-  probeDistance: 30, zOffset: 0, confirmAfterProbe: true,
+  probeDistance: 30, zOffset: 0, confirmAfterProbe: true, tolBaseline: -50,
   probeConfig: { wiggleEnabled: false, fastFeedMmPerMin: 300, slowFeedMmPerMin: 60, cycles: 2, averageN: 1 },
 }
 

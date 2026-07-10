@@ -11,7 +11,6 @@
       <div
         v-if="entry"
         class="fixed inset-0 z-50 flex items-center justify-center p-4"
-        @keydown.esc="dismiss()"
       >
         <!-- Backdrop -->
         <div class="absolute inset-0 bg-black/20" @click="dismiss()" />
@@ -47,6 +46,7 @@
                   : 'bg-blue-600 hover:bg-blue-500 text-white'"
               >
                 {{ opts.confirmLabel }}
+                <UiShortcutBadge action="dialogConfirm" />
               </button>
               <button
                 type="button"
@@ -54,6 +54,7 @@
                 class="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors"
               >
                 {{ opts.cancelLabel }}
+                <UiShortcutBadge action="dialogCancel" />
               </button>
             </div>
           </div>
@@ -66,6 +67,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useModals } from '~/composables/useModals'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 interface ConfirmProps {
   title: string
@@ -85,4 +87,6 @@ function accept() {
 function dismiss() {
   if (entry.value) modals.resolve(entry.value.id, false)
 }
+
+useDialogShortcuts(() => !!entry.value, { onConfirm: accept, onCancel: dismiss })
 </script>

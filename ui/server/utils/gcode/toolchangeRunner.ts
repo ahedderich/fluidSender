@@ -13,6 +13,7 @@ import {
   getConnection,
   setConnection,
   pushToast,
+  setTolBaseline,
   type ToolchangeModalProps,
 } from '../appState'
 import { getLastMachineStatus } from '../machine/poller'
@@ -67,6 +68,10 @@ class ToolchangeRunner {
 
   // Toolchange modal id (null when no toolchange dialog is open)
   private _toolchangeModalId: string | null = null
+
+  // Raw machine-Z from the most recent toolsetter probe — kept only so a subsequent
+  // "set as baseline" action can persist it without re-probing. Not used for offset math.
+  private _lastProbeRawZ: number | null = null
 
   constructor(deps: ToolchangeRunnerDeps) {
     this.deps = deps
@@ -264,7 +269,8 @@ class ToolchangeRunner {
         return
       }
       try {
-        const probeResult = await runToolsetterProbe(pos)
+        const { offset: probeResult, rawZ } = await runToolsetterProbe(pos)
+        this._lastProbeRawZ = rawZ
         const toolHeight = probeResult + pos.zOffset
         await new Promise<void>((resolve, reject) => {
           sendGCode(
@@ -318,6 +324,27 @@ class ToolchangeRunner {
     const tc = await getToolchangeConfig()
     if (tc.strategy !== 'manual-toolsetter') return
     this._runToolsetterProbeSequence(tc.position)
+  }
+
+  /** Persists the last probe's raw machine-Z as the new tolBaseline, then re-probes
+   *  so the dialog confirms an ~0 offset against the corrected reference. Only valid
+   *  right after probing the zero-reference tool (dialog gates this to the standalone
+   *  "measure" flow) — calling it with a cutting tool loaded would corrupt the baseline. */
+  async setProbedBaseline(): Promise<void> {
+    if (this._lastProbeRawZ === null) return
+    const tc = await getToolchangeConfig()
+    if (tc.strategy !== 'manual-toolsetter') return
+    const machineId = await this._getActiveMachineId()
+    if (!machineId) return
+
+    const patch = await setTolBaseline(machineId, this._lastProbeRawZ)
+    broadcastPatch([
+      patch,
+      pushToast({ id: `tc-baseline-${Date.now()}`, type: 'success', message: 'TOL baseline updated — re-probing to confirm', timeout: 4000 }),
+    ])
+
+    const freshTc = await getToolchangeConfig()
+    if (freshTc.strategy === 'manual-toolsetter') this._runToolsetterProbeSequence(freshTc.position)
   }
 
   async runStandaloneToolchange(targetToolNumber: number | null, operation: 'load' | 'unload'): Promise<void> {

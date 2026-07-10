@@ -54,6 +54,7 @@
                 @click="abort()"
               >
                 Abort job
+                <UiShortcutBadge action="dialogCancel" />
               </button>
               <button
                 type="button"
@@ -61,6 +62,7 @@
                 @click="resume()"
               >
                 Continue →
+                <UiShortcutBadge action="dialogConfirm" />
               </button>
             </div>
           </div>
@@ -73,6 +75,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useModals } from '~/composables/useModals'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const modals = useModals()
 const entry = computed(() => modals.modals.find((m) => m.kind === 'program_pause') ?? null)
@@ -85,4 +88,6 @@ function resume() {
 function abort() {
   if (entry.value) modals.resolve(entry.value.id, 'cancel')
 }
+
+useDialogShortcuts(() => !!entry.value, { onConfirm: resume, onCancel: abort })
 </script>

@@ -19,6 +19,7 @@
               class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
             >
               Continue
+              <UiShortcutBadge action="dialogConfirm" />
             </button>
           </template>
         </div>
@@ -70,6 +71,7 @@
             </template>
             <button @click="dismiss" class="w-full py-2.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors">
               Close
+              <UiShortcutBadge action="dialogCancel" />
             </button>
           </div>
         </div>
@@ -81,10 +83,16 @@
 <script setup lang="ts">
 import { useSyncStore } from '~/stores/sync'
 import { wsSend } from '~/composables/useWsSend'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const sync = useSyncStore()
 const ps = sync.probingState
 const route = useRoute()
+
+// Gated by route, matching the template's own v-if — the workspace page ('/') has
+// its own copy of these overlays (ProbingPanel.vue) with its own shortcut wiring;
+// without this guard both would fire for the same keypress.
+const onNonWorkspacePage = () => route.path !== '/'
 
 const resultDismissed = ref(true)
 
@@ -104,6 +112,16 @@ watch(() => ps.phase, (phase, prevPhase) => {
 function dismiss() {
   resultDismissed.value = true
 }
+
+const showContinue = computed(() =>
+  ps.phase === 'running' && ps.wizardKey === 'center-in' && !!ps.currentStepLabel?.includes('Continue'),
+)
+useDialogShortcuts(() => onNonWorkspacePage() && ps.phase === 'running' && !!ps.wizardKey, {
+  onConfirm: () => { if (showContinue.value) wsSend({ t: 'probing:continue' }) },
+  onCancel: () => wsSend({ t: 'probing:abort' }),
+})
+
+useDialogShortcuts(() => onNonWorkspacePage() && !!showResult.value, { onCancel: dismiss })
 
 const wizardTitles: Record<string, string> = {
   'corner':     'Corner Probing (XYZ)',

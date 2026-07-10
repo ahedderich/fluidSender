@@ -384,12 +384,14 @@
                 class="flex-1 py-2.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors"
               >
                 Cancel
+                <UiShortcutBadge action="dialogCancel" />
               </button>
               <button
                 @click="applyStockDialog"
                 class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
               >
                 Apply
+                <UiShortcutBadge action="dialogConfirm" />
               </button>
             </div>
           </div>
@@ -497,10 +499,11 @@
 
             <button
               @click="startWizard"
-              :disabled="activeWizard !== 'rotation' && activeWizard !== 'heightmap' && !probePositioned"
+              :disabled="startWizardDisabled"
               class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
             >
               Start Probing
+              <UiShortcutBadge action="dialogConfirm" />
             </button>
           </div>
         </div>
@@ -525,6 +528,7 @@
               class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
             >
               Continue
+              <UiShortcutBadge action="dialogConfirm" />
             </button>
           </template>
         </div>
@@ -593,12 +597,14 @@
                   class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
                 >
                   Repeat
+                  <UiShortcutBadge action="dialogConfirm" />
                 </button>
                 <button
                   @click="closeResult"
                   class="flex-1 py-2.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors"
                 >
                   Close
+                  <UiShortcutBadge action="dialogCancel" />
                 </button>
               </div>
             </template>
@@ -617,12 +623,14 @@
                   class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
                 >
                   Retry
+                  <UiShortcutBadge action="dialogConfirm" />
                 </button>
                 <button
                   @click="closeResult"
                   class="flex-1 py-2.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors"
                 >
                   Close
+                  <UiShortcutBadge action="dialogCancel" />
                 </button>
               </div>
             </template>
@@ -642,6 +650,7 @@ import { useModals } from '~/composables/useModals'
 import { wsSend } from '~/composables/useWsSend'
 import { useMovementEnabled } from '~/composables/useMovementEnabled'
 import { useNav } from '~/composables/useNav'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const machine = useMachineStore()
 const syncStore = useSyncStore()
@@ -768,6 +777,10 @@ const wizardTitles: Record<string, string> = {
   'heightmap':  'Surface Heightmap',
 }
 
+const startWizardDisabled = computed(() =>
+  activeWizard.value !== 'rotation' && activeWizard.value !== 'heightmap' && !probePositioned.value,
+)
+
 function openWizard(key: string) {
   activeWizard.value = key
   probePositioned.value = false
@@ -783,6 +796,19 @@ function closeResult() {
   resultDismissed.value = true
   activeWizard.value = null
 }
+
+const showProbingContinue = computed(() =>
+  ps.phase === 'running' && ps.wizardKey === 'center-in' && !!ps.currentStepLabel?.includes('Continue'),
+)
+useDialogShortcuts(() => ps.phase === 'running' && !!ps.wizardKey, {
+  onConfirm: () => { if (showProbingContinue.value) wsSend({ t: 'probing:continue' }) },
+  onCancel: () => wsSend({ t: 'probing:abort' }),
+})
+
+useDialogShortcuts(() => (ps.phase === 'completed' || ps.phase === 'aborted') && !!ps.wizardKey && !resultDismissed.value, {
+  onConfirm: repeatWizard,
+  onCancel: closeResult,
+})
 
 function viewHeightmap() {
   resultDismissed.value = true
@@ -865,6 +891,8 @@ function applyStockDialog() {
   showStockDialog.value = false
 }
 
+useDialogShortcuts(() => showStockDialog.value, { onConfirm: applyStockDialog, onCancel: () => { showStockDialog.value = false } })
+
 // ── Heightmap result modal ────────────────────────────────────────────────────
 
 const showHeightmapModal = ref(false)
@@ -892,4 +920,11 @@ function heightmapCellColor(val: number | null, [min, max]: [number, number]): s
   const b = Math.round((1 - t) * 220 + 30)
   return `rgb(${r},${g},${b})`
 }
+
+useDialogShortcuts(() => showHeightmapModal.value, { onCancel: () => { showHeightmapModal.value = false } })
+
+useDialogShortcuts(() => !!activeWizard.value && !isProbing.value && resultDismissed.value, {
+  onConfirm: () => { if (!startWizardDisabled.value) startWizard() },
+  onCancel: () => { activeWizard.value = null },
+})
 </script>

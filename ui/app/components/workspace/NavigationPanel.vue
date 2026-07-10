@@ -245,12 +245,14 @@
                 class="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors"
               >
                 Cancel
+                <UiShortcutBadge action="dialogCancel" />
               </button>
               <button
                 @click="executeGoto"
                 class="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
               >
                 Go
+                <UiShortcutBadge action="dialogConfirm" />
               </button>
             </div>
           </div>
@@ -268,6 +270,7 @@ import { useNav } from '~/composables/useNav'
 import { useModals } from '~/composables/useModals'
 import { useMovementEnabled } from '~/composables/useMovementEnabled'
 import { useJog } from '~/composables/useJog'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const machine = useMachineStore()
 const settings = useSettingsStore()
@@ -386,6 +389,8 @@ function executeGoto() {
   }
   showGotoPos.value = false
 }
+
+useDialogShortcuts(() => showGotoPos.value, { onConfirm: executeGoto, onCancel: () => { showGotoPos.value = false } })
 
 onUnmounted(() => stopJog())
 </script>

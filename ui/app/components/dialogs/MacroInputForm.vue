@@ -59,6 +59,7 @@
             class="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
           >
             Run
+            <UiShortcutBadge action="dialogConfirm" />
           </button>
           <button
             type="button"
@@ -66,6 +67,7 @@
             class="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors"
           >
             Cancel
+            <UiShortcutBadge action="dialogCancel" />
           </button>
         </div>
       </div>
@@ -76,6 +78,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue'
 import type { Macro, MacroVariable } from '~/types/macro'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const props = defineProps<{
   macro: Macro
@@ -124,4 +127,7 @@ function submit() {
   }
   emit('submit', result)
 }
+
+// Only exists in the DOM while open (parent mounts with v-if).
+useDialogShortcuts(() => true, { onConfirm: submit, onCancel: () => emit('cancel') })
 </script>

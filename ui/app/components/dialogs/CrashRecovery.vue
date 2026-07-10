@@ -57,6 +57,7 @@
                 @click="resume()"
               >
                 Resume from line {{ resumePtr.toLocaleString() }}
+                <UiShortcutBadge v-if="machineConnected" action="dialogConfirm" />
               </button>
               <button
                 type="button"
@@ -95,6 +96,7 @@ import { useMachineStore } from '~/stores/machine'
 import { useModals } from '~/composables/useModals'
 import { useJobControl } from '~/composables/useJobControl'
 import { wsSend } from '~/composables/useWsSend'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const sync = useSyncStore()
 const machine = useMachineStore()
@@ -128,4 +130,8 @@ function clearJob() {
   sendClear()
   resolve('clear')
 }
+
+// No dialogCancel wiring here — there's no single "cancel" action among the three
+// choices (resume/restart/clear), so only the primary Resume gets the confirm shortcut.
+useDialogShortcuts(() => !!entry.value, { onConfirm: () => { if (machineConnected.value) resume() } })
 </script>

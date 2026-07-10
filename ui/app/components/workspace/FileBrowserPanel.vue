@@ -107,7 +107,10 @@
           </div>
           <div class="flex items-center justify-between">
             <span class="text-xs text-gray-400 dark:text-slate-500">{{ analyzeProgress }}%</span>
-            <button class="text-xs px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded transition-colors font-medium" @click="abortAnalysis()">Abort</button>
+            <button class="text-xs px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded transition-colors font-medium" @click="abortAnalysis()">
+              Abort
+              <UiShortcutBadge action="dialogCancel" />
+            </button>
           </div>
         </div>
       </div>
@@ -281,8 +284,14 @@
               <h3 class="text-sm font-semibold text-gray-900 dark:text-slate-100">{{ confirmState.title }}</h3>
               <p v-if="confirmState.message" class="mt-1.5 text-sm text-gray-500 dark:text-slate-400 leading-relaxed">{{ confirmState.message }}</p>
               <div class="flex gap-2 mt-4">
-                <button class="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium transition-colors" @click="runConfirmed">Delete</button>
-                <button class="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors" @click="confirmState.open = false">Cancel</button>
+                <button class="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium transition-colors" @click="runConfirmed">
+                  Delete
+                  <UiShortcutBadge action="dialogConfirm" />
+                </button>
+                <button class="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors" @click="confirmState.open = false">
+                  Cancel
+                  <UiShortcutBadge action="dialogCancel" />
+                </button>
               </div>
             </div>
           </Transition>
@@ -295,6 +304,7 @@
 <script setup lang="ts">
 import { useJobControl } from '~/composables/useJobControl'
 import { useCurrentUser } from '~/composables/useCurrentUser'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 // ----- types -----
 
@@ -487,6 +497,9 @@ async function runConfirmed() {
   await $fetch(`/api/files?path=${encodeURIComponent(pendingPath)}&type=${pendingType}`, { method: 'DELETE' })
   await refresh()
 }
+
+useDialogShortcuts(() => confirmState.open, { onConfirm: runConfirmed, onCancel: () => { confirmState.open = false } })
+useDialogShortcuts(() => isAnalyzing.value, { onCancel: () => abortAnalysis() })
 
 // ----- formatting -----
 
