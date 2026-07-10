@@ -163,7 +163,7 @@ Authentication is **optional** and controlled by a config flag (`auth.enabled` i
 - Images are versioned with **SemVer** (`MAJOR.MINOR.PATCH`).
 - Image tag: `ghcr.io/<org>/fluidsender:<semver>` (the `ui/` app — this is the **only** container image published by the release pipeline, and the only one a normal end user ever runs, hence the bare name even though it corresponds to the `ui/` codebase). Published on tag push by `release.yaml`, which also auto-tags `latest` (via `docker/metadata-action`'s default `flavor: latest=auto` behavior on `type=semver` entries — no extra config needed).
 - `fluid-sim/sim` and `fluid-sim/sim-ui` are **dev-local only** — they are never built or published by `release.yaml`. The intended workflow is to build them locally via `docker compose` when standing up a dev/simulator environment; they are not part of the release surface at all.
-- `build-ui.yaml` additionally publishes floating dev tags on every push touching `ui/**`: `:test` from the `test` branch, `:latest` from `main` — independent of the tagged release flow. Keep this image name in sync with `release.yaml` — they must refer to the same image (`fluidsender`).
+- `build-ui.yaml` additionally publishes a floating `:test` dev tag on every push to `test` touching `ui/**`, independent of the tagged release flow. Keep this image name in sync with `release.yaml` — they must refer to the same image (`fluidsender`). `:latest` is published **only** by `release.yaml` on a real version tag — nothing publishes `:latest` from a raw push to `main`, so it always corresponds to an actual GitHub Release.
 - Scan every image with Trivy before release (see org policy). CRITICAL/HIGH CVEs must be resolved before merging.
 
 ---
@@ -195,9 +195,10 @@ hotfix/xyz         ← urgent post-release fixes, cut from `main`
 Versioning is automated by **Release Please**, which reads the commit history on `main`. Since PRs into `main` are squash-merged, each PR collapses into exactly one commit whose message is the **PR title** — so the PR title is what actually drives the version bump. Only that title is enforced in CI.
 
 - PR titles targeting `main` must follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope)!: subject` (e.g. `feat(jog): add continuous jog mode`). Enforced by `pr-title-lint.yaml`, which validates the title and labels the PR with its estimated bump (`bump:major`/`bump:minor`/`bump:patch`/`bump:none`) so the effect is visible before merging. The label is only an estimate of what Release Please will do — Release Please itself is the source of truth.
-- Allowed types: `feat`, `fix`, `perf`, `refactor`, `docs`, `chore`, `test`, `ci`, `build`, `revert`.
-- Bump mapping (per `bump-minor-pre-major: true` in `.release-please-config.json`, so pre-1.0 `feat` bumps minor, not major): `feat` → minor, `fix`/`perf` → patch, a `!` after the type/scope or a `BREAKING CHANGE:` footer → major, everything else → no release.
+- Allowed types (the full `conventional-changelog-conventionalcommits` set Release Please recognizes): `feat`, `fix`, `perf`, `refactor`, `docs`, `style`, `chore`, `test`, `ci`, `build`, `revert`.
+- Bump mapping: `feat` → minor, `fix` → patch, and a `!` after the type/scope or a `BREAKING CHANGE:` footer → major actually bump the version. Every other type (`perf`, `refactor`, `docs`, `style`, `chore`, `test`, `ci`, `build`, `revert`) is a valid, changelog-eligible type but does **not** bump on its own — this matches Release Please's real behavior, not a guess, so don't add `perf` (or anything else) to the patch bucket without re-checking upstream. `bump-minor-pre-major: true` in `.release-please-config.json` does **not** change how plain `feat` behaves — it only affects **breaking** changes while the major version is still `0`: normally a breaking change bumps major, but pre-1.0 with this flag it bumps minor instead, so you don't get shot up to `1.0.0` by an early breaking commit.
 - As a matter of style — not CI-enforced — individual commit messages (including ones Claude authors) should also follow this format. It costs nothing, keeps history readable, and means Release Please still has something sane to parse in the edge case where a PR into `main` ends up merged with a regular merge commit instead of squashed. But no workflow blocks a PR over it; only the PR title into `main` is a hard gate.
+- **Known Release Please quirk:** when the manifest's version is the literal `0.0.0` sentinel (i.e. no release has ever happened), Release Please ignores all pre-major bump config for that first release and defaults straight to `1.0.0`, regardless of commit type ([release-please#2087](https://github.com/googleapis/release-please/issues/2087)). To force a specific version for a release (most importantly the very first one), add a `Release-As: X.Y.Z` line to the merge commit's body — e.g. `Release-As: 0.1.0` in the squash-merge description of the `test → main` PR. This is a recognized trailer Release Please scans for and takes as an explicit override.
 
 ---
 
@@ -212,11 +213,14 @@ Pipelines live in `.github/workflows/`.
 | `ci-ui.yaml` | PR to `test`/`main` (paths: `ui/**`) | Lint → Type-check → Unit tests → Build |
 | `ci-sim.yaml` | PR to `test`/`main` (paths: `fluid-sim/sim/**`) | `cargo fmt --check` → `cargo clippy` → `cargo test` |
 | `ci-sim-ui.yaml` | PR to `test`/`main` (paths: `fluid-sim/sim-ui/**`) | Lint → Type-check → Unit tests → Build |
-| `build-ui.yaml` | Push to `test`/`main` (paths: `ui/**`) | Build & push floating `fluidsender:test` / `:latest` dev images |
+| `build-ui.yaml` | Push to `test` (paths: `ui/**`) | Build & push floating `fluidsender:test` dev image |
 | `release-please.yaml` | Push to `main` | Maintain the Release Please PR (version bump, `CHANGELOG.md`, `extra-files` version sync); on merge, creates the `v*.*.*` tag + GitHub Release |
+| `sync-main-to-test.yaml` | Push to `main` | Merge `main` into `test` and push directly, so `test` picks up every promotion and every Release Please release commit automatically. Fails loudly (no partial state) on a merge conflict — requires manual resolution (`git checkout test && git merge main`). Requires `test`'s branch protection to allow this push through (see note below) |
 | `release.yaml` | Push tag `v*.*.*` | Build the `fluidsender` (`ui/`) image → Trivy scan → push versioned + `latest` tags to ghcr.io |
 
 Note: `status-gate.yaml` currently only enforces the branch-targeting policy above — it does not (yet) verify that `ci-ui`/`ci-sim`/`ci-sim-ui` passed, since those are separate path-filtered workflow files that a single job can't `needs:` across. If it's configured as the required check on branch protection, treat that as a known gap, not a guarantee that CI was green.
+
+Note: `sync-main-to-test.yaml` pushes directly to `test` using the default `GITHUB_TOKEN`. If `test`'s branch protection requires a pull request before merging (per the review rule above), that protection will also block this bot push unless the workflow/Actions is added to the protection rule's bypass list. Set that up once in the repo's branch protection settings for `test` — this is a one-time configuration step, not a recurring manual one.
 
 ---
 

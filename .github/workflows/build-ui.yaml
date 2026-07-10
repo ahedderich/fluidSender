@@ -2,7 +2,7 @@ name: Build — UI
 
 on:
   push:
-    branches: [test, main]
+    branches: [test]
     paths:
       - 'ui/**'
 
@@ -29,8 +29,7 @@ jobs:
         with:
           images: ghcr.io/ahedderich/fluidsender
           tags: |
-            type=raw,value=test,enable=${{ github.ref_name == 'test' }}
-            type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
+            type=raw,value=test
 
       - name: Build and push
         uses: docker/build-push-action@v6
