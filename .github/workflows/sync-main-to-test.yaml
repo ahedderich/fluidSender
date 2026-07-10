@@ -1,0 +1,38 @@
+name: Sync main into test
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-main-to-test
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge main into test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge main into test
+        run: |
+          git fetch origin main
+          if git merge --no-edit origin/main; then
+            git push origin test
+          else
+            git merge --abort
+            echo "::error::main could not be merged into test cleanly (conflicts). Resolve manually: git checkout test && git merge main, fix conflicts, then push."
+            exit 1
+          fi

@@ -24,6 +24,7 @@ jobs:
             perf
             refactor
             docs
+            style
             chore
             test
             ci
@@ -43,13 +44,16 @@ jobs:
             const body = context.payload.pull_request.body || '';
             const match = title.match(/^(\w+)(\([\w.-]+\))?(!)?:\s.+/);
 
+            // Mirrors release-please's actual bump rules: only `feat`/`fix`/breaking
+            // change bump the version. perf/refactor/docs/style/chore/test/ci/build/
+            // revert are valid changelog types but never bump on their own.
             let bump = 'none';
             if (match) {
               const type = match[1];
               const breaking = Boolean(match[3]) || /BREAKING CHANGE/.test(body);
               if (breaking) bump = 'major';
               else if (type === 'feat') bump = 'minor';
-              else if (type === 'fix' || type === 'perf') bump = 'patch';
+              else if (type === 'fix') bump = 'patch';
             }
 
             const colors = { major: 'd73a4a', minor: '0e8a16', patch: '1d76db', none: 'c5def5' };
