@@ -1,0 +1,57 @@
+# Risk-acceptance file for the production image Trivy scan (release.yaml).
+# Every entry below must have a comment explaining WHY it's accepted and
+# which class it belongs to. See SECURITY.md > Container Security for context.
+#
+# Classes:
+#   1) PRUNE CANDIDATE   — not required by FluidSender or the base OS's
+#                          package manager; a good target for `apt-get purge`
+#                          in ui/Dockerfile.prd. Accepted temporarily (short
+#                          expiry) until that removal work happens.
+#   2) REQUIRED          — a package FluidSender's own code depends on at
+#                          runtime (currently: udev, for serial port
+#                          enumeration via @serialport/bindings-cpp). Accepted
+#                          because we need the package itself, not because the
+#                          CVE is harmless.
+#   3) OS-ESSENTIAL       — Debian `Priority: required`/`Essential: yes`
+#                          packages that dpkg/apt need to function. apt
+#                          refuses to remove these without
+#                          --allow-remove-essential, which risks breaking the
+#                          image outright. Not removable without switching to
+#                          a non-Debian base image (tracked separately).
+#
+# Node.js/npm findings (expr-eval, picomatch, sigstore) are intentionally NOT
+# listed here — those are FluidSender's own dependency tree, not the base
+# image, and should be fixed by bumping/replacing the package, not accepted.
+
+# --- Class 3: OS-essential (Debian required/essential packages) ---
+
+# util-linux family (bsdutils, libblkid1, libmount1, libsmartcols1, libuuid1,
+# util-linux, util-linux-extra): Priority: required / Essential: yes.
+# apt-get refuses removal without --allow-remove-essential.
+CVE-2026-53615 exp:2027-01-10
+
+# gzip: Priority: required, used by dpkg itself to unpack .deb archives.
+CVE-2026-41992 exp:2027-01-10
+
+# libacl1: dependency of the essential util-linux family above.
+CVE-2026-54369 exp:2027-01-10
+
+# zlib1g: Debian status is will_not_fix (minizip codepath, not reachable via
+# normal zlib usage). Also a hard dependency of dpkg/apt.
+CVE-2023-45853 exp:2027-01-10
+
+# --- Class 1: prune candidates (not essential, not used by FluidSender) ---
+
+# libtinfo6/ncurses-base/ncurses-bin: Priority: important, not essential.
+# Only backs bash's terminal handling (interactive `docker exec` debugging),
+# never invoked by the running Node server. Candidate for `apt-get purge`.
+CVE-2025-69720 exp:2026-10-10
+
+# perl-base: Priority: important, not essential. Only used by dpkg
+# maintainer/trigger scripts, never invoked by FluidSender. Candidate for
+# `apt-get purge`.
+CVE-2026-42496 exp:2026-10-10
+CVE-2026-8376 exp:2026-10-10
+CVE-2026-42497 exp:2026-10-10
+CVE-2026-48962 exp:2026-10-10
+CVE-2026-9538 exp:2026-10-10

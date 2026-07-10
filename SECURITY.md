@@ -39,7 +39,9 @@ FluidSender controls physical CNC hardware. Exposing the application to an untru
 
 ### Container Security
 
-- All published images are scanned with [Trivy](https://github.com/aquasecurity/trivy) before release. Images with CRITICAL or HIGH CVEs are not published.
+- All published images are scanned with [Trivy](https://github.com/aquasecurity/trivy) before release; the image is only pushed to the registry after the scan passes.
+- CRITICAL or HIGH CVEs block publishing **unless explicitly accepted** in [`.trivyignore`](.trivyignore), which is the authoritative, versioned record of every accepted finding and the reasoning behind it. Most accepted entries come from the Debian base image's own package manager requirements (`dpkg`/`apt` dependencies), not from FluidSender code, and are outside our control to patch until Debian ships a fix or the base image changes. Each entry has an expiry date and is periodically re-reviewed.
+- This scan runs once, at release time — it is a point-in-time snapshot, not a continuous check. New CVEs are disclosed against existing package versions all the time, so the longer ago a version was released, the less that snapshot reflects its current, actual vulnerability status. Always prefer the latest release; do not treat an older release's clean scan result as still accurate.
 - The `config/` and `data/` volumes are mounted at runtime and never baked into images.
 - Containers run as a non-root user.
 
