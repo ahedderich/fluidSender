@@ -161,7 +161,9 @@ Authentication is **optional** and controlled by a config flag (`auth.enabled` i
 - `ui/docker-compose.yaml` is the canonical production deployment example.
 - Container images are published to **GitHub Container Registry** (`ghcr.io`).
 - Images are versioned with **SemVer** (`MAJOR.MINOR.PATCH`).
-- Image tags: `ghcr.io/<org>/fluidsender-ui:<semver>`, `ghcr.io/<org>/fluidsender-sim:<semver>`, `ghcr.io/<org>/fluidsender-sim-ui:<semver>`.
+- Image tag: `ghcr.io/<org>/fluidsender:<semver>` (the `ui/` app — this is the **only** container image published by the release pipeline, and the only one a normal end user ever runs, hence the bare name even though it corresponds to the `ui/` codebase). Published on tag push by `release.yaml`, which also auto-tags `latest` (via `docker/metadata-action`'s default `flavor: latest=auto` behavior on `type=semver` entries — no extra config needed).
+- `fluid-sim/sim` and `fluid-sim/sim-ui` are **dev-local only** — they are never built or published by `release.yaml`. The intended workflow is to build them locally via `docker compose` when standing up a dev/simulator environment; they are not part of the release surface at all.
+- `build-ui.yaml` additionally publishes floating dev tags on every push touching `ui/**`: `:test` from the `test` branch, `:latest` from `main` — independent of the tagged release flow. Keep this image name in sync with `release.yaml` — they must refer to the same image (`fluidsender`).
 - Scan every image with Trivy before release (see org policy). CRITICAL/HIGH CVEs must be resolved before merging.
 
 ---
@@ -180,22 +182,41 @@ hotfix/xyz         ← urgent post-release fixes, cut from `main`
 - Before starting any file changes on a new feature, Claude must prompt the user with a question to create a new `feat/xyz` branch.
 - PRs into `test` require at least one approving review and green CI.
 - PRs into `main` require green CI + passing integration tests.
+- `feat/*` and `fix/*` branches may only open a PR into `test` (never directly into `main`). `hotfix/*` branches (and `test` itself, for the `test → main` promotion PR) may target either `main` or `test`. Enforced by `status-gate.yaml`.
+- This branch-name check is a convenience guardrail, not the versioning mechanism — see [Commit & PR Title Convention](#commit--pr-title-convention) below. A mistyped or legacy branch name (e.g. an old `feature/*` branch) doesn't corrupt versioning; only the PR title merged into `main` does.
 - Delete feature/bugfix branches after merging.
 - SemVer tagging and container image publishing begin at the **Release Cycle** phase (Phase 5).
 - In Phases 1–4, the version scheme does not need to be followed strictly.
 
 ---
 
+## Commit & PR Title Convention
+
+Versioning is automated by **Release Please**, which reads the commit history on `main`. Since PRs into `main` are squash-merged, each PR collapses into exactly one commit whose message is the **PR title** — so the PR title is what actually drives the version bump. Only that title is enforced in CI.
+
+- PR titles targeting `main` must follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope)!: subject` (e.g. `feat(jog): add continuous jog mode`). Enforced by `pr-title-lint.yaml`, which validates the title and labels the PR with its estimated bump (`bump:major`/`bump:minor`/`bump:patch`/`bump:none`) so the effect is visible before merging. The label is only an estimate of what Release Please will do — Release Please itself is the source of truth.
+- Allowed types: `feat`, `fix`, `perf`, `refactor`, `docs`, `chore`, `test`, `ci`, `build`, `revert`.
+- Bump mapping (per `bump-minor-pre-major: true` in `.release-please-config.json`, so pre-1.0 `feat` bumps minor, not major): `feat` → minor, `fix`/`perf` → patch, a `!` after the type/scope or a `BREAKING CHANGE:` footer → major, everything else → no release.
+- As a matter of style — not CI-enforced — individual commit messages (including ones Claude authors) should also follow this format. It costs nothing, keeps history readable, and means Release Please still has something sane to parse in the edge case where a PR into `main` ends up merged with a regular merge commit instead of squashed. But no workflow blocks a PR over it; only the PR title into `main` is a hard gate.
+
+---
+
 ## CI/CD (GitHub Actions)
 
-Pipelines live in `.github/workflows/`. Minimum required workflows:
+Pipelines live in `.github/workflows/`.
 
 | Workflow | Trigger | Steps |
 |---|---|---|
-| `ci-ui.yaml` | PR to `test` or `main` | Lint → Type-check → Unit tests → Build |
-| `ci-sim.yaml` | PR to `test` or `main` | `cargo fmt --check` → `cargo clippy` → `cargo test` |
-| `ci-sim-ui.yaml` | PR to `test` or `main` | Lint → Type-check → Unit tests → Build |
-| `release.yaml` | Push tag `v*.*.*` to `main` | Build all images → Trivy scan → Push to ghcr.io → Create GitHub Release |
+| `status-gate.yaml` | PR to `test` or `main` | Enforce branch-targeting policy (above) — required status check |
+| `pr-title-lint.yaml` | PR to `main` | Validate PR title is Conventional-Commits formatted → label estimated version bump |
+| `ci-ui.yaml` | PR to `test`/`main` (paths: `ui/**`) | Lint → Type-check → Unit tests → Build |
+| `ci-sim.yaml` | PR to `test`/`main` (paths: `fluid-sim/sim/**`) | `cargo fmt --check` → `cargo clippy` → `cargo test` |
+| `ci-sim-ui.yaml` | PR to `test`/`main` (paths: `fluid-sim/sim-ui/**`) | Lint → Type-check → Unit tests → Build |
+| `build-ui.yaml` | Push to `test`/`main` (paths: `ui/**`) | Build & push floating `fluidsender:test` / `:latest` dev images |
+| `release-please.yaml` | Push to `main` | Maintain the Release Please PR (version bump, `CHANGELOG.md`, `extra-files` version sync); on merge, creates the `v*.*.*` tag + GitHub Release |
+| `release.yaml` | Push tag `v*.*.*` | Build the `fluidsender` (`ui/`) image → Trivy scan → push versioned + `latest` tags to ghcr.io |
+
+Note: `status-gate.yaml` currently only enforces the branch-targeting policy above — it does not (yet) verify that `ci-ui`/`ci-sim`/`ci-sim-ui` passed, since those are separate path-filtered workflow files that a single job can't `needs:` across. If it's configured as the required check on branch protection, treat that as a known gap, not a guarantee that CI was green.
 
 ---
 

@@ -46,10 +46,7 @@
 
   <SettingsCard title="About">
     <SettingsRow label="FluidSender">
-      <span class="text-sm text-gray-600 dark:text-slate-400 font-mono">v0.1.0-dev</span>
-    </SettingsRow>
-    <SettingsRow label="FluidNC Protocol">
-      <span class="text-sm text-gray-600 dark:text-slate-400 font-mono">v3.7+</span>
+      <span class="text-sm text-gray-600 dark:text-slate-400 font-mono">v{{ appVersion }}</span>
     </SettingsRow>
   </SettingsCard>
 </template>
@@ -60,4 +57,5 @@ import { useUiStore } from '~/stores/ui'
 
 const s = useSettingsStore()
 const ui = useUiStore()
+const { public: { appVersion } } = useRuntimeConfig()
 </script>
