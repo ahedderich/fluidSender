@@ -1,5 +1,8 @@
 <template>
-  <div class="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
+  <div
+    class="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700"
+    :class="allowOverflow ? '' : 'overflow-hidden'"
+  >
     <div class="px-3 py-2 border-b border-gray-100 dark:border-slate-700/60 flex items-center justify-between">
       <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">{{ title }}</h3>
       <span
@@ -14,5 +17,8 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{ title: string; fluidncConfig?: boolean; disabled?: boolean }>()
+/** `allowOverflow` opts a card out of the default `overflow-hidden` clip (which keeps
+ *  child backgrounds inside the rounded border) — needed when a card's content pops
+ *  out a tooltip or menu that must not be clipped to the card bounds. */
+defineProps<{ title: string; fluidncConfig?: boolean; disabled?: boolean; allowOverflow?: boolean }>()
 </script>

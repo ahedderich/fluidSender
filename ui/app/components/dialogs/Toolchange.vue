@@ -120,14 +120,6 @@
           Abort
         </DialogsDialogButton>
         <div class="flex-1" />
-        <DialogsDialogButton
-          v-if="props.operation === 'measure'"
-          variant="neutral"
-          title="Only use this with the machine's zero-reference tool (e.g. the touch probe) loaded — it redefines what TOL 0 means for every future probe"
-          @click="send('toolchange:setBaseline')"
-        >
-          Set as Baseline
-        </DialogsDialogButton>
         <DialogsDialogButton variant="neutral" @click="send('toolchange:reprobe')">
           Re-probe
         </DialogsDialogButton>
@@ -192,8 +184,8 @@ const dialogTitle = computed(() => {
   return 'Tool Change'
 })
 
-// The measure flow's result view shows the probed offset plus Set-as-Baseline/
-// Re-probe/Resume actions — give it more breathing room than the other phases.
+// The measure flow's result view shows the probed offset plus Re-probe/Resume
+// actions — give it more breathing room than the other phases.
 const dialogSize = computed(() =>
   props.value.operation === 'measure' && phase.value === 'probe_result' ? '3xl' : 'md',
 )

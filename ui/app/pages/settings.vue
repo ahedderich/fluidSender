@@ -93,6 +93,7 @@
         <SettingsMachineToolchangeTab
           v-else-if="machineTab === 'toolchange'"
           :machine="editingMachine"
+          :is-connected="isEditingConnected"
         />
 
         <SettingsMachineFirmwareTab
