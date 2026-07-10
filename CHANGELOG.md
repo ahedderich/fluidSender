@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/ahedderich/fluidSender/compare/v0.1.1...v0.1.2) (2026-07-10)
+
+
+### Bug Fixes
+
+* release please github app integration ([3e5ce1f](https://github.com/ahedderich/fluidSender/commit/3e5ce1f196153a9ca320cc43b35e32f6bf2685f9))
+
 ## [0.1.1](https://github.com/ahedderich/fluidSender/compare/v0.1.0...v0.1.1) (2026-07-10)
 
 
