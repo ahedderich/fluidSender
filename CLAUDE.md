@@ -222,6 +222,8 @@ Note: `status-gate.yaml` currently only enforces the branch-targeting policy abo
 
 Note: `sync-main-to-test.yaml` pushes directly to `test` using the default `GITHUB_TOKEN`. If `test`'s branch protection requires a pull request before merging (per the review rule above), that protection will also block this bot push unless the workflow/Actions is added to the protection rule's bypass list. Set that up once in the repo's branch protection settings for `test` — this is a one-time configuration step, not a recurring manual one.
 
+Note: Release Please's manifest mode tags releases `<component>-v<version>` by default once a `component` name is set (ours is `fluidsender`), e.g. `fluidsender-v0.1.0` — which does **not** match `release.yaml`'s `v*.*.*` tag filter, so the image build silently never fires. `"include-component-in-tag": false` in `.release-please-config.json` is what keeps the tag as plain `v<version>` instead. Don't remove that flag without also updating `release.yaml`'s tag filter to match, or releases will stop publishing images again.
+
 ---
 
 ## Security Guidelines
