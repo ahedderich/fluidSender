@@ -21,18 +21,32 @@
     <div class="px-3 py-2.5 border-b border-gray-100 dark:border-slate-700 shrink-0">
       <div class="flex items-center justify-between mb-2">
         <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Loaded Tool</p>
-        <button
-          v-if="loadedTool && machine.connected"
-          :disabled="isViewer"
-          class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-red-600 hover:text-white text-gray-600 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Remove tool from spindle"
-          @click="handleUnload"
-        >
-          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-          Unload
-        </button>
+        <div class="flex items-center gap-1.5">
+          <button
+            v-if="showMeasureOffsetButton"
+            :disabled="isViewer"
+            class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-blue-600 hover:text-white text-gray-600 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Probe and set the tool length offset for the loaded tool"
+            @click="handleMeasureOffset"
+          >
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+            </svg>
+            Measure Offset
+          </button>
+          <button
+            v-if="loadedTool && machine.connected"
+            :disabled="isViewer"
+            class="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-red-600 hover:text-white text-gray-600 dark:text-slate-300 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Remove tool from spindle"
+            @click="handleUnload"
+          >
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            Unload
+          </button>
+        </div>
       </div>
 
       <template v-if="!machine.connected">
@@ -335,25 +349,13 @@
     </div>
 
     <!-- ── Add / Edit Tool modal ── -->
-    <Teleport to="body">
-      <div
-        v-if="showToolModal"
-        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
-        @click.self="showToolModal = false"
-      >
-        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-md">
-          <!-- Header -->
-          <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-slate-700">
-            <h3 class="text-base font-semibold text-gray-900 dark:text-slate-100">
-              {{ editingTool ? 'Edit Tool' : 'Add Tool' }}
-            </h3>
-            <button class="p-1 text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 rounded-md transition-colors" @click="showToolModal = false">
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-
+    <DialogsDialogFrame
+      :open="showToolModal"
+      :title="editingTool ? 'Edit Tool' : 'Add Tool'"
+      size="md"
+      no-body-padding
+      @close="showToolModal = false"
+    >
           <!-- Tabs -->
           <div class="flex border-b border-gray-200 dark:border-slate-700 px-5">
             <button
@@ -715,179 +717,143 @@
             </template>
           </div>
 
-          <div class="px-5 py-4 border-t border-gray-200 dark:border-slate-700 flex items-center gap-2">
-            <button
-              v-if="editingTool"
-              class="p-2 text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-              title="Delete tool from library"
-              @click="deleteFromModal"
-            >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-            </button>
-            <div class="flex-1" />
-            <button
-              class="px-4 py-2 text-sm bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg transition-colors"
-              @click="showToolModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              v-if="modalTab !== 'presets' && modalTab !== 'lifecycle'"
-              :disabled="!modalForm.name.trim() || !modalForm.diameter || !modalForm.type.trim() || !modalForm.number || numberConflict"
-              class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
-              @click="saveModal"
-            >
-              {{ editingTool ? 'Save Changes' : 'Add Tool' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+      <template #footer>
+        <button
+          v-if="editingTool"
+          type="button"
+          class="p-2 text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+          title="Delete tool from library"
+          @click="deleteFromModal"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
+        <div class="flex-1" />
+        <DialogsDialogButton variant="neutral" shortcut="dialogCancel" @click="showToolModal = false">
+          Cancel
+        </DialogsDialogButton>
+        <DialogsDialogButton
+          v-if="modalTab !== 'presets' && modalTab !== 'lifecycle'"
+          variant="primary"
+          shortcut="dialogConfirm"
+          :disabled="!modalForm.name.trim() || !modalForm.diameter || !modalForm.type.trim() || !modalForm.number || numberConflict"
+          @click="saveModal"
+        >
+          {{ editingTool ? 'Save Changes' : 'Add Tool' }}
+        </DialogsDialogButton>
+      </template>
+    </DialogsDialogFrame>
 
     <!-- ── Export F360 modal ── -->
-    <Teleport to="body">
-      <div
-        v-if="showExportModal"
-        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
-        @click.self="showExportModal = false"
-      >
-        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-sm">
-          <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-slate-700">
-            <h3 class="text-base font-semibold text-gray-900 dark:text-slate-100">Export Tool Library</h3>
-            <button class="p-1 text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 rounded-md transition-colors" @click="showExportModal = false">
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
+    <DialogsDialogFrame :open="showExportModal" title="Export Tool Library" size="sm" @close="showExportModal = false">
+      <div class="space-y-4">
+        <p class="text-xs text-gray-500 dark:text-slate-400">
+          Select which tools to include in the exported Fusion 360 tool library (.json).
+        </p>
 
-          <div class="p-5 space-y-4">
-            <p class="text-xs text-gray-500 dark:text-slate-400">
-              Select which tools to include in the exported Fusion 360 tool library (.json).
-            </p>
-
-            <!-- Source selection -->
-            <div class="space-y-2">
-              <label class="flex items-start gap-3 cursor-pointer group">
-                <input v-model="exportForm.includeMachine" type="checkbox" class="mt-0.5 rounded accent-blue-600">
-                <div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-sm font-medium text-gray-800 dark:text-slate-200">Machine tools</span>
-                    <SourceBadge source="M" />
-                  </div>
-                  <p class="text-xs text-gray-400 dark:text-slate-500">
-                    {{ machineToolCount }} tool{{ machineToolCount !== 1 ? 's' : '' }} specific to "{{ machineName }}"
-                  </p>
-                </div>
-              </label>
-
-              <label class="flex items-start gap-3 cursor-pointer">
-                <input v-model="exportForm.includeApp" type="checkbox" class="mt-0.5 rounded accent-blue-600">
-                <div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-sm font-medium text-gray-800 dark:text-slate-200">App tools</span>
-                    <SourceBadge source="A" />
-                  </div>
-                  <p class="text-xs text-gray-400 dark:text-slate-500">
-                    {{ appToolCount }} tool{{ appToolCount !== 1 ? 's' : '' }} from the shared app library
-                  </p>
-                </div>
-              </label>
-            </div>
-
-            <!-- Summary -->
-            <div class="bg-gray-50 dark:bg-slate-900 rounded-lg px-3 py-2.5 flex items-center justify-between">
-              <span class="text-xs text-gray-500 dark:text-slate-400">Tools selected</span>
-              <span class="text-sm font-semibold font-mono text-gray-800 dark:text-slate-200">{{ exportToolCount }}</span>
-            </div>
-
-            <!-- Filename -->
+        <!-- Source selection -->
+        <div class="space-y-2">
+          <label class="flex items-start gap-3 cursor-pointer group">
+            <input v-model="exportForm.includeMachine" type="checkbox" class="mt-0.5 rounded accent-blue-600">
             <div>
-              <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Filename</label>
-              <input
-                v-model="exportForm.filename"
-                type="text"
-                class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
-              >
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium text-gray-800 dark:text-slate-200">Machine tools</span>
+                <SourceBadge source="M" />
+              </div>
+              <p class="text-xs text-gray-400 dark:text-slate-500">
+                {{ machineToolCount }} tool{{ machineToolCount !== 1 ? 's' : '' }} specific to "{{ machineName }}"
+              </p>
             </div>
-          </div>
+          </label>
 
-          <div class="px-5 py-4 border-t border-gray-200 dark:border-slate-700 flex gap-2.5">
-            <button
-              class="flex-1 py-2.5 text-sm bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg transition-colors"
-              @click="showExportModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              :disabled="exportToolCount === 0"
-              class="flex-1 py-2.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium flex items-center justify-center gap-2"
-              @click="doExport"
-            >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              Export {{ exportToolCount }} Tool{{ exportToolCount !== 1 ? 's' : '' }}
-            </button>
-          </div>
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input v-model="exportForm.includeApp" type="checkbox" class="mt-0.5 rounded accent-blue-600">
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium text-gray-800 dark:text-slate-200">App tools</span>
+                <SourceBadge source="A" />
+              </div>
+              <p class="text-xs text-gray-400 dark:text-slate-500">
+                {{ appToolCount }} tool{{ appToolCount !== 1 ? 's' : '' }} from the shared app library
+              </p>
+            </div>
+          </label>
+        </div>
+
+        <!-- Summary -->
+        <div class="bg-gray-50 dark:bg-slate-900 rounded-lg px-3 py-2.5 flex items-center justify-between">
+          <span class="text-xs text-gray-500 dark:text-slate-400">Tools selected</span>
+          <span class="text-sm font-semibold font-mono text-gray-800 dark:text-slate-200">{{ exportToolCount }}</span>
+        </div>
+
+        <!-- Filename -->
+        <div>
+          <label class="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Filename</label>
+          <input
+            v-model="exportForm.filename"
+            type="text"
+            class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+          >
         </div>
       </div>
-    </Teleport>
+
+      <template #footer>
+        <DialogsDialogButton variant="neutral" shortcut="dialogCancel" class="flex-1" @click="showExportModal = false">
+          Cancel
+        </DialogsDialogButton>
+        <DialogsDialogButton
+          variant="primary"
+          shortcut="dialogConfirm"
+          class="flex-1"
+          :disabled="exportToolCount === 0"
+          @click="doExport"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          Export {{ exportToolCount }} Tool{{ exportToolCount !== 1 ? 's' : '' }}
+        </DialogsDialogButton>
+      </template>
+    </DialogsDialogFrame>
 
     <!-- ── Import scope selection modal ── -->
-    <Teleport to="body">
-      <div
-        v-if="showImportModal"
-        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
-        @click.self="showImportModal = false"
-      >
-        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-sm">
-          <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-slate-700">
-            <h3 class="text-base font-semibold text-gray-900 dark:text-slate-100">Import Tool Library</h3>
-            <button class="p-1 text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 rounded-md transition-colors" @click="showImportModal = false">
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-          <div class="p-5 space-y-4">
-            <p class="text-sm text-gray-600 dark:text-slate-400">Select where to import tools:</p>
-            <div class="space-y-2">
-              <label
-                class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors"
-                :class="importScope === 'M' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50'"
-              >
-                <input v-model="importScope" type="radio" value="M" class="mt-0.5">
-                <div>
-                  <p class="text-sm font-medium text-gray-800 dark:text-slate-200">Machine library</p>
-                  <p class="text-xs text-gray-400 dark:text-slate-500">Specific to "{{ settings.activeMachine?.name ?? 'this machine' }}"</p>
-                </div>
-              </label>
-              <label
-                class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors"
-                :class="importScope === 'A' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50'"
-              >
-                <input v-model="importScope" type="radio" value="A" class="mt-0.5">
-                <div>
-                  <p class="text-sm font-medium text-gray-800 dark:text-slate-200">App library</p>
-                  <p class="text-xs text-gray-400 dark:text-slate-500">Shared across all machines</p>
-                </div>
-              </label>
+    <DialogsDialogFrame :open="showImportModal" title="Import Tool Library" size="sm" @close="showImportModal = false">
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600 dark:text-slate-400">Select where to import tools:</p>
+        <div class="space-y-2">
+          <label
+            class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors"
+            :class="importScope === 'M' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50'"
+          >
+            <input v-model="importScope" type="radio" value="M" class="mt-0.5">
+            <div>
+              <p class="text-sm font-medium text-gray-800 dark:text-slate-200">Machine library</p>
+              <p class="text-xs text-gray-400 dark:text-slate-500">Specific to "{{ settings.activeMachine?.name ?? 'this machine' }}"</p>
             </div>
-          </div>
-          <div class="flex gap-3 px-5 pb-5">
-            <button class="flex-1 py-2.5 text-sm bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg transition-colors font-medium" @click="showImportModal = false">
-              Cancel
-            </button>
-            <button class="flex-1 py-2.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors font-medium" @click="confirmImport">
-              Import
-            </button>
-          </div>
+          </label>
+          <label
+            class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors"
+            :class="importScope === 'A' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50'"
+          >
+            <input v-model="importScope" type="radio" value="A" class="mt-0.5">
+            <div>
+              <p class="text-sm font-medium text-gray-800 dark:text-slate-200">App library</p>
+              <p class="text-xs text-gray-400 dark:text-slate-500">Shared across all machines</p>
+            </div>
+          </label>
         </div>
       </div>
-    </Teleport>
+
+      <template #footer>
+        <DialogsDialogButton variant="neutral" shortcut="dialogCancel" class="flex-1" @click="showImportModal = false">
+          Cancel
+        </DialogsDialogButton>
+        <DialogsDialogButton variant="primary" shortcut="dialogConfirm" class="flex-1" @click="confirmImport">
+          Import
+        </DialogsDialogButton>
+      </template>
+    </DialogsDialogFrame>
   </div>
 </template>
 
@@ -902,6 +868,7 @@ import { useModals } from '~/composables/useModals'
 import { useConfirm } from '~/composables/useConfirm'
 import { wsSend } from '~/composables/useWsSend'
 import { useCurrentUser } from '~/composables/useCurrentUser'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 const SourceBadge = defineComponent({
   props: { source: { type: String as () => 'M' | 'A', required: true } },
   setup(props) {
@@ -1018,6 +985,14 @@ const isAtcStrategy = computed(() => {
   const tc = settings.activeMachine?.toolchange
   return tc?.strategy === 'atc-passthrough' || tc?.strategy === 'atc-managed' || tc?.strategy === 'custom-macro'
 })
+
+// Typical session start for a toolsetter machine: home, then measure — TLO always
+// resets to null on (re)connect since FluidNC never persists G43.1 across sessions.
+const showMeasureOffsetButton = computed(() =>
+  machine.connected
+  && settings.activeMachine?.toolchange?.strategy === 'manual-toolsetter'
+  && machine.toolLengthOffset === null,
+)
 
 const magazineConfig = computed(() => {
   const tc = settings.activeMachine?.toolchange
@@ -1212,6 +1187,11 @@ function saveModal() {
   showToolModal.value = false
 }
 
+useDialogShortcuts(() => showToolModal.value, {
+  onConfirm: () => { if (modalTab.value !== 'presets' && modalTab.value !== 'lifecycle') saveModal() },
+  onCancel: () => { showToolModal.value = false },
+})
+
 async function deleteFromModal() {
   if (!editingTool.value) return
   const ok = await confirm({
@@ -1228,6 +1208,16 @@ async function deleteFromModal() {
 
 function handleUnload() {
   wsSend({ t: 'tool:unload', payload: {} })
+}
+
+async function handleMeasureOffset() {
+  const ok = await confirm({
+    title: 'Measure Tool Offset',
+    message: 'The machine must be homed. This will move to the toolsetter position (in machine coordinates) and probe the currently loaded tool. Start the measurement now?',
+    confirmLabel: 'Start Measurement',
+  })
+  if (!ok) return
+  wsSend({ t: 'tool:measureOffset', payload: {} })
 }
 
 function clearRuntime() {
@@ -1248,6 +1238,11 @@ async function doExport() {
   a.click()
   showExportModal.value = false
 }
+
+useDialogShortcuts(() => showExportModal.value, {
+  onConfirm: () => { if (exportToolCount.value > 0) doExport() },
+  onCancel: () => { showExportModal.value = false },
+})
 
 const jobToolNumbers = computed(() => {
   const sections = job.value?.toolSections ?? []
@@ -1379,4 +1374,9 @@ async function confirmImport() {
   pendingImportData.value = null
   showImportModal.value = false
 }
+
+useDialogShortcuts(() => showImportModal.value, {
+  onConfirm: confirmImport,
+  onCancel: () => { showImportModal.value = false },
+})
 </script>

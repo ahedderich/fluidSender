@@ -75,6 +75,7 @@ function onStart(e: PointerEvent) {
   isDown.value = true
   joystickEl.value?.setPointerCapture(e.pointerId)
   update(e)
+  emitCurrent()
   startTick()
 }
 
@@ -83,6 +84,10 @@ function onMove(e: PointerEvent) {
   update(e)
 }
 
+// Position updates track the raw pointer (unthrottled, for a responsive dot), but
+// emitting jog moves is left solely to the tick interval so sends are capped at a
+// fixed cadence instead of firing at native pointermove rate (which can exceed 100Hz
+// and flood the planner independently of the jog-cancel-on-release path).
 function update(e: PointerEvent) {
   if (!joystickEl.value) return
   const rect = joystickEl.value.getBoundingClientRect()
@@ -97,7 +102,6 @@ function update(e: PointerEvent) {
   }
   dx.value = x
   dy.value = y
-  emitCurrent()
 }
 
 function onEnd() {

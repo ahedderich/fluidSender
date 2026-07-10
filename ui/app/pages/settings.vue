@@ -85,15 +85,26 @@
           :machine="editingMachine"
         />
 
+        <SettingsMachineGeneralTab
+          v-else-if="machineTab === 'machine'"
+          :machine="editingMachine"
+        />
+
         <SettingsMachineToolchangeTab
           v-else-if="machineTab === 'toolchange'"
           :machine="editingMachine"
+          :is-connected="isEditingConnected"
         />
 
         <SettingsMachineFirmwareTab
           v-else-if="machineTab === 'firmware'"
           :machine="editingMachine"
           :is-connected="isEditingConnected"
+        />
+
+        <SettingsMachineWebcamTab
+          v-else-if="machineTab === 'webcam'"
+          :machine="editingMachine"
         />
 
         <SettingsMacrosTab
@@ -246,13 +257,15 @@ async function saveAppSettings() {
   }
 }
 
-const machineTabs: Array<{ key: 'fluidSender' | 'toolchange' | 'firmware' | 'macros'; label: string }> = [
+const machineTabs: Array<{ key: 'fluidSender' | 'machine' | 'toolchange' | 'firmware' | 'webcam' | 'macros'; label: string }> = [
   { key: 'fluidSender', label: 'FluidSender' },
+  { key: 'machine', label: 'Machine' },
   { key: 'toolchange', label: 'Tool Change' },
   { key: 'firmware', label: 'Firmware Config' },
+  { key: 'webcam', label: 'Webcam' },
   { key: 'macros', label: 'Macros' },
 ]
-const machineTab = ref<'fluidSender' | 'toolchange' | 'firmware' | 'macros'>('fluidSender')
+const machineTab = ref<'fluidSender' | 'machine' | 'toolchange' | 'firmware' | 'webcam' | 'macros'>('fluidSender')
 
 const appTabs = computed(() => {
   const tabs: Array<{ key: 'interface' | 'jog' | 'macros' | 'auth' | 'shortcuts'; label: string }> = [

@@ -81,17 +81,19 @@
         </div>
       </div>
 
-      <!-- Col 2: Speed preset buttons -->
+      <!-- Col 2: Speed preset buttons — displayed fast-on-top, slow-on-bottom, though
+           speeds/activeSpeedIndex/selectSpeed all stay indexed [slow, med, fast] since
+           that ordering is relied on elsewhere (keyboard shortcuts, useJog). -->
       <div class="flex flex-col gap-1 shrink-0 w-14">
         <button
-          v-for="(speed, i) in speeds"
-          :key="speed.label"
+          v-for="i in SPEED_DISPLAY_ORDER"
+          :key="speeds[i]!.label"
           @click="selectSpeed(i)"
           :disabled="!movementEnabled"
           :class="activeSpeedIndex === i ? 'bg-blue-600 text-white' : (!movementEnabled ? 'bg-gray-100 dark:bg-slate-700 opacity-40 cursor-not-allowed text-gray-700 dark:text-slate-300' : 'bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300')"
           class="w-full flex-1 rounded-md text-xs font-medium transition-colors"
         >
-          {{ speed.label }}
+          {{ speeds[i]!.label }}
         </button>
       </div>
 
@@ -147,11 +149,12 @@
       <!-- Col 5: Goto / parking buttons -->
       <div class="flex flex-col gap-1 shrink-0 w-16 ml-4">
         <button
-          :disabled="!movementEnabled"
-          @click="machine.sendCommand('$H')"
+          :disabled="!movementEnabled || !parkPosition"
+          :title="parkPosition ? '' : 'Configure a parking position in machine settings first'"
+          @click="gotoParking"
           class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors truncate disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Parking
+          Park
         </button>
         <button
           :disabled="!movementEnabled"
@@ -179,99 +182,91 @@
     </div>
 
     <!-- Goto Pos dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showGotoPos"
-        class="fixed inset-0 bg-black/20 flex items-center justify-center z-50 p-4"
-        @click.self="showGotoPos = false"
-      >
-        <div class="bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-xl shadow-2xl w-full max-w-sm">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-slate-700">
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-slate-100">Go to Position</h3>
+    <DialogsDialogFrame :open="showGotoPos" title="Go to Position" size="sm" @close="showGotoPos = false">
+      <div class="space-y-3">
+        <div class="flex gap-2">
+          <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded p-0.5 flex-1">
             <button
-              @click="showGotoPos = false"
-              class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 rounded transition-colors"
-            >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+              @click="gotoCoord = 'work'"
+              :class="gotoCoord === 'work' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
+              class="flex-1 py-1 rounded text-xs font-medium transition-all"
+            >Work</button>
+            <button
+              @click="gotoCoord = 'machine'"
+              :class="gotoCoord === 'machine' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
+              class="flex-1 py-1 rounded text-xs font-medium transition-all"
+            >Machine</button>
           </div>
-          <div class="p-4 space-y-3">
-            <div class="flex gap-2">
-              <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded p-0.5 flex-1">
-                <button
-                  @click="gotoCoord = 'work'"
-                  :class="gotoCoord === 'work' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
-                  class="flex-1 py-1 rounded text-xs font-medium transition-all"
-                >Work</button>
-                <button
-                  @click="gotoCoord = 'machine'"
-                  :class="gotoCoord === 'machine' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
-                  class="flex-1 py-1 rounded text-xs font-medium transition-all"
-                >Machine</button>
-              </div>
-              <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded p-0.5 flex-1">
-                <button
-                  @click="setGotoMode('abs')"
-                  :class="gotoMode === 'abs' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
-                  class="flex-1 py-1 rounded text-xs font-medium transition-all"
-                >Abs</button>
-                <button
-                  @click="setGotoMode('rel')"
-                  :class="gotoMode === 'rel' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
-                  class="flex-1 py-1 rounded text-xs font-medium transition-all"
-                >Rel</button>
-              </div>
-            </div>
-            <div class="grid grid-cols-3 gap-2">
-              <div v-for="axis in ['X', 'Y', 'Z']" :key="axis">
-                <label class="text-xs text-gray-500 dark:text-slate-400 block mb-1">{{ axis }}</label>
-                <input
-                  v-model.number="gotoValues[axis]"
-                  type="number"
-                  step="0.001"
-                  class="w-full bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-sm font-mono text-right px-2 py-1.5 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-            <p class="text-xs text-gray-400 dark:text-slate-500">
-              {{ gotoMode === 'abs' ? (gotoCoord === 'work' ? 'Absolute work coordinates (G54)' : 'Absolute machine coordinates') : 'Relative move from current position' }}
-            </p>
-            <div class="flex gap-2 pt-1">
-              <button
-                @click="showGotoPos = false"
-                class="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                @click="executeGoto"
-                class="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
-              >
-                Go
-              </button>
-            </div>
+          <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded p-0.5 flex-1">
+            <button
+              @click="setGotoMode('abs')"
+              :class="gotoMode === 'abs' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
+              class="flex-1 py-1 rounded text-xs font-medium transition-all"
+            >Abs</button>
+            <button
+              @click="setGotoMode('rel')"
+              :class="gotoMode === 'rel' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'"
+              class="flex-1 py-1 rounded text-xs font-medium transition-all"
+            >Rel</button>
           </div>
         </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div v-for="axis in ['X', 'Y', 'Z']" :key="axis">
+            <label class="text-xs text-gray-500 dark:text-slate-400 block mb-1">{{ axis }}</label>
+            <input
+              v-model.number="gotoValues[axis]"
+              type="number"
+              step="0.001"
+              class="w-full bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-sm font-mono text-right px-2 py-1.5 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+        <p class="text-xs text-gray-400 dark:text-slate-500">
+          {{ gotoMode === 'abs' ? (gotoCoord === 'work' ? 'Absolute work coordinates (G54)' : 'Absolute machine coordinates') : 'Relative move from current position' }}
+        </p>
       </div>
-    </Teleport>
+
+      <template #footer>
+        <DialogsDialogButton variant="neutral" shortcut="dialogCancel" class="flex-1" @click="showGotoPos = false">
+          Cancel
+        </DialogsDialogButton>
+        <DialogsDialogButton variant="primary" shortcut="dialogConfirm" class="flex-1" @click="executeGoto">
+          Go
+        </DialogsDialogButton>
+      </template>
+    </DialogsDialogFrame>
   </div>
 </template>
 
 <script setup lang="ts">
 import { useMachineStore } from '~/stores/machine'
+import { useSettingsStore } from '~/stores/settings'
 import { useSyncStore } from '~/stores/sync'
 import { useNav } from '~/composables/useNav'
 import { useModals } from '~/composables/useModals'
 import { useMovementEnabled } from '~/composables/useMovementEnabled'
 import { useJog } from '~/composables/useJog'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const machine = useMachineStore()
+const settings = useSettingsStore()
 const sync = useSyncStore()
 const { navMode } = useNav()
 const modals = useModals()
 const movementEnabled = useMovementEnabled()
+
+const parkPosition = computed(() => settings.activeMachine?.parkPosition)
+
+function gotoParking() {
+  const park = parkPosition.value
+  if (!park) return
+  // Parking is a machine-relative safe spot, unrelated to the WCS/stock — always
+  // move in machine coordinates (G53), never the active work coordinate system.
+  machine.sendCommand('G90')
+  machine.sendCommand('G53 G0 Z0')
+  machine.sendCommand(`G53 G0 X${park.x.toFixed(3)} Y${park.y.toFixed(3)}`)
+  machine.sendCommand(`G53 G0 Z${park.z.toFixed(3)}`)
+}
 
 const {
   canJog,
@@ -287,6 +282,9 @@ const {
 } = useJog()
 
 const speeds = speedPresets
+
+// speeds is indexed [slow, medium, fast]; displayed fast-on-top, slow-on-bottom.
+const SPEED_DISPLAY_ORDER = [2, 1, 0]
 
 const isJobActive = computed(() => {
   const s = sync.job?.status
@@ -370,6 +368,8 @@ function executeGoto() {
   }
   showGotoPos.value = false
 }
+
+useDialogShortcuts(() => showGotoPos.value, { onConfirm: executeGoto, onCancel: () => { showGotoPos.value = false } })
 
 onUnmounted(() => stopJog())
 </script>

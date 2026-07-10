@@ -7,7 +7,7 @@ use crate::machine::coolant::CoolantState;
 use crate::machine::modal::ModalState;
 use crate::machine::probe::ProbeDeviations;
 use crate::machine::spindle::SpindleState;
-use crate::machine::stock::StockDefinition;
+use crate::machine::stock::{StockDefinition, StockShape};
 
 pub const AXIS_COUNT: usize = 6;
 pub const AXIS_NAMES: [&str; AXIS_COUNT] = ["x", "y", "z", "a", "b", "c"];
@@ -98,6 +98,33 @@ pub struct ProbeState {
     pub triggered: bool,
     #[serde(default)]
     pub deviations: ProbeDeviations,
+}
+
+/// Tool-setter trigger geometry, configured from the sim-ui. `trigger_z` is the
+/// physical machine-Z of the switch's contact surface with a hypothetical
+/// zero-length tool — it is the sim-side ground truth that a tester calibrates
+/// against via FluidSender's own "measure + apply baseline" flow, not a value
+/// meant to be copied into FluidSender's settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolsetterConfig {
+    pub enabled: bool,
+    pub x: f64,
+    pub y: f64,
+    pub radius: f64,
+    pub trigger_z: f64,
+}
+
+impl Default for ToolsetterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            x: 0.0,
+            y: 0.0,
+            radius: 4.0,
+            trigger_z: -60.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +234,19 @@ pub struct MachineState {
     /// abort immediately if it has changed, preventing stale queued moves from executing.
     #[serde(skip)]
     pub reset_epoch: u64,
+    /// Tool length offset from G43.1 (Z only in practice); cleared by G49. Persists
+    /// across soft_reset — real firmware only clears this on power cycle, which the
+    /// sim does not model as a distinct lifecycle event.
+    #[serde(rename = "toolLengthOffset")]
+    pub tool_length_offset: [f64; AXIS_COUNT],
+    /// Physical length of the currently loaded tool, set from the sim-ui as a stand-in
+    /// for the operator physically swapping the tool (M6 never reaches the sim for
+    /// manual/toolsetter toolchange strategies — FluidSender intercepts it client-side).
+    #[serde(rename = "toolLength")]
+    pub tool_length: f64,
+    /// Tool-setter trigger geometry. Persists across soft_reset (the physical switch
+    /// doesn't move when an alarm is cleared).
+    pub toolsetter: ToolsetterConfig,
 }
 
 impl MachineState {
@@ -287,15 +327,39 @@ impl MachineState {
             planner_buf_used: 0,
             modal_feed: 0.0,
             reset_epoch: 0,
+            tool_length_offset: [0.0; AXIS_COUNT],
+            tool_length: 0.0,
+            toolsetter: ToolsetterConfig::default(),
         }
     }
 
     pub fn wpos(&self) -> [f64; AXIS_COUNT] {
         let mut w = [0.0; AXIS_COUNT];
         for (i, wi) in w.iter_mut().enumerate() {
-            *wi = self.pos[i] - self.wco[i];
+            *wi = self.pos[i] - self.wco[i] - self.tool_length_offset[i];
         }
         w
+    }
+
+    /// Ephemeral collision volume for the tool-setter, reusing the stock contact-test
+    /// machinery: a round "stock" whose top surface sits at `trigger_z + tool_length`,
+    /// with an oversized depth so a straight-down probe always contacts it regardless
+    /// of approach height. `None` when the tool-setter isn't enabled.
+    pub fn toolsetter_volume(&self) -> Option<StockDefinition> {
+        if !self.toolsetter.enabled {
+            return None;
+        }
+        Some(StockDefinition {
+            shape: StockShape::Round {
+                diameter: self.toolsetter.radius * 2.0,
+            },
+            depth: 1000.0,
+            ox: self.toolsetter.x,
+            oy: self.toolsetter.y,
+            oz: self.toolsetter.trigger_z + self.tool_length,
+            hole: None,
+            point: None,
+        })
     }
 
     pub fn soft_reset(&mut self) {

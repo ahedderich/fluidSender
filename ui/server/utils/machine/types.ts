@@ -51,6 +51,9 @@ export interface MachineStatus {
   feed: number
   spindleSpeed: number
   buffer: { planner: number; rx: number }
+  /** Whether this status line actually included a `Bf:`/`Buf:` token — FluidNC only
+   *  reports it when the status_mask ($10) Buffer bit is set (off by default). */
+  bufferReported: boolean
   overrides: { feed: number; rapid: number; spindle: number }
   limitSwitches: { name: string; triggered: boolean }[]
   probe: boolean

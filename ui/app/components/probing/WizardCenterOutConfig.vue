@@ -18,7 +18,7 @@
           :class="hoveredParam === row.param ? 'bg-blue-50 dark:bg-blue-900/20' : ''"
           @mouseenter="hoveredParam = row.param"
           @mouseleave="hoveredParam = null">
-          <UiDimInput :label="row.label" v-model="cfg[row.key]" unit="mm" :min="1" class="flex-1" />
+          <UiDimInput :label="row.label" v-model="cfg[row.key]" unit="mm" :min="row.min" :step="row.step" class="flex-1" />
           <div class="relative group/tip shrink-0">
             <button class="w-5 h-5 rounded-full bg-gray-200 dark:bg-slate-600 text-gray-500 dark:text-slate-400 text-xs font-bold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">?</button>
             <div class="absolute right-6 bottom-7 z-10 hidden group-hover/tip:block w-56 bg-gray-900 dark:bg-slate-700 text-white text-xs rounded-lg p-3 shadow-xl leading-relaxed">
@@ -41,6 +41,7 @@
 const cfg = defineModel<{
   safeHeightMm: number
   buffer: number
+  probeHeightMm: number
   skipX: boolean
   skipY: boolean
   skipZ: boolean
@@ -50,7 +51,8 @@ defineProps<{ stockShape?: 'rect' | 'round' }>()
 const hoveredParam = ref<string | null>(null)
 
 const paramRows = [
-  { param: 'safeHeightMm', key: 'safeHeightMm' as const, label: 'Safe Height',    tip: 'Z height the probe travels at between moves. Must clear the stock and all fixtures.' },
-  { param: 'buffer',       key: 'buffer'       as const, label: 'Approach Buffer', tip: 'Distance outside each stock edge from which the probe begins its horizontal probing move.' },
+  { param: 'safeHeightMm',  key: 'safeHeightMm'  as const, label: 'Safe Height',    tip: 'Z height the probe travels at between moves. Must clear the stock and all fixtures.', min: 1 },
+  { param: 'buffer',        key: 'buffer'        as const, label: 'Approach Buffer', tip: 'Distance outside each stock edge from which the probe begins its horizontal probing move.', min: 1 },
+  { param: 'probeHeightMm', key: 'probeHeightMm' as const, label: 'Probe Height',   tip: 'Z height the probe travels at while moving in to probe the edges, relative to Z zero.', min: undefined, step: 0.5 },
 ]
 </script>

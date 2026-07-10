@@ -44,7 +44,7 @@
       </SettingsRow>
     </SettingsCard>
 
-    <SettingsCard title="Toolsetter  (machine coordinates)">
+    <SettingsCard title="Toolsetter  (machine coordinates)" allow-overflow>
       <SettingsRow label="Toolsetter X">
         <input v-model.number="(tc as any).position.toolsetterX" type="number" step="0.1" class="settings-input w-28 font-mono" />
         <span class="text-xs text-gray-400 ml-1.5">mm</span>
@@ -57,13 +57,43 @@
         <input v-model.number="(tc as any).position.toolsetterApproachZ" type="number" step="0.1" class="settings-input w-28 font-mono" />
         <span class="text-xs text-gray-400 ml-1.5">mm</span>
       </SettingsRow>
-      <SettingsRow label="Reference Z">
-        <input v-model.number="(tc as any).position.toolsetterReferenceZ" type="number" step="0.001" class="settings-input w-28 font-mono" />
-        <span class="text-xs text-gray-400 ml-1.5">mm</span>
-      </SettingsRow>
       <SettingsRow label="Max Probe Travel">
         <input v-model.number="(tc as any).position.probeDistance" type="number" min="1" step="1" class="settings-input w-28 font-mono" />
         <span class="text-xs text-gray-400 ml-1.5">mm</span>
+      </SettingsRow>
+      <SettingsRow label="TOL Baseline">
+        <div class="flex items-center gap-1.5">
+          <input v-model.number="(tc as any).position.tolBaseline" type="number" step="0.001" class="settings-input w-28 font-mono" />
+          <span class="text-xs text-gray-400">mm</span>
+          <button
+            type="button"
+            :disabled="!isConnected"
+            :title="isConnected
+              ? 'Apply the TOL last measured via \'Measure Tool Offset\' as the new baseline'
+              : 'Connect to this machine to apply a measured TOL as the baseline'"
+            class="text-xs px-3 py-1.5 font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-slate-200 rounded-md transition-colors"
+            @click="applyCurrentTolAsBaseline"
+          >
+            Apply Current TOL
+          </button>
+          <div class="relative group/tip shrink-0">
+            <button type="button" class="w-5 h-5 rounded-full bg-gray-200 dark:bg-slate-600 text-gray-500 dark:text-slate-400 text-xs font-bold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">?</button>
+            <div class="absolute right-0 bottom-6 z-10 hidden group-hover/tip:block w-72 bg-gray-900 dark:bg-slate-700 text-white text-xs rounded-lg p-3 shadow-xl leading-relaxed space-y-2">
+              <p>
+                Machine-Z position of the tool-setter's trigger point when the zero-reference tool is loaded. Every other
+                tool's length is measured relative to this point, so it stays correct across reboots — G43.1 itself resets
+                to 0 on every FluidNC boot.
+              </p>
+              <p>
+                To (re)calibrate: set this to 0, then use "Measure Tool Offset" with whichever tool or probe you want as
+                your new zero reference. Come back here and click "Apply Current TOL" — it stores that measurement as the
+                new baseline without touching the machine's current tool length offset, since it already reflects what
+                was just measured. The measured TOL reads ~0 from then on, and every tool measured afterward is relative
+                to this baseline.
+              </p>
+            </div>
+          </div>
+        </div>
       </SettingsRow>
     </SettingsCard>
 
@@ -178,22 +208,36 @@
       </template>
     </SettingsCard>
   </template>
+
+  <!-- shared across every strategy except manual-basic, where there is no offset to track -->
+  <SettingsCard v-if="tc.strategy !== 'manual-basic'" title="Job Safety">
+    <SettingsRow label="Warn on Unconfirmed Tool Offset">
+      <UiToggleSwitch v-model="confirmMissingOffset" />
+      <span class="text-xs text-gray-400 ml-1.5">Confirm before starting/resuming a job if the tool length offset hasn't been verified this session</span>
+    </SettingsRow>
+  </SettingsCard>
 </template>
 
 <script setup lang="ts">
 import type { MachineProfile } from '~/stores/settings'
 import type { ToolchangeConfig } from '~/../../shared/toolchange'
+import { wsSend } from '~/composables/useWsSend'
 
 const machine = defineModel<MachineProfile>('machine', { required: true })
+defineProps<{ isConnected: boolean }>()
 
 const tc = computed<ToolchangeConfig>(() => {
   return (machine.value.toolchange as ToolchangeConfig | undefined) ?? { strategy: 'manual-basic' }
 })
 
+function applyCurrentTolAsBaseline() {
+  wsSend({ t: 'toolchange:setBaseline', payload: {} })
+}
+
 const TOOLSETTER_DEFAULTS = {
   safeZ: -10, toolchangeX: 0, toolchangeY: 0, toolchangeZ: -30,
   toolsetterX: 0, toolsetterY: 0, toolsetterApproachZ: -20,
-  toolsetterReferenceZ: -50, probeDistance: 30, zOffset: 0, confirmAfterProbe: true,
+  probeDistance: 30, zOffset: 0, confirmAfterProbe: true, tolBaseline: -50,
   probeConfig: { wiggleEnabled: false, fastFeedMmPerMin: 300, slowFeedMmPerMin: 60, cycles: 2, averageN: 1 },
 }
 
@@ -203,13 +247,24 @@ function changeStrategy(newStrategy: ToolchangeConfig['strategy']) {
   let newTc: ToolchangeConfig
   switch (newStrategy) {
     case 'manual-basic':  newTc = { strategy: 'manual-basic' }; break
-    case 'manual-toolsetter': newTc = { strategy: 'manual-toolsetter', position: { ...TOOLSETTER_DEFAULTS } }; break
-    case 'atc-passthrough': newTc = { strategy: 'atc-passthrough', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [] }; break
-    case 'atc-managed': newTc = { strategy: 'atc-managed', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [] }; break
-    case 'custom-macro': newTc = { strategy: 'custom-macro', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [] }; break
+    case 'manual-toolsetter': newTc = { strategy: 'manual-toolsetter', position: { ...TOOLSETTER_DEFAULTS }, confirmMissingOffset: true }; break
+    case 'atc-passthrough': newTc = { strategy: 'atc-passthrough', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [], confirmMissingOffset: true }; break
+    case 'atc-managed': newTc = { strategy: 'atc-managed', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [], confirmMissingOffset: true }; break
+    case 'custom-macro': newTc = { strategy: 'custom-macro', macro: '', magazine: { ...MAGAZINE_DEFAULTS }, magazineSlots: [], confirmMissingOffset: true }; break
   }
   machine.value.toolchange = newTc
 }
+
+const confirmMissingOffset = computed<boolean>({
+  get: () => {
+    const t = tc.value
+    return t.strategy === 'manual-basic' ? true : (t.confirmMissingOffset ?? true)
+  },
+  set: (val: boolean) => {
+    const t = tc.value
+    if (t.strategy !== 'manual-basic') t.confirmMissingOffset = val
+  },
+})
 
 const strategyDescription = computed(() => {
   switch (tc.value.strategy) {

@@ -6,6 +6,14 @@ FluidSender is a native FluidNC client — not a generic GRBL sender. It impleme
 
 ---
 
+## Pre-Release Version Note
+
+FluidSender is currently in pre release development. This means no release is currently considered as "stable". With Version 1.0.0 the first
+release will be published in the future until then the feature set should not change since the focus until the first release is on stability,
+performance, security and bug hunting. Please feel free to use the pre release for testing both via simulator or physical maschine. It is not yet meant for production use.
+
+---
+
 ## Features
 
 - **Multi-machine management** — configure, switch, and monitor multiple FluidNC machines from a single interface
@@ -25,6 +33,15 @@ FluidSender is a native FluidNC client — not a generic GRBL sender. It impleme
 - **Role-based access** — Viewer, Operator, and Admin roles granting different levels of access
 - **Multi-user/session state sync** — every connected browser shows the same state, dialogs, and selections where it matters, kept in sync in real time by the server
 - **Fully containerized** — single `docker-compose.yaml` for production deployment
+---
+
+## ATC Support
+
+FluidSender includes an ATC (Automatic Tool Changer) mode with magazine slot management, tool-aware job execution, and toolsetter-based length probing. However, I do not personally own an ATC spindle, so all ATC-specific features have been developed and tested in simulation only.
+
+My personal toolchange setup uses the **manual with toolsetter** strategy on physical hardware. I hope to upgrade at some point, but until then, ATC mode remains simulation-tested only.
+
+If you have an ATC-equipped machine and run into issues, have recommendations, or want to request a specific feature, please open an issue on this repository.
 
 ---
 
@@ -145,31 +162,15 @@ Connect the main UI to the simulator by setting the connection type to TCP and p
 
 ---
 
-## Development Phases
-
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 1 | Initial scaffolding | Complete |
-| 2 | UI design mockups | Complete |
-| 3 | Rust simulator implementation | Planned |
-| 4 | Release cycle & versioning | Planned |
-| 5 | Functional UI development | Planned |
-
-See [CLAUDE.md](CLAUDE.md) for detailed phase specifications.
-
----
-
 ## GRBL Compatibility
 
-FluidSender is purpose-built for FluidNC and there are no plans to pursue GRBL compatibility at this point in time.
+FluidSender is purpose-built for FluidNC and there are no current plans to pursue broader GRBL-family compatibility.
 
-The intent is to maintain a GCode sender that does not compromise on features or functionality in order to accommodate backwards compatibility with legacy GRBL firmware. Unless a future GRBL release were to support the same feature set and internal structure as FluidNC in a comparable way, there is no straightforward path to meaningful compatibility.
+The original [grbl](https://github.com/gnea/grbl) project is discontinued (no commits since August 2019); its own wiki points to [grblHAL](https://github.com/grblHAL), [µCNC](https://github.com/Paciente8159/uCNC), [FluidNC](https://github.com/bdring/FluidNC), and [RabbitGRBL](https://github.com/SourceRabbit/RabbitGRBL) as the active successor projects. FluidSender's job execution engine tracks planner state via the GRBL v1.1 `Bf:` status field (planner-free / RX-free block counts) to determine which commands have physically left the planner, not merely which lines have been sent — this is what backs crash detection and pause/resume recovery. That mechanism is inherited GRBL v1.1 protocol, not a FluidNC-specific feature: grblHAL reports an identical `Bf:` field under the same `$10` status-mask bit, and µCNC reports the equivalent data under a `Buf:` field name. So the buffer-tracking approach itself is likely portable to other GRBL-successor firmware with modest changes, not a fundamental blocker.
 
-The most significant blocker is execution tracking. FluidSender's job execution engine relies on FluidNC's planner queue reporting via the `Bf:` field to determine, with a high degree of confidence, which commands have physically left the planner and been executed — not merely which lines have been sent. This distinction is fundamental to the crash detection and pause/resume recovery features. Supporting an alternative firmware would require separate execution tracking logic, conditional code paths, and significant testing effort — all for a use case that would still be limited by the capabilities of the connected firmware.
+The real blocker is firmware configuration handling. FluidSender's settings UI reads and writes FluidNC's hierarchical `$Config` YAML document as a single structured payload. None of the other successor projects expose an equivalent: grblHAL's closest analog (`$EG`/`$ESG`/`$ESH`) is a hierarchical *enumeration* delivered as many flat, prefixed lines that would need to be reassembled into a tree client-side, and µCNC/RabbitGRBL expose only flat, numbered `$`-style settings with no structured readback at all. Supporting any of them would mean a genuinely different settings data model, not just a parser tweak.
 
-The firmware configuration handling is another area of divergence: FluidNC's hierarchical YAML-based config structure has no direct equivalent in standard GRBL.
-
-None of this is to say it would be impossible, but for now the added complexity offers little value relative to the investment required.
+None of this has been tested against real hardware other than FluidNC. It's plausible that core connectivity, jogging, and job execution would work against grblHAL or µCNC with limited changes — but until it's actually tried on real hardware, that's an informed guess, not a claim of compatibility.
 
 ---
 
@@ -177,21 +178,13 @@ None of this is to say it would be impossible, but for now the added complexity 
 
 Planned features and areas of future development, roughly in order of priority:
 
+- **Testing, Testing, Testing** — Since this release is still an early alpha i intend to test all functionallities as much as possible on a real maschine. Latest fixes have been mostly ui polishing and minior bugfixes but that is not to say there aren't any bugs left. Besides the real live testing the CI/CD testsuite needs to refined and expended. The project is to complex to retest everything by hand so reliable automatic testing is curcial.
 - **Stock definition via STEP file** — import a STEP model as the stock definition instead of defining a simple rectangular or round shape manually
 - **Extended probing wizards** — guided probing workflows for more complex stock geometry, building on the existing edge-finding and corner-probing primitives
 - **Firmware update check** — automatic check for newer FluidNC firmware releases on connect, with a visible indicator when an update is available
 - **Firmware OTA update** — over-the-air firmware flashing via the FluidNC web server upload mechanism (or the web UI routes), similar to what the FluidNC web UI already supports — requires coordination with bdring before implementation
 - **3+1 and 5-axis extended support** — dedicated probing wizards and extended testing for machines with rotary axes; blocked on upgrading personal hardware first
-
----
-
-## ATC Support
-
-FluidSender includes an ATC (Automatic Tool Changer) mode with magazine slot management, tool-aware job execution, and toolsetter-based length probing. However, I do not personally own an ATC spindle, so all ATC-specific features have been developed and tested in simulation only.
-
-My personal toolchange setup uses the **manual with toolsetter** strategy on physical hardware. I hope to upgrade at some point, but until then, ATC mode remains simulation-tested only.
-
-If you have an ATC-equipped machine and run into issues, have recommendations, or want to request a specific feature, please open an issue on this repository.
+- **Full laser engraver and plasma cutter support** — I do not personally own either type of machine, so this hasn't been prioritized; might revisit depending on future need
 
 ---
 
@@ -223,4 +216,4 @@ CNC machines are physical hardware — please read the [Security Policy](SECURIT
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE).

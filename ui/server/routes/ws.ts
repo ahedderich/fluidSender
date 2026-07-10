@@ -52,6 +52,7 @@ import {
   initPoller,
 } from '../utils/machine/poller'
 import { parseGreetingVersion } from '../utils/machine/statusParser'
+import { getToolLengthOffset, setToolLengthOffset, resetToolLengthSession } from '../utils/machine/toolLengthState'
 import { setActiveFirmwareVersion } from '../utils/gcode/classifier'
 import { initMachineMode } from '../utils/machine/machineMode'
 import {
@@ -64,7 +65,7 @@ import {
   getSenderStatus,
   isJobActive,
 } from '../utils/machine/sender'
-import { sendJog, cancelJog, onJogStatusUpdate } from '../utils/machine/jogger'
+import { sendJog, cancelJog, onJogStatusUpdate, onJogOk } from '../utils/machine/jogger'
 import { jobRunner } from '../utils/gcode/jobRunner'
 import { loadRuntimeLog } from '../utils/tool/runtimeLog'
 import { probingRunner } from '../utils/probing/probingRunner'
@@ -102,7 +103,7 @@ jobRunner.bootRestore().then((mode) => {
 
 // ─── Firmware config fetch ($I → $SS → $LocalFS/Show) ────────────────────────
 
-type ConfigFetchPhase = 'version' | 'startup-log' | 'config-file'
+type ConfigFetchPhase = 'version' | 'startup-log' | 'config-file' | 'tlo'
 
 interface ConfigFetchState {
   phase: ConfigFetchPhase
@@ -208,14 +209,36 @@ async function _onFetchOk() {
       return
     }
     await _finishConfigFetch(lines)
+    if (!_fetch) return // _finishConfigFetch cleared it (shouldn't happen, but guard anyway)
+    _fetch.phase = 'tlo'
+    _fetch.lines = []
+    machineConnection.sendRaw('$#')
+    return
+  }
+
+  if (phase === 'tlo') {
+    const tloLine = lines.find((l) => l.startsWith('[TLO:'))
+    if (!tloLine) {
+      // Spurious ok before $# has responded — discard and keep waiting
+      _fetch.lines = []
+      onOk()
+      if (!isJobActive()) broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
+      return
+    }
+    // FluidNC reports TLO as a single scalar: [TLO:0.000]
+    const tloZ = Number(tloLine.slice(5, -1))
+    // A bare 0 is indistinguishable from FluidNC's post-boot default — treat as unknown.
+    setToolLengthOffset(Number.isFinite(tloZ) && tloZ !== 0 ? tloZ : null)
+    const next = setConnection({ toolLengthOffset: getToolLengthOffset() })
+    broadcastPatch([{ path: 'connection', set: { ...next } }])
+    clearTimeout(_fetch.timer)
+    _fetch = null
   }
 }
 
 async function _finishConfigFetch(lines: string[]) {
   if (!_fetch) return
   const { machineIp, configFilename, manual } = _fetch
-  clearTimeout(_fetch.timer)
-  _fetch = null
 
   const machineId = getConnection().machineId
   if (!machineId) return
@@ -250,7 +273,10 @@ async function _finishConfigFetch(lines: string[]) {
 machineConnection.on('event', (ev) => {
   switch (ev.type) {
     case 'connected': {
-      const next = setConnection({ connected: true, status: 'Idle', firmwareVersion: '' })
+      // New connection lifecycle — any TLO/baseline tracked from a prior connection
+      // (this machine or another) can no longer be trusted.
+      resetToolLengthSession()
+      const next = setConnection({ connected: true, status: 'Idle', firmwareVersion: '', toolLengthOffset: null })
       broadcastPatch([
         { path: 'connection', set: { ...next } },
         pushConsole({ type: 'info', text: `TCP connected to ${ev.host}:${ev.port}`, ts: Date.now() }),
@@ -275,10 +301,11 @@ machineConnection.on('event', (ev) => {
       if (_fetch) { clearTimeout(_fetch.timer); _fetch = null }
       stopPoller()
       setActiveFirmwareVersion(null)
+      resetToolLengthSession()
       // jobRunner must update status before sender fires its terminal event
       jobRunner.onMachineDisconnected()
       senderDisconnected()
-      const next = setConnection({ machineId: null, connected: false, status: 'DISCONNECTED', firmwareVersion: '', simulatorMode: false })
+      const next = setConnection({ machineId: null, connected: false, status: 'DISCONNECTED', firmwareVersion: '', simulatorMode: false, toolLengthOffset: null })
       broadcastPatch([
         { path: 'connection', set: { ...next } },
         clearLoadedToolDisplay(),
@@ -303,8 +330,14 @@ machineConnection.on('event', (ev) => {
           broadcastPatch([pushConsole({ type: 'recv', text: ev.line, ts: Date.now() })])
           onOk()
           clearTimeout(_fetch.timer)
+          // The tlo phase is a best-effort enrichment on top of an already-loaded
+          // config file (e.g. firmware rejects $# with error:8 when not Idle/Alarm) —
+          // don't report it as a config load failure.
+          const wasTloPhase = _fetch.phase === 'tlo'
           _fetch = null
-          broadcastPatch([pushToast({ id: `fw-cfg-err-${Date.now()}`, type: 'warning', message: 'Failed to read firmware configuration file', timeout: 4000 })])
+          if (!wasTloPhase) {
+            broadcastPatch([pushToast({ id: `fw-cfg-err-${Date.now()}`, type: 'warning', message: 'Failed to read firmware configuration file', timeout: 4000 })])
+          }
         }
         break
       }
@@ -312,6 +345,7 @@ machineConnection.on('event', (ev) => {
       // error:N is a rejected-command acknowledgement — counts as an ack
       if (ev.line.startsWith('error:')) {
         onOk()
+        onJogOk()
       }
       const ver = parseGreetingVersion(ev.line)
       if (ver) {
@@ -344,6 +378,7 @@ machineConnection.on('event', (ev) => {
         break
       }
       onOk()
+      onJogOk()
       if (!isJobActive()) {
         broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
       }
@@ -579,6 +614,13 @@ export default defineWebSocketHandler({
         })
         break
       }
+      case 'tool:measureOffset': {
+        if (!requireRole(peer, 'operator')) break
+        jobRunner.runStandaloneMeasure().catch((e: unknown) => {
+          console.error('[ws] tool:measureOffset error:', e)
+        })
+        break
+      }
       case 'toolchange:confirm': {
         if (!requireRole(peer, 'operator')) break
         jobRunner.resumeToolsetterProbe(jobRunner.status === 'tool_change').catch((e: unknown) => {
@@ -597,6 +639,13 @@ export default defineWebSocketHandler({
         if (!requireRole(peer, 'operator')) break
         jobRunner.runReprobe().catch((e: unknown) => {
           console.error('[ws] toolchange:reprobe error:', e)
+        })
+        break
+      }
+      case 'toolchange:setBaseline': {
+        if (!requireRole(peer, 'operator')) break
+        jobRunner.setProbedBaseline().catch((e: unknown) => {
+          console.error('[ws] toolchange:setBaseline error:', e)
         })
         break
       }

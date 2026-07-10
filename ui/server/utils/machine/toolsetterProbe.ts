@@ -3,7 +3,14 @@ import { getLastMachineStatus } from './poller'
 import { DEFAULT_PROBE_COMPENSATION } from '../tool/types'
 import type { ToolsetterConfig } from '../../../shared/toolchange'
 
-export async function runToolsetterProbe(pos: ToolsetterConfig): Promise<number> {
+export interface ToolsetterProbeResult {
+  /** Tool length relative to pos.tolBaseline — what gets sent as the G43.1 Z value. */
+  offset: number
+  /** Raw machine-Z reading at probe trigger, for capturing as a new tolBaseline. */
+  rawZ: number
+}
+
+export async function runToolsetterProbe(pos: ToolsetterConfig): Promise<ToolsetterProbeResult> {
   const status = getLastMachineStatus()
   const wco = { x: 0, y: 0, z: status?.mpos.z ?? 0 }
 
@@ -18,7 +25,7 @@ export async function runToolsetterProbe(pos: ToolsetterConfig): Promise<number>
   )
 
   const finalStatus = getLastMachineStatus()
-  const probeEndZ = finalStatus?.mpos.z ?? 0
+  const rawZ = finalStatus?.mpos.z ?? 0
 
-  return probeEndZ - pos.toolsetterReferenceZ
+  return { offset: rawZ - pos.tolBaseline, rawZ }
 }

@@ -591,6 +591,19 @@ async fn dispatch(
                 None,
             )
         }
+        ParsedLine::GCodeParams => {
+            let state = shared.read().await;
+            // Matches FluidNC's notIdleOrAlarm() gate on $# (report_ngc): rejected with
+            // error:8 (IdleError) outside Idle/Alarm/SafetyDoor.
+            if matches!(
+                state.status,
+                MachineStatus::Idle | MachineStatus::Alarm | MachineStatus::Door
+            ) {
+                (response::gcode_params(&state), None)
+            } else {
+                (response::error(8), None)
+            }
+        }
         ParsedLine::BuildInfo => (BUILD_INFO_RESPONSE.to_string(), None),
         ParsedLine::StartupShow => (STARTUP_LOG.to_string(), None),
         ParsedLine::LocalFsShow(_path) => (SIM_CONFIG_YAML.to_string(), None),

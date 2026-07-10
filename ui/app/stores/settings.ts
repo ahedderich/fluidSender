@@ -2,9 +2,11 @@ import { defineStore } from 'pinia'
 import type { Macro, MacroTrigger, MacroVariable } from '~/types/macro'
 import { wsSend } from '~/composables/useWsSend'
 import type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig } from '~/../../shared/toolchange'
+import type { WebcamConfig } from '~/types/webcam'
 
 export type { Macro, MacroTrigger, MacroVariable }
 export type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig }
+export type { WebcamConfig }
 
 export type ConnectionType = 'usb' | 'tcp'
 export type MachineType = 'router' | 'laser' | 'plasma'
@@ -61,6 +63,31 @@ export interface ConnectionConfig {
   tcpPort: number
 }
 
+export interface JogLevelSettings {
+  speed: number
+  xyStep: number
+  zStep: number
+}
+
+export interface JogSettings {
+  slow: JogLevelSettings
+  medium: JogLevelSettings
+  fast: JogLevelSettings
+}
+
+export interface MachineJogOverride {
+  enabled: boolean
+  slow: JogLevelSettings
+  medium: JogLevelSettings
+  fast: JogLevelSettings
+}
+
+export interface ParkPosition {
+  x: number
+  y: number
+  z: number
+}
+
 export interface MachineProfile {
   id: string
   name: string
@@ -72,18 +99,15 @@ export interface MachineProfile {
   fluidncConfig: FluidNCConfig | null
   /** IP of the FluidNC machine, populated from $SS on connect — null for USB connections */
   fluidncIp?: string | null
+  /** Per-machine override of the global jog speed presets — falls back to app.jog when disabled/unset */
+  jogOverride?: MachineJogOverride
+  /** Safe parking position in work coordinates (G54); undefined until configured */
+  parkPosition?: ParkPosition
+  /** Webcam view config; undefined until configured in the Webcam settings tab */
+  webcam?: WebcamConfig
 }
 
 // ─── App-level settings types ─────────────────────────────────────────────────
-
-
-export interface JogSettings {
-  slowSpeed: number
-  mediumSpeed: number
-  fastSpeed: number
-  xyStep: number
-  zStep: number
-}
 
 export type ShortcutActionId =
   | 'jogXPos'
@@ -99,6 +123,8 @@ export type ShortcutActionId =
   | 'speedSlow'
   | 'speedMedium'
   | 'speedFast'
+  | 'dialogCancel'
+  | 'dialogConfirm'
 
 export type SafetyKeyOption = 'shift' | 'ctrl' | 'alt' | 'none'
 
@@ -118,6 +144,8 @@ export interface KeyboardShortcuts {
   speedSlow: string
   speedMedium: string
   speedFast: string
+  dialogCancel: string
+  dialogConfirm: string
 }
 
 interface PersistedConfig {
@@ -189,19 +217,18 @@ export const useSettingsStore = defineStore('settings', () => {
       showAxes: true,
     },
     jog: {
-      slowSpeed: 100,
-      mediumSpeed: 500,
-      fastSpeed: 2000,
-      xyStep: 1.0,
-      zStep: 0.5,
+      slow: { speed: 100, xyStep: 0.1, zStep: 0.05 },
+      medium: { speed: 500, xyStep: 1.0, zStep: 0.5 },
+      fast: { speed: 2000, xyStep: 5.0, zStep: 2.0 },
     } as JogSettings,
     shortcuts: {
-      safetyKey: 'shift' as SafetyKeyOption,
+      safetyKey: 'none' as SafetyKeyOption,
       requiresSafetyKey: {
         jogXPos: true, jogXNeg: true, jogYPos: true, jogYNeg: true,
         jogZPos: true, jogZNeg: true,
         feedHold: true, cycleStart: true, softReset: true, home: true,
         speedSlow: true, speedMedium: true, speedFast: true,
+        dialogCancel: false, dialogConfirm: false,
       },
       jogXPos: 'ArrowRight',
       jogXNeg: 'ArrowLeft',
@@ -213,9 +240,11 @@ export const useSettingsStore = defineStore('settings', () => {
       cycleStart: 'c',
       softReset: 'r',
       home: 'h',
-      speedSlow: 'y',
+      speedSlow: 'z',
       speedMedium: 'a',
       speedFast: 'q',
+      dialogCancel: 'Escape',
+      dialogConfirm: 'Enter',
     } as KeyboardShortcuts,
     auth: {
       enabled: false,
@@ -243,6 +272,20 @@ export const useSettingsStore = defineStore('settings', () => {
     })
   }
 
+  // Backward compat: pre-existing configs stored flat { slowSpeed, mediumSpeed, fastSpeed, xyStep, zStep }
+  // with a single step size shared across all speed levels.
+  function _migrateJog(raw: unknown): JogSettings {
+    const j = raw as Record<string, unknown>
+    if ('slow' in j) return j as unknown as JogSettings
+    const xyStep = (j['xyStep'] as number) ?? 1.0
+    const zStep = (j['zStep'] as number) ?? 0.5
+    return {
+      slow: { speed: (j['slowSpeed'] as number) ?? 100, xyStep, zStep },
+      medium: { speed: (j['mediumSpeed'] as number) ?? 500, xyStep, zStep },
+      fast: { speed: (j['fastSpeed'] as number) ?? 2000, xyStep, zStep },
+    }
+  }
+
   function applyServerState(data: PersistedConfig) {
     machines.value = (data.machines ?? []).map((m) => {
       // Migrate old shape: toolChangeMacro + magazine + probe → toolchange discriminated union
@@ -268,7 +311,12 @@ export const useSettingsStore = defineStore('settings', () => {
       if (data.app.units) app.units = data.app.units
       if (data.app.macros) app.macros = _migrateMacros(data.app.macros as unknown[])
       if (data.app.viewport) Object.assign(app.viewport, data.app.viewport)
-      if (data.app.jog) Object.assign(app.jog, data.app.jog)
+      if (data.app.jog) {
+        const migrated = _migrateJog(data.app.jog)
+        Object.assign(app.jog.slow, migrated.slow)
+        Object.assign(app.jog.medium, migrated.medium)
+        Object.assign(app.jog.fast, migrated.fast)
+      }
       if (data.app.shortcuts) {
         const { requiresSafetyKey, ...shortcutRest } = data.app.shortcuts as Partial<KeyboardShortcuts>
         Object.assign(app.shortcuts, shortcutRest)

@@ -24,6 +24,7 @@ interface SimStateMsg {
   axisCount: number
   travel: Record<AxisKey, number>
   fluidConfig: Record<string, string>
+  toolLengthOffset: number
 }
 
 export function useSimConnection() {
@@ -52,6 +53,7 @@ export function useSimConnection() {
     store.limits.zMin = msg.limits.zMin
     store.limits.zMax = msg.limits.zMax
     store.limits.door = msg.door
+    store.toolLengthOffset = msg.toolLengthOffset ?? 0
     for (const a of AXES) {
       store.pos[a] = msg.pos[a] ?? store.pos[a]
       store.wco[a] = msg.wco[a] ?? store.wco[a]
@@ -74,6 +76,10 @@ export function useSimConnection() {
     ws.onopen = () => {
       retryDelay = 1000
       store.applyDefaultScenario()
+      // Re-push sim-ui-owned config the Rust sim doesn't echo back (mirrors the
+      // stock/scenario pattern) — otherwise a sim restart silently loses it.
+      store.pushToolsetterToSim()
+      store.pushLoadedToolToSim()
     }
 
     ws.onmessage = (event: MessageEvent) => {

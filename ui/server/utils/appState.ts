@@ -68,6 +68,8 @@ export interface ConnectionState {
   status: string
   firmwareVersion: string
   simulatorMode: boolean
+  /** Null = unknown/unverified this session — never a bare 0 (see toolLengthState.ts). */
+  toolLengthOffset: number | null
 }
 
 // ─── Shared UI state (server-authoritative, pushed to every client) ─────────────
@@ -189,7 +191,11 @@ const DEFAULT_CONFIG: AppConfig = {
     units: 'mm',
     macros: [],
     viewport: { defaultView: 'iso', showGrid: true, showAxes: true },
-    jog: { slowSpeed: 100, mediumSpeed: 500, fastSpeed: 2000, xyStep: 1.0, zStep: 0.5 },
+    jog: {
+      slow: { speed: 100, xyStep: 0.1, zStep: 0.05 },
+      medium: { speed: 500, xyStep: 1.0, zStep: 0.5 },
+      fast: { speed: 2000, xyStep: 5.0, zStep: 2.0 },
+    },
     shortcuts: {
       jogXPos: 'ArrowRight',
       jogXNeg: 'ArrowLeft',
@@ -308,6 +314,7 @@ const connection: ConnectionState = {
   status: 'DISCONNECTED',
   firmwareVersion: '',
   simulatorMode: false,
+  toolLengthOffset: null,
 }
 
 // ─── Peer registry ────────────────────────────────────────────────────────────
@@ -420,7 +427,7 @@ export interface ToolchangeModalProps {
   currentToolNumber: number | null
   nextToolNumber: number | null
   isJobContext: boolean
-  operation?: 'load' | 'unload'
+  operation?: 'load' | 'unload' | 'measure'
   probedOffset?: number
   errorMessage?: string
 }
@@ -452,6 +459,20 @@ export async function updateMagazineSlots(machineId: string, slots: (number | nu
     const tc = machine.toolchange as Record<string, unknown>
     if ('magazineSlots' in tc) {
       tc.magazineSlots = slots
+      await setConfig(config)
+    }
+  }
+  return { path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }
+}
+
+export async function setTolBaseline(machineId: string, value: number): Promise<PatchOp> {
+  const config = await getConfig()
+  const machines = (config.machines ?? []) as Array<Record<string, unknown>>
+  const machine = machines.find((m) => m.id === machineId)
+  if (machine && machine.toolchange && typeof machine.toolchange === 'object') {
+    const tc = machine.toolchange as Record<string, unknown>
+    if (tc.strategy === 'manual-toolsetter' && tc.position && typeof tc.position === 'object') {
+      (tc.position as Record<string, unknown>).tolBaseline = value
       await setConfig(config)
     }
   }

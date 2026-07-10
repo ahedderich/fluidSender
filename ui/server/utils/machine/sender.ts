@@ -1,5 +1,6 @@
 import { machineConnection } from './connection'
 import { getMode, setMode } from './machineMode'
+import { hasBufferReporting } from './poller'
 import { broadcastPatch, pushConsole } from '../appState'
 import { classifyLine, getActiveFirmwareVersion } from '../gcode/classifier'
 import type { MachineStatus, SenderStatusEvent, SendHandle, SendableLine, SenderCompletedMode } from './types'
@@ -158,7 +159,9 @@ function _checkCompletion(
 
   const allDispatched = chunk.dispatchPtr >= chunk.lines.length
   const allConfirmed = !chunk.pendingAck && chunk.sentPtr === chunk.executedPtr
-  const plannerDrained = plannerFree >= effectiveMax
+  // Without Bf: reporting, plannerFree is always 0 and can never confirm drain —
+  // don't block completion on data this firmware will never send.
+  const plannerDrained = !hasBufferReporting() || plannerFree >= effectiveMax
   const isIdle = machineState === 'Idle'
 
   if (allDispatched && allConfirmed && plannerDrained && isIdle) {
@@ -294,6 +297,17 @@ export function onBufUpdate(
 
   // Fallback: planner fully empty → align executedPtr to sentPtr
   if (newInPlanner === 0 && chunk.executedPtr < chunk.sentPtr) {
+    chunk.executedPtr = chunk.sentPtr
+    _emit(chunk)
+  }
+
+  // Without Bf: reporting, plannerFree is always 0, so the drain-inference walk
+  // above and the "planner fully empty" fallback can never advance executedPtr
+  // for in-flight motion lines. Once everything has been dispatched and acked
+  // and the firmware reports Idle, that IS completion — trust it directly
+  // rather than waiting on planner data this firmware will never send.
+  if (!hasBufferReporting() && machineState === 'Idle' && !chunk.pendingAck &&
+    chunk.dispatchPtr >= chunk.lines.length && chunk.executedPtr < chunk.sentPtr) {
     chunk.executedPtr = chunk.sentPtr
     _emit(chunk)
   }
