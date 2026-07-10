@@ -155,6 +155,8 @@ class ToolStore {
         tool.jobCount += 1
         tool.lastUsed = now
         await this.saveAppLibrary(_appTools)
+      } else {
+        console.warn(`[toolStore] incrementRuntime: no app-scoped tool #${toolNumber} — ${minutes.toFixed(2)}min dropped`)
       }
     } else {
       const tools = _machineTools.get(machineId) ?? []
@@ -164,6 +166,8 @@ class ToolStore {
         tool.jobCount += 1
         tool.lastUsed = now
         await this.saveMachineLibrary(machineId, tools)
+      } else {
+        console.warn(`[toolStore] incrementRuntime: no machine-scoped tool #${toolNumber} on ${machineId} — ${minutes.toFixed(2)}min dropped`)
       }
     }
 

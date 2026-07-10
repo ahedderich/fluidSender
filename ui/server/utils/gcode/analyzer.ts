@@ -88,9 +88,17 @@ export async function analyzeGCodeFile(
   onProgress(0)
 
   if (signal.aborted) throw new Error('Aborted')
-  onProgress(10)
 
-  const { lines, vectors, modalStates, tools, axisRanges, estimatedTotalMs, noToolDefinitions, headerToolDefs } = analyzeGCode(content)
+  // The line-by-line pass is the bulk of the work — map its own 0-100 progress
+  // into the 10-80 band instead of jumping straight from 10 to 80.
+  const { lines, vectors, modalStates, tools, axisRanges, estimatedTotalMs, noToolDefinitions, headerToolDefs } = analyzeGCode(
+    content,
+    undefined,
+    (innerPct) => {
+      if (signal.aborted) return
+      onProgress(10 + Math.round(innerPct * 0.7))
+    },
+  )
   if (signal.aborted) throw new Error('Aborted')
   onProgress(80)
 

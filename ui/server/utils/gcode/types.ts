@@ -135,8 +135,11 @@ export interface JobState {
   /** Max planner slots, captured from machine idle state on connect. */
   maxPlannerSlots: number
   estimatedTotalMs: number
-  /** Wall-clock epoch ms when job started; adjusted on resume. */
+  /** Wall-clock epoch ms when the current running segment started; null whenever status !== 'running'. */
   startWallClock: number | null
+  /** Active runtime accumulated across the job so far, excluding paused/tool-change/program-pause
+   *  time. Live elapsed = accumulatedRunMs + (status === 'running' ? now - startWallClock : 0). */
+  accumulatedRunMs: number
   axisRanges: AxisRanges | null
   /** 0–100 while status === 'analyzing', otherwise irrelevant. */
   analyzeProgress: number
@@ -175,6 +178,9 @@ export interface JobCheckpoint {
   execPtr: number
   savedAt: number
   transformMode: TransformMode
+  /** Active runtime accumulated up to this checkpoint. Optional for backward compatibility
+   *  with checkpoints written before this field existed — treat missing as 0. */
+  accumulatedRunMs?: number
 }
 
 export type TransformMode = 'none' | 'rotated' | 'height_adjusted' | 'rotated_height_adjusted'
