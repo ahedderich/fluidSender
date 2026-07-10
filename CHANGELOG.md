@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/ahedderich/fluidSender/compare/v0.1.2...v0.1.3) (2026-07-10)
+
+
+### Bug Fixes
+
+* updated security.md and unfixabled vulerability definition ([c5f73c3](https://github.com/ahedderich/fluidSender/commit/c5f73c3c5865fa87f7c3b1faf104c1cfd4ce1223))
+
 ## [0.1.2](https://github.com/ahedderich/fluidSender/compare/v0.1.1...v0.1.2) (2026-07-10)
 
 
