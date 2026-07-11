@@ -330,6 +330,7 @@ let animId: number | null = null
 const objectMap: Record<string, unknown> = {}
 let removeRotateListeners: (() => void) | null = null
 let removeVisibilityListener: (() => void) | null = null
+let removeResizeListener: (() => void) | null = null
 
 // No-op defaults until initThree() assigns real implementations
 let requestRender: () => void = () => {}
@@ -851,8 +852,12 @@ async function initThree() {
 
   requestRender() // draw the initial frame
 
-  // Resize
-  const ro = new ResizeObserver(() => {
+  // Resize — debounced so a continuous drag of the window/panel edge doesn't
+  // recalculate camera/renderer/materials on every intermediate frame; wait
+  // for the size to settle for 300ms before applying it.
+  let resizeTimeout: ReturnType<typeof setTimeout> | null = null
+  const applyResize = () => {
+    resizeTimeout = null
     if (!container) return
     const { width: w, height: h } = container.getBoundingClientRect()
     if (!w || !h) return
@@ -861,8 +866,16 @@ async function initThree() {
     renderer.setSize(w, h)
     for (const m of lineMats) m.resolution.set(w, h)
     requestRender()
+  }
+  const ro = new ResizeObserver(() => {
+    if (resizeTimeout !== null) clearTimeout(resizeTimeout)
+    resizeTimeout = setTimeout(applyResize, 300)
   })
   ro.observe(container)
+  removeResizeListener = () => {
+    ro.disconnect()
+    if (resizeTimeout !== null) clearTimeout(resizeTimeout)
+  }
 
   // Resume rendering when the browser tab returns to the foreground
   const onVisibilityChange = () => {
@@ -1025,6 +1038,7 @@ onUnmounted(() => {
   if (animId !== null) cancelAnimationFrame(animId)
   removeRotateListeners?.()
   removeVisibilityListener?.()
+  removeResizeListener?.()
   threeCtx?.renderer.dispose()
   threeCtx = null
 })
