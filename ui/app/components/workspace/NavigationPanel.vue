@@ -182,7 +182,7 @@
     </div>
 
     <!-- Goto Pos dialog -->
-    <DialogsDialogFrame :open="showGotoPos" title="Go to Position" size="sm" @close="showGotoPos = false">
+    <DialogsDialogFrame :open="showGotoPos" title="Go to Position" size="3xl" @close="showGotoPos = false">
       <div class="space-y-3">
         <div class="flex gap-2">
           <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded p-0.5 flex-1">

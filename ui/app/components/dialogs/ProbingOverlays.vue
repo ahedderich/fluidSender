@@ -30,7 +30,7 @@
     <DialogsDialogFrame
       :open="!!showResult && !sync.calibrationActive"
       :title="ps.wizardKey ? (wizardTitles[ps.wizardKey] ?? ps.wizardKey) : ''"
-      size="lg"
+      size="3xl"
       @close="dismiss"
     >
       <div class="space-y-4">

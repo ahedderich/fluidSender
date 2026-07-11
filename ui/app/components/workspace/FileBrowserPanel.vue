@@ -92,7 +92,7 @@
     </div>
 
     <!-- Analysis loading overlay -->
-    <DialogsDialogFrame :open="isAnalyzing" title="Analysing GCode" size="sm" :dismissible="false" :closable="false">
+    <DialogsDialogFrame :open="isAnalyzing" title="Analysing GCode" size="3xl" :dismissible="false" :closable="false">
       <p class="text-xs text-gray-500 dark:text-slate-400 mb-4">
         {{ analyzingFilename }} — calculating time estimate, tool sections and 3D path…
       </p>

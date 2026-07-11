@@ -318,7 +318,7 @@
     </div>
 
     <!-- ── Set Stock dialog ──────────────────────────────────────────────────── -->
-    <DialogsDialogFrame :open="showStockDialog" title="Set Stock" size="sm" @close="showStockDialog = false">
+    <DialogsDialogFrame :open="showStockDialog" title="Set Stock" size="3xl" @close="showStockDialog = false">
       <div class="space-y-4">
         <div>
           <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">Shape</p>
@@ -377,7 +377,7 @@
     <DialogsDialogFrame
       :open="showHeightmapModal && !!ps.heightmap"
       title="Heightmap Result"
-      size="lg"
+      size="3xl"
       @close="showHeightmapModal = false"
     >
       <template v-if="ps.heightmap">

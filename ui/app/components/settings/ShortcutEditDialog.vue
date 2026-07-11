@@ -1,5 +1,5 @@
 <template>
-  <DialogsDialogFrame :open="open" :title="`Edit Shortcut — ${label}`" size="sm" @close="close">
+  <DialogsDialogFrame :open="open" :title="`Edit Shortcut — ${label}`" size="3xl" @close="close">
     <button
       type="button"
       @click="startRecording"

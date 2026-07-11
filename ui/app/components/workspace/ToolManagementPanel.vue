@@ -352,7 +352,7 @@
     <DialogsDialogFrame
       :open="showToolModal"
       :title="editingTool ? 'Edit Tool' : 'Add Tool'"
-      size="md"
+      size="3xl"
       no-body-padding
       @close="showToolModal = false"
     >
@@ -746,7 +746,7 @@
     </DialogsDialogFrame>
 
     <!-- ── Export F360 modal ── -->
-    <DialogsDialogFrame :open="showExportModal" title="Export Tool Library" size="sm" @close="showExportModal = false">
+    <DialogsDialogFrame :open="showExportModal" title="Export Tool Library" size="3xl" @close="showExportModal = false">
       <div class="space-y-4">
         <p class="text-xs text-gray-500 dark:text-slate-400">
           Select which tools to include in the exported Fusion 360 tool library (.json).
@@ -818,7 +818,7 @@
     </DialogsDialogFrame>
 
     <!-- ── Import scope selection modal ── -->
-    <DialogsDialogFrame :open="showImportModal" title="Import Tool Library" size="sm" @close="showImportModal = false">
+    <DialogsDialogFrame :open="showImportModal" title="Import Tool Library" size="3xl" @close="showImportModal = false">
       <div class="space-y-4">
         <p class="text-sm text-gray-600 dark:text-slate-400">Select where to import tools:</p>
         <div class="space-y-2">

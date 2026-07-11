@@ -1,5 +1,5 @@
 <template>
-  <DialogsDialogFrame :open="true" :title="props.macro.name" size="xs" @close="$emit('cancel')">
+  <DialogsDialogFrame :open="true" :title="props.macro.name" size="3xl" @close="$emit('cancel')">
     <div class="space-y-4">
       <template v-if="variables.length">
         <div v-for="variable in variables" :key="variable.id">
