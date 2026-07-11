@@ -17,16 +17,3 @@
 #                          a non-Debian base image (tracked separately).
 #
 # No findings are currently accepted.
-#
-# - expr-eval (previously Class 1: CVE-2025-12735, CVE-2025-13204) is gone —
-#   replaced by expr-eval-fork, which patches both; see
-#   ui/server/utils/macro/macroRunner.ts.
-# - udev (previously Class 1) is gone too — serial port enumeration no longer
-#   shells out to udevadm (see ui/server/api/serial-ports.get.ts).
-# - The old Class 2 OS-essential entries (util-linux family, gzip, libacl1,
-#   zlib1g, libtinfo6/ncurses, perl-base) were written against the old
-#   node:22-slim root-user runner. Dockerfile.prd's runner stage now ships
-#   gcr.io/distroless/nodejs22-debian13:nonroot, which has no apt/dpkg and
-#   none of those packages, so the class doesn't apply anymore. Confirm with
-#   `trivy image` on the next built image before relying on this — re-add any
-#   entry here (with a fresh justification) if the scan still flags it.
