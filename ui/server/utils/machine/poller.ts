@@ -1,9 +1,17 @@
 import { machineConnection } from './connection'
+import { getMode } from './machineMode'
 import { parseStatusLine, resetWco } from './statusParser'
 import { broadcastPatch, pushToast } from '../appState'
 import type { MachineStatus } from './types'
 
-const POLL_INTERVAL_MS = 200
+const POLL_INTERVAL_IDLE_MS = 200
+// While a job chunk is actively dispatching, executedPtr for Category-A (motion)
+// lines only advances via this poll's Bf: drain inference (see sender.ts
+// onBufUpdate) — a slower poll can stall dispatch for up to a full interval once
+// the in-flight motion window is exhausted, which is visible as stutter on
+// small/fast arc sequences (e.g. adaptive toolpaths). Poll faster during 'sending'
+// to shrink that blind window.
+const POLL_INTERVAL_RUNNING_MS = 100
 const POSITION_TOLERANCE = 0.001
 
 // FluidNC defaults `$10` (status_mask) to 1 — Position bit only. The Buffer bit
@@ -11,7 +19,7 @@ const POSITION_TOLERANCE = 0.001
 // (sender.ts _checkCompletion/onBufUpdate) can never confirm a chunk drained,
 // permanently wedging machine mode at 'sending'. Nudge it on every connect, and
 // retry a few times in case the first attempt races a busy/rejecting firmware.
-const BUFFER_WATCHDOG_POLLS = 10 // ~2s at POLL_INTERVAL_MS between retries
+const BUFFER_WATCHDOG_POLLS = 10 // ~2s at POLL_INTERVAL_IDLE_MS between retries
 const BUFFER_WATCHDOG_MAX_RETRIES = 3
 
 // Broadcast function — injected at startup to avoid circular imports with appState
@@ -21,7 +29,7 @@ export function initPoller(broadcastFn: (msg: unknown) => void) {
   _broadcast = broadcastFn
 }
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 let lastStatus: MachineStatus | null = null
 let _bufferSeen = false
 let _bufferWatchdogPolls = 0
@@ -37,6 +45,17 @@ export function hasBufferReporting(): boolean {
   return _bufferSeen
 }
 
+function _scheduleNextPoll(): void {
+  const interval = getMode() === 'sending' ? POLL_INTERVAL_RUNNING_MS : POLL_INTERVAL_IDLE_MS
+  pollTimer = setTimeout(() => {
+    if (machineConnection.isConnected) {
+      machineConnection.sendByte(0x3F)
+      _checkBufferWatchdog()
+    }
+    _scheduleNextPoll()
+  }, interval)
+}
+
 export function startPoller() {
   if (pollTimer) return
   _bufferSeen = false
@@ -45,16 +64,11 @@ export function startPoller() {
   // $-commands aren't blocked by Alarm state, so this is safe to send immediately,
   // before homing. Idempotent — a no-op on firmware where it's already set.
   machineConnection.sendRaw('$10=3')
-  pollTimer = setInterval(() => {
-    if (machineConnection.isConnected) {
-      machineConnection.sendByte(0x3F)
-      _checkBufferWatchdog()
-    }
-  }, POLL_INTERVAL_MS)
+  _scheduleNextPoll()
 }
 
 export function stopPoller() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null }
   lastStatus = null
   _bufferSeen = false
   resetWco()
