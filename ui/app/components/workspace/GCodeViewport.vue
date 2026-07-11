@@ -1,9 +1,12 @@
 <template>
   <div ref="containerRef" class="relative bg-gray-100 dark:bg-slate-950 rounded-lg overflow-hidden">
-    <!-- 3D canvas — always full container, hidden only in cam-only mode -->
+    <!-- 3D canvas — always full container, hidden only in cam-only mode.
+         absolute + inset-0 (not w-full h-full) keeps it out of normal flow entirely,
+         so its intrinsic aspect ratio (from the width/height attributes Three.js sets)
+         can never feed back into the container's own flex/grid sizing. -->
     <canvas
       ref="canvasRef"
-      class="block"
+      class="absolute inset-0"
       :class="viewMode === 'cam' ? 'invisible' : ''"
     />
 
@@ -381,7 +384,10 @@ async function initThree() {
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-  renderer.setSize(width, height || 400)
+  // updateStyle=false: canvas layout size stays CSS-driven (absolute + inset-0 of container)
+  // so it can never feed its own size back into the container's layout — only the internal
+  // drawing-buffer resolution is set here.
+  renderer.setSize(width, height || 400, false)
 
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.mouseButtons = {
@@ -863,7 +869,7 @@ async function initThree() {
     if (!w || !h) return
     camera.aspect = w / h
     camera.updateProjectionMatrix()
-    renderer.setSize(w, h)
+    renderer.setSize(w, h, false)
     for (const m of lineMats) m.resolution.set(w, h)
     requestRender()
   }
