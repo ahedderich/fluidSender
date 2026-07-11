@@ -1,4 +1,4 @@
-import { Parser, type Value } from 'expr-eval'
+import { Parser, type Value } from 'expr-eval-fork'
 import { parseMacro } from './macroParser'
 import {
   broadcastPatch,
@@ -68,7 +68,12 @@ export class MacroRuntimeError extends Error {
 // ─── Persistent cross-macro global namespace ──────────────────────────────────
 const globalVars: Record<string, unknown> = {}
 
-// ─── expr-eval parser setup ───────────────────────────────────────────────────
+// ─── expr-eval-fork parser setup ──────────────────────────────────────────────
+// expr-eval-fork, not expr-eval: upstream is unmaintained (last npm release
+// 2019) with two unpatched-on-npm CVEs (GHSA-8gw3-rxh4-v6jx, GHSA-jc85-fpwf-qm7x)
+// that are reachable through this exact evaluate() call via a
+// `constructor.constructor(...)` chain on any context value, e.g. `posx`. The
+// fork blocks __proto__/prototype/constructor member access; see .trivyignore.
 
 const parser = new Parser({
   operators: {

@@ -4,62 +4,29 @@
 #
 # Classes:
 #   1) REQUIRED          — a package FluidSender's own code depends on at
-#                          runtime (currently: udev, for serial port
-#                          enumeration via @serialport/bindings-cpp; and
-#                          direct npm dependencies such as expr-eval), OR a
-#                          downstream dependency where no patched version has
-#                          been released yet. Accepted temporarily because we
-#                          need the package and there is nothing to upgrade
-#                          to — we will patch as soon as a fixed version
-#                          becomes available, not because the CVE is harmless.
+#                          runtime, where no patched version has been
+#                          released yet. Accepted temporarily because we need
+#                          the package and there is nothing to upgrade to —
+#                          we will patch as soon as a fixed version becomes
+#                          available, not because the CVE is harmless.
 #   2) OS-ESSENTIAL       — Debian `Priority: required`/`Essential: yes`
 #                          packages that dpkg/apt need to function. apt
 #                          refuses to remove these without
 #                          --allow-remove-essential, which risks breaking the
 #                          image outright. Not removable without switching to
 #                          a non-Debian base image (tracked separately).
-
-# --- Class 1: Required (needed at runtime, no fix available yet) ---
-
-# expr-eval: used by FluidSender to evaluate macro/GCode expressions
-# (ui/package.json). No fixed version has been published upstream for either
-# CVE. Re-evaluate on every expiry: patch immediately if a fix ships, or
-# reconsider the dependency if it stays unmaintained.
-CVE-2025-12735 exp:2026-10-10
-CVE-2025-13204 exp:2026-10-10
-
-# --- Class 2: OS-essential (Debian required/essential packages) ---
-
-# util-linux family (bsdutils, libblkid1, libmount1, libsmartcols1, libuuid1,
-# util-linux, util-linux-extra): Priority: required / Essential: yes.
-# apt-get refuses removal without --allow-remove-essential.
-CVE-2026-53615 exp:2027-01-10
-
-# gzip: Priority: required, used by dpkg itself to unpack .deb archives.
-CVE-2026-41992 exp:2027-01-10
-
-# libacl1: dependency of the essential util-linux family above.
-CVE-2026-54369 exp:2027-01-10
-
-# zlib1g: Debian status is will_not_fix (minizip codepath, not reachable via
-# normal zlib usage). Also a hard dependency of dpkg/apt.
-CVE-2023-45853 exp:2027-01-10
-
-# libtinfo6/ncurses-base/ncurses-bin: looked like a prune candidate (only
-# backs bash's terminal handling) but is NOT removable — verified via
-# `apt-get purge` in ui/Dockerfile.prd / ui/Dockerfile: libtinfo6 is a hard
-# PreDepends of both bash and util-linux, and util-linux is Debian-essential
-# (see CVE-2026-53615 above). apt refuses the whole transaction rather than
-# cascade an essential-package removal.
-CVE-2025-69720 exp:2027-01-10
-
-# perl-base: also looked prunable but is itself a Debian Essential package —
-# apt refused with "Essential packages were removed and -y was used without
-# --allow-remove-essential", confirmed experimentally. Never invoked by
-# FluidSender, but not removable without forcing an essential-package
-# removal, which risks breaking the image outright.
-CVE-2026-42496 exp:2027-01-10
-CVE-2026-8376 exp:2027-01-10
-CVE-2026-42497 exp:2027-01-10
-CVE-2026-48962 exp:2027-01-10
-CVE-2026-9538 exp:2027-01-10
+#
+# No findings are currently accepted.
+#
+# - expr-eval (previously Class 1: CVE-2025-12735, CVE-2025-13204) is gone —
+#   replaced by expr-eval-fork, which patches both; see
+#   ui/server/utils/macro/macroRunner.ts.
+# - udev (previously Class 1) is gone too — serial port enumeration no longer
+#   shells out to udevadm (see ui/server/api/serial-ports.get.ts).
+# - The old Class 2 OS-essential entries (util-linux family, gzip, libacl1,
+#   zlib1g, libtinfo6/ncurses, perl-base) were written against the old
+#   node:22-slim root-user runner. Dockerfile.prd's runner stage now ships
+#   gcr.io/distroless/nodejs22-debian13:nonroot, which has no apt/dpkg and
+#   none of those packages, so the class doesn't apply anymore. Confirm with
+#   `trivy image` on the next built image before relying on this — re-add any
+#   entry here (with a fresh justification) if the scan still flags it.
