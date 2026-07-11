@@ -1,3 +1,10 @@
+# All three services now run as non-root (uid/gid 1000) inside their
+# containers — see ui/Dockerfile, fluid-sim/sim/Dockerfile and
+# fluid-sim/sim-ui/Dockerfile. If you ran this stack before that change,
+# the named volumes below (and ./ui/config, ./fluid-sim/sim-ui/config if
+# they exist) may still be root-owned from the old root-user containers;
+# run `docker compose down -v` once (or `sudo chown -R 1000:1000` on the
+# config dirs) so the new non-root user can write to them.
 services:
   ui:
     build:
