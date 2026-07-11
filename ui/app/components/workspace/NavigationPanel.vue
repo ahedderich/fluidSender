@@ -10,7 +10,7 @@
       <div v-if="isJobActive" class="flex items-center gap-1 ml-2 mr-auto">
         <span class="text-xs text-gray-400 dark:text-slate-500">F</span>
         <span class="text-xs font-mono font-semibold text-blue-600 dark:text-blue-400">{{ machine.feed }}</span>
-        <span class="text-xs text-gray-400 dark:text-slate-500">mm/m</span>
+        <span class="text-xs text-gray-400 dark:text-slate-500">mm/min</span>
       </div>
       <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded-md p-0.5">
         <button
@@ -46,7 +46,7 @@
               :disabled="!movementEnabled"
               class="flex-1 min-w-0 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono text-right px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40"
             />
-            <span class="text-xs text-gray-400 shrink-0">mm/m</span>
+            <span class="text-xs text-gray-400 shrink-0">mm/min</span>
           </div>
         </div>
         <div>
@@ -182,7 +182,7 @@
     </div>
 
     <!-- Goto Pos dialog -->
-    <DialogsDialogFrame :open="showGotoPos" title="Go to Position" size="sm" @close="showGotoPos = false">
+    <DialogsDialogFrame :open="showGotoPos" title="Go to Position" size="3xl" @close="showGotoPos = false">
       <div class="space-y-3">
         <div class="flex gap-2">
           <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded p-0.5 flex-1">

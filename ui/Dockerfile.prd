@@ -10,25 +10,25 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun run build
 
-FROM node:22-slim AS runner
+# distroless: no shell, no package manager, no npm — nothing to exploit
+# beyond the app itself. Port listing no longer shells out to `udevadm`
+# (see server/api/serial-ports.get.ts), so udev isn't needed here either.
+# debian13 (trixie), not debian12 (bookworm): bookworm's libssl3 build lagged
+# behind upstream OpenSSL fixes at time of writing (CVE-2026-31789 and
+# others), failing the Trivy gate; trixie ships a newer package baseline.
+# Re-check both lines' CVE status if this recurs.
+# :nonroot runs as uid/gid 65532 by default; see docker-compose.yaml for
+# the device/volume permission setup this requires.
+FROM gcr.io/distroless/nodejs22-debian13:nonroot AS runner
 WORKDIR /app
 
-# udev provides `udevadm`, which @serialport/bindings-cpp shells out to on
-# Linux to list serial ports (SerialPort.list()); without it the port list
-# request fails.
-RUN apt-get update -y && apt-get install -y udev --no-install-recommends && rm -rf /var/lib/apt/lists/*
-
-# node:22-slim bundles a global npm install we never use (build happens via
-# bun in the builder stage; CMD runs node directly). npm's own internal deps
-# (picomatch, @sigstore/bundle) show up as CVEs in image scans despite not
-# being FluidSender dependencies — remove the whole thing.
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
-
-COPY --from=builder /app/.output ./.output
+COPY --from=builder --chown=65532:65532 /app/.output ./.output
 
 EXPOSE 3000
 ENV NODE_ENV=production
 ENV NUXT_HOST=0.0.0.0
 ENV NUXT_PORT=3000
+USER 65532:65532
 
-CMD ["node", ".output/server/index.mjs"]
+# ENTRYPOINT is already ["node"] in this base image — CMD is just its args.
+CMD [".output/server/index.mjs"]

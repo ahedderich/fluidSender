@@ -1,9 +1,12 @@
 <template>
   <div ref="containerRef" class="relative bg-gray-100 dark:bg-slate-950 rounded-lg overflow-hidden">
-    <!-- 3D canvas — always full container, hidden only in cam-only mode -->
+    <!-- 3D canvas — always full container, hidden only in cam-only mode.
+         absolute + inset-0 (not w-full h-full) keeps it out of normal flow entirely,
+         so its intrinsic aspect ratio (from the width/height attributes Three.js sets)
+         can never feed back into the container's own flex/grid sizing. -->
     <canvas
       ref="canvasRef"
-      class="block"
+      class="absolute inset-0"
       :class="viewMode === 'cam' ? 'invisible' : ''"
     />
 
@@ -144,6 +147,7 @@
         <span>{{ startLabel }}</span>
         <span class="font-medium">
           <span class="text-blue-400">{{ execPct }}%</span>
+          <span v-if="showRuntime" class="text-slate-300 ml-2 font-mono">{{ runtimeLabel }}</span>
           <span v-if="job?.filename" class="text-slate-400 ml-1">({{ job!.filename }})</span>
         </span>
         <span>{{ etaLabel }}</span>
@@ -233,6 +237,37 @@ const etaLabel = computed(() => {
   return `ETA: ${new Date(eta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
 })
 
+// Live runtime timer — ticks locally off the server-owned accumulatedRunMs/startWallClock
+// rather than being pushed every second, so it stays a cheap client-side derivation.
+const nowTick = ref(Date.now())
+let runtimeTickInterval: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  runtimeTickInterval = setInterval(() => { nowTick.value = Date.now() }, 1000)
+})
+onUnmounted(() => {
+  if (runtimeTickInterval) clearInterval(runtimeTickInterval)
+})
+
+const runtimeMs = computed(() => {
+  const j = job.value
+  if (!j) return 0
+  const base = j.accumulatedRunMs ?? 0
+  return j.status === 'running' && j.startWallClock
+    ? base + Math.max(0, nowTick.value - j.startWallClock)
+    : base
+})
+
+const showRuntime = computed(() => runtimeMs.value > 0 || job.value?.status === 'running')
+
+const runtimeLabel = computed(() => {
+  const totalSec = Math.floor(runtimeMs.value / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`
+})
+
 const toolchangeStrategy = computed(() => settings.activeMachine?.toolchange?.strategy ?? 'manual-basic')
 
 const allToolLibrary = computed(() => [
@@ -298,6 +333,7 @@ let animId: number | null = null
 const objectMap: Record<string, unknown> = {}
 let removeRotateListeners: (() => void) | null = null
 let removeVisibilityListener: (() => void) | null = null
+let removeResizeListener: (() => void) | null = null
 
 // No-op defaults until initThree() assigns real implementations
 let requestRender: () => void = () => {}
@@ -348,7 +384,10 @@ async function initThree() {
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-  renderer.setSize(width, height || 400)
+  // updateStyle=false: canvas layout size stays CSS-driven (absolute + inset-0 of container)
+  // so it can never feed its own size back into the container's layout — only the internal
+  // drawing-buffer resolution is set here.
+  renderer.setSize(width, height || 400, false)
 
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.mouseButtons = {
@@ -819,18 +858,30 @@ async function initThree() {
 
   requestRender() // draw the initial frame
 
-  // Resize
-  const ro = new ResizeObserver(() => {
+  // Resize — debounced so a continuous drag of the window/panel edge doesn't
+  // recalculate camera/renderer/materials on every intermediate frame; wait
+  // for the size to settle for 300ms before applying it.
+  let resizeTimeout: ReturnType<typeof setTimeout> | null = null
+  const applyResize = () => {
+    resizeTimeout = null
     if (!container) return
     const { width: w, height: h } = container.getBoundingClientRect()
     if (!w || !h) return
     camera.aspect = w / h
     camera.updateProjectionMatrix()
-    renderer.setSize(w, h)
+    renderer.setSize(w, h, false)
     for (const m of lineMats) m.resolution.set(w, h)
     requestRender()
+  }
+  const ro = new ResizeObserver(() => {
+    if (resizeTimeout !== null) clearTimeout(resizeTimeout)
+    resizeTimeout = setTimeout(applyResize, 300)
   })
   ro.observe(container)
+  removeResizeListener = () => {
+    ro.disconnect()
+    if (resizeTimeout !== null) clearTimeout(resizeTimeout)
+  }
 
   // Resume rendering when the browser tab returns to the foreground
   const onVisibilityChange = () => {
@@ -900,7 +951,9 @@ function toggleLayer(layer: (typeof layers)[number]) {
   requestRender()
 }
 
-// Update tool position when machine moves
+// Update tool position when machine moves. workPos is always replaced
+// wholesale (never mutated in place), so a shallow watch already sees the
+// change — deep would traverse the object for no benefit on every tick.
 watch(
   () => machine.workPos,
   (wp) => {
@@ -910,8 +963,7 @@ watch(
     const h = (objectMap['tool'] as any).scale.y as number
     obj.position.set(wp.x, wp.y, wp.z + h / 2)
     requestRender()
-  },
-  { deep: true }
+  }
 )
 
 // Recreate tool scale when the active tool's diameter changes
@@ -993,6 +1045,7 @@ onUnmounted(() => {
   if (animId !== null) cancelAnimationFrame(animId)
   removeRotateListeners?.()
   removeVisibilityListener?.()
+  removeResizeListener?.()
   threeCtx?.renderer.dispose()
   threeCtx = null
 })

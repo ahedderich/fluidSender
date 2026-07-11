@@ -8,11 +8,6 @@
 FROM node:22-slim
 WORKDIR /app
 
-# udev provides `udevadm`, which @serialport/bindings-cpp shells out to on
-# Linux to list serial ports (SerialPort.list()); without it the port list
-# request fails.
-RUN apt-get update -y && apt-get install -y udev --no-install-recommends && rm -rf /var/lib/apt/lists/*
-
 # Bun as the package manager (respects bun.lock); Node is the runtime.
 RUN npm install -g bun@1.3.14
 
@@ -22,6 +17,13 @@ RUN bun install
 EXPOSE 3000
 ENV NUXT_HOST=0.0.0.0
 ENV NUXT_PORT=3000
+
+# node:22-slim ships a non-root "node" user (uid/gid 1000) for exactly this
+# purpose. node_modules/.nuxt are separate named volumes (see docker-compose.yaml)
+# so Docker seeds them from this ownership on first run; ./ui itself is bind-mounted
+# from the host and only needs to be readable, not writable, by the dev server.
+RUN chown -R node:node /app
+USER node
 
 # Run the dev server under Node (NOT `bun run dev`, which would use Bun's runtime).
 CMD ["npm", "run", "dev"]

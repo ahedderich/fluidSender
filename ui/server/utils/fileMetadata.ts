@@ -8,6 +8,11 @@ const META_DIR = join(UPLOADS_DIR, '_meta')
 export interface ExecutionRecord {
   startedAt: number
   completedAt: number
+  /** Active runtime (ms), excluding paused/tool-change/program-pause time — the
+   *  actual cutting duration, as opposed to (completedAt - startedAt) wall-clock.
+   *  Optional for backward compatibility with records written before this field
+   *  existed. */
+  activeDurationMs?: number
   status: 'success' | 'error' | 'aborted'
   machineId: string
   machineName?: string

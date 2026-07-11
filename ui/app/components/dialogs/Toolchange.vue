@@ -1,5 +1,5 @@
 <template>
-  <DialogsDialogFrame :open="!!modal" :title="dialogTitle" :size="dialogSize" :dismissible="false" :closable="false">
+  <DialogsDialogFrame :open="!!modal" :title="dialogTitle" size="3xl" :dismissible="false" :closable="false">
     <div class="space-y-4">
       <!-- Step indicator (manual-toolsetter, skipped for the measure-only flow which has no position/swap step) -->
       <div v-if="showStepIndicator" class="flex items-center gap-3 text-xs">
@@ -34,16 +34,40 @@
         </div>
       </div>
 
+      <!-- Tool info from library, with the colored tool number -->
+      <div v-if="props.nextToolNumber !== null && phase !== 'error'" class="bg-gray-50 dark:bg-slate-700/50 rounded-lg px-4 py-3 text-xs flex items-center gap-4">
+        <div class="w-12 h-12 rounded-full bg-amber-500 flex items-center justify-center text-xl font-bold text-white shrink-0">
+          {{ props.nextToolNumber }}
+        </div>
+        <template v-if="toolInfo">
+          <div>
+            <p class="font-semibold text-gray-800 dark:text-slate-200">{{ toolInfo.name }}</p>
+            <dl class="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-gray-600 dark:text-slate-400">
+              <div class="flex justify-between gap-2">
+                <dt>Diameter</dt>
+                <dd class="font-mono">⌀{{ toolInfo.diameter }}mm</dd>
+              </div>
+              <div v-if="toolInfo.fluteCount" class="flex justify-between gap-2">
+                <dt>Flutes</dt>
+                <dd class="font-mono">{{ toolInfo.fluteCount }}</dd>
+              </div>
+              <div v-if="toolInfo.overallLength" class="flex justify-between gap-2">
+                <dt>Length</dt>
+                <dd class="font-mono">{{ toolInfo.overallLength }}mm</dd>
+              </div>
+              <div v-if="toolInfo.material" class="flex justify-between gap-2">
+                <dt>Material</dt>
+                <dd>{{ toolInfo.material }}</dd>
+              </div>
+            </dl>
+          </div>
+        </template>
+      </div>
+
       <!-- Phase: waiting_for_swap -->
       <template v-if="phase === 'waiting_for_swap'">
-        <div class="flex items-center gap-4">
-          <div v-if="props.nextToolNumber !== null" class="text-center">
-            <div class="w-12 h-12 rounded-full bg-amber-500 flex items-center justify-center text-xl font-bold text-white mx-auto">
-              {{ props.nextToolNumber }}
-            </div>
-            <p class="text-xs text-gray-500 dark:text-slate-400 mt-1">Install T{{ props.nextToolNumber }}</p>
-          </div>
-          <div v-else-if="props.operation === 'unload'" class="text-center">
+        <div v-if="props.operation === 'unload'" class="flex items-center gap-4">
+          <div class="text-center">
             <div class="w-12 h-12 rounded-full bg-gray-400 flex items-center justify-center text-xl font-bold text-white mx-auto">
               <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -145,10 +169,12 @@
 import { useModals } from '~/composables/useModals'
 import { wsSend } from '~/composables/useWsSend'
 import { useSettingsStore } from '~/stores/settings'
+import { useMachineStore } from '~/stores/machine'
 import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const modals = useModals()
 const settings = useSettingsStore()
+const machine = useMachineStore()
 
 const modal = modals.active('toolchange')
 
@@ -167,6 +193,12 @@ const props = computed(() => {
 
 const phase = computed(() => props.value.phase)
 
+const toolInfo = computed(() => {
+  const n = props.value.nextToolNumber
+  if (n === null) return null
+  return [...machine.toolLibrary.machine, ...machine.toolLibrary.app].find((t) => t.number === n) ?? null
+})
+
 const isToolsetterStrategy = computed(() => {
   const tc = settings.activeMachine?.toolchange
   return tc?.strategy === 'manual-toolsetter'
@@ -183,12 +215,6 @@ const dialogTitle = computed(() => {
   if (props.value.nextToolNumber !== null) return `Load Tool T${props.value.nextToolNumber}`
   return 'Tool Change'
 })
-
-// The measure flow's result view shows the probed offset plus Re-probe/Resume
-// actions — give it more breathing room than the other phases.
-const dialogSize = computed(() =>
-  props.value.operation === 'measure' && phase.value === 'probe_result' ? '3xl' : 'md',
-)
 
 function send(t: string) {
   wsSend({ t, payload: {} })

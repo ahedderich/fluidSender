@@ -63,8 +63,15 @@ class JobRunner {
   private _toolPreferences: Record<number, 'M' | 'A'> = {}
   private _ambiguousTools: number[] = []
 
-  // Runtime session
-  private _runtimeSession: { toolNumber: number; scope: 'M' | 'A'; startMs: number } | null = null
+  // Runtime session — startRunMs is a snapshot of _currentRunMs() (active time only),
+  // used to compute this tool's active duration excluding any pauses mid-section.
+  private _runtimeSession: { toolNumber: number; scope: 'M' | 'A'; startMs: number; startRunMs: number } | null = null
+
+  // Active-runtime clock — accumulates only while status === 'running'. Managed centrally
+  // by _setStatus() (plus the few status transitions that bypass it); see _freezeRunClock/
+  // _unfreezeRunClock/_currentRunMs.
+  private _accumulatedRunMs = 0
+  private _runStartedAt: number | null = null
 
   // Execution history tracking
   private _execStartedAt: number | null = null
@@ -84,7 +91,7 @@ class JobRunner {
     getJobStatus: () => this._status,
     getSendHandle: () => this._sendHandle,
     setSendHandle: (h) => { this._sendHandle = h },
-    setJobStatusToolChange: () => { this._status = 'tool_change' },
+    setJobStatusToolChange: () => { this._setStatus('tool_change') },
     resumeAfterToolChange: () => this.resumeAfterToolChange(),
   })
 
@@ -98,6 +105,7 @@ class JobRunner {
 
     this.analyzeAbort?.abort()
     this.analyzeAbort = null
+    this._resetRunClock()
 
     const filename = basename(fileId).replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')
 
@@ -112,8 +120,7 @@ class JobRunner {
         const ctrl = new AbortController()
         this.analyzeAbort = ctrl
 
-        broadcastPatch([setJobState({
-          status: 'analyzing',
+        this._setStatus('analyzing', {
           fileId,
           filename,
           analyzeProgress: 0,
@@ -124,8 +131,7 @@ class JobRunner {
           toolPreferences: {},
           ambiguousTools: [],
           transformMode: this._transformMode,
-        })])
-        this._status = 'analyzing'
+        })
 
         const result = await analyzeGCodeFile(
           fileId,
@@ -179,7 +185,6 @@ class JobRunner {
         execPtr: 0,
         inPlanner: 0,
         estimatedTotalMs: analysis.estimatedTotalMs,
-        startWallClock: null,
         axisRanges: analysis.axisRanges,
         analyzeProgress: 100,
         toolSections: analysis.tools,
@@ -208,8 +213,7 @@ class JobRunner {
     } catch (err) {
       const msg = (err as Error).message
       if (msg === 'Aborted') {
-        broadcastPatch([setJobState({
-          status: 'idle',
+        this._setStatus('idle', {
           fileId: null,
           filename: null,
           analyzeProgress: 0,
@@ -220,8 +224,7 @@ class JobRunner {
           toolPreferences: {},
           ambiguousTools: [],
           transformMode: 'none',
-        })])
-        this._status = 'idle'
+        })
       } else {
         this._broadcastError(`Failed to load job: ${msg}`)
       }
@@ -241,12 +244,13 @@ class JobRunner {
     if (this._status === 'complete') {
       this.sendPtr = 0
       this._execPtr = 0
+      this._resetRunClock()
     }
 
     jLog(`start() status=${this._status} totalLines=${this.lines.length} sections=${this._toolSections.length}`)
     this._currentSectionIndex = 0
     this._execStartedAt = Date.now()
-    this._setStatus('running', { startWallClock: Date.now(), execPtr: this._execPtr })
+    this._setStatus('running', { execPtr: this._execPtr })
     this._startRuntimeSession(this._toolSections[0] ?? null)
     this._startMainSend().catch(console.error)
   }
@@ -285,7 +289,6 @@ class JobRunner {
       jLog(`resume() modal=${modal ? `pos(${modal.position.x.toFixed(2)},${modal.position.y.toFixed(2)},${modal.position.z.toFixed(2)}) wcs=${modal.workCoordinate}` : 'null'}`)
 
       this._setStatus('recovering', {
-        startWallClock: null,
         sendPtr: resumePtr,
         execPtr: resumePtr,
         inPlanner: 0,
@@ -307,12 +310,12 @@ class JobRunner {
         jLog(`resume() direct resumeChunk (no modal) suspendedChunkId=${suspendedChunkId.slice(0, 8)}`)
         this._mainJobChunkId = null
         this._sendHandle = resumeChunk(suspendedChunkId)
-        this._setStatus('running', { startWallClock: Date.now() })
+        this._setStatus('running')
       } else {
         // Fallback: start a new send from execPtr.
         jLog(`resume() fallback: no modal, no suspendedChunk → fresh send from execPtr=${resumePtr}`)
         this.sendPtr = resumePtr
-        this._setStatus('running', { startWallClock: Date.now() })
+        this._setStatus('running')
         this._startMainSend().catch(console.error)
       }
     } catch (err) {
@@ -357,7 +360,6 @@ class JobRunner {
       this.sendPtr = 0
       this._recordExecution('aborted')
       this._setStatus('loaded', {
-        startWallClock: null,
         sendPtr: 0,
         execPtr: 0,
         inPlanner: 0,
@@ -370,10 +372,10 @@ class JobRunner {
     }
     if (this._status === 'tool_change') {
       this.toolchangeRunner.abort()
-      this._finalizeRuntimeSession().catch(() => {})
+      this._finalizeRuntimeSession().catch((err) => console.error('[jobRunner] runtime finalize error:', err))
       this._mainJobChunkId = null
       this._recordExecution('aborted')
-      this._setStatus('loaded', { toolChangeRequest: null, startWallClock: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null })
+      this._setStatus('loaded', { toolChangeRequest: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null })
       return
     }
     if (this._status === 'program_pause') {
@@ -384,7 +386,6 @@ class JobRunner {
       this.sendPtr = 0
       this._recordExecution('aborted')
       this._setStatus('loaded', {
-        startWallClock: null,
         sendPtr: 0,
         execPtr: 0,
         inPlanner: 0,
@@ -407,14 +408,13 @@ class JobRunner {
   /** Immediate hard reset — no deceleration, potential mid-move position loss. */
   emergencyStop(): void {
     this.toolchangeRunner.abort()
-    this._finalizeRuntimeSession().catch(() => {})
+    this._finalizeRuntimeSession().catch((err) => console.error('[jobRunner] runtime finalize error:', err))
     const handle = this._sendHandle
     this._sendHandle = null
     this._execPtr = 0
     this.sendPtr = 0
     this._recordExecution('aborted')
     this._setStatus('loaded', {
-      startWallClock: null,
       sendPtr: 0,
       execPtr: 0,
       inPlanner: 0,
@@ -443,8 +443,8 @@ class JobRunner {
     this._transformMode = 'none'
     this._activeRotation = null
     this._activeHeightmap = null
-    broadcastPatch([setJobState({
-      status: 'idle',
+    this._resetRunClock()
+    this._setStatus('idle', {
       fileId: null,
       filename: null,
       totalLines: 0,
@@ -452,7 +452,6 @@ class JobRunner {
       execPtr: 0,
       inPlanner: 0,
       estimatedTotalMs: 0,
-      startWallClock: null,
       axisRanges: null,
       analyzeProgress: 0,
       toolSections: null,
@@ -463,8 +462,7 @@ class JobRunner {
       toolPreferences: {},
       ambiguousTools: [],
       transformMode: 'none',
-    })])
-    this._status = 'idle'
+    })
     clearAllJobData().catch(() => {})
   }
 
@@ -496,7 +494,6 @@ class JobRunner {
         execPtr: 0,
         inPlanner: 0,
         estimatedTotalMs: analysis.estimatedTotalMs,
-        startWallClock: null,
         axisRanges: analysis.axisRanges,
         analyzeProgress: 100,
         toolSections: analysis.tools,
@@ -509,6 +506,8 @@ class JobRunner {
       }
 
       if (hasCrash) {
+        this._accumulatedRunMs = checkpoint!.accumulatedRunMs ?? 0
+        this._runStartedAt = null
         const resumePtr = checkpoint!.execPtr
         const modalStateAtResume = await getModalStateAtLine(resumePtr, mode)
         this._setStatus('loaded', {
@@ -522,6 +521,7 @@ class JobRunner {
         })
         return 'crash'
       } else {
+        this._resetRunClock()
         this._setStatus('loaded', { ...baseState, recovery: null })
         return 'loaded'
       }
@@ -543,6 +543,9 @@ class JobRunner {
   async confirmRecovery(resumePtr: number): Promise<void> {
     const checkpoint = await loadCheckpoint()
     if (!checkpoint) return
+
+    this._accumulatedRunMs = checkpoint.accumulatedRunMs ?? 0
+    this._runStartedAt = null
 
     try {
       const filename = checkpoint.filename
@@ -582,7 +585,7 @@ class JobRunner {
         const recoveryCommands = this._buildRecoverySequence(modal, safeZ)
         this._sendHandle = sendGCode(recoveryCommands, (event) => this._handleRecoveryEvent(event, null))
       } else {
-        this._setStatus('running', { startWallClock: Date.now() })
+        this._setStatus('running')
         this._startMainSend()
       }
     } catch (err) {
@@ -593,7 +596,7 @@ class JobRunner {
   /** Called by ws.ts on machine disconnect. */
   onMachineDisconnected(): void {
     setToolChangeModeActive(false)
-    this._finalizeRuntimeSession().catch(() => {})
+    this._finalizeRuntimeSession().catch((err) => console.error('[jobRunner] runtime finalize error:', err))
     this._sendHandle = null
     this._mainJobChunkId = null  // suspended chunk was finalized by senderDisconnected()
 
@@ -601,7 +604,7 @@ class JobRunner {
       // stopSend was in progress; treat as loaded since we didn't complete cleanly.
       this._execPtr = 0
       this.sendPtr = 0
-      this._setStatus('loaded', { startWallClock: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null, toolChangeRequest: null, programPause: null })
+      this._setStatus('loaded', { sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null, toolChangeRequest: null, programPause: null })
       clearCheckpoint().catch(() => {})
     } else if (this._status === 'running' || this._status === 'pausing' || this._status === 'recovering') {
       this._setStatus('paused', { errorMessage: 'Machine disconnected during job' })
@@ -772,6 +775,10 @@ class JobRunner {
 
     switch (event.completedMode) {
       case 'success':
+        // Freeze here, at the instant the machine actually stopped — every path out of
+        // this branch (next tool change or job completion) leaves 'running' anyway, so
+        // this just avoids crediting the async bookkeeping below as active time.
+        this._freezeRunClock()
         if (this._toolSections.length > 1) {
           this._finalizeRuntimeSession().then(() => {
             const nextIdx = this._currentSectionIndex + 1
@@ -792,18 +799,20 @@ class JobRunner {
             }
           })
         } else {
-          this._finalizeRuntimeSession().catch(() => {})
+          this._finalizeRuntimeSession().catch((err) => console.error('[jobRunner] runtime finalize error:', err))
           this._completeJob()
         }
         break
       case 'stopped':
-        // stopSend() completed: machine is Idle. Return to loaded state.
+        // stopSend() completed: machine is Idle. Return to loaded state. The tool that
+        // was active when Stop was pressed still had an open runtime session — finalize
+        // it now, otherwise its accrued time is silently lost.
+        this._finalizeRuntimeSession().catch((err) => console.error('[jobRunner] runtime finalize error:', err))
         this._mainJobChunkId = null
         this._execPtr = 0
         this.sendPtr = 0
         this._recordExecution('aborted')
         this._setStatus('loaded', {
-          startWallClock: null,
           sendPtr: 0,
           execPtr: 0,
           inPlanner: 0,
@@ -837,10 +846,10 @@ class JobRunner {
           // Resume the suspended main job chunk now that repositioning is done.
           this._mainJobChunkId = null
           this._sendHandle = resumeChunk(suspendedChunkId)
-          this._setStatus('running', { startWallClock: Date.now() })
+          this._setStatus('running')
           // The resumed chunk fires its own events via its existing onEvent callback.
         } else {
-          this._setStatus('running', { startWallClock: Date.now() })
+          this._setStatus('running')
           this._startMainSend().catch(console.error)
         }
         break
@@ -853,7 +862,7 @@ class JobRunner {
   }
 
   private _enterProgramPause(comment: string | null): void {
-    this._status = 'program_pause'
+    this._setStatus('program_pause', { programPause: { comment } })
     const { id, op: modalOp } = openProgramPauseModal(comment)
     this._programPauseModalId = id
     registerProgramPauseHandler(id, (action: 'continue' | 'cancel' | 'closed') => {
@@ -867,7 +876,7 @@ class JobRunner {
       }
       // 'closed' — state already handled by the alarm/disconnect path that called _closeModal
     })
-    broadcastPatch([setJobState({ status: 'program_pause', programPause: { comment } }), modalOp])
+    broadcastPatch([modalOp])
   }
 
   private _findPauseComment(execPtr: number): string | null {
@@ -884,7 +893,7 @@ class JobRunner {
       return
     }
     const scope = this._toolPreferences[section.toolNumber] ?? 'M'
-    this._runtimeSession = { toolNumber: section.toolNumber, scope, startMs: Date.now() }
+    this._runtimeSession = { toolNumber: section.toolNumber, scope, startMs: Date.now(), startRunMs: this._currentRunMs() }
   }
 
   private async _finalizeRuntimeSession(): Promise<void> {
@@ -892,13 +901,17 @@ class JobRunner {
     const s = this._runtimeSession
     this._runtimeSession = null
     const endMs = Date.now()
-    const durationMin = (endMs - s.startMs) / 60_000
+    // Active time only — excludes any pause/tool-change/program-pause time that
+    // occurred while this tool was in use.
+    const durationMin = Math.max(0, this._currentRunMs() - s.startRunMs) / 60_000
     const machineId = await this._getActiveMachineId()
 
     const session = {
-      ...s,
+      toolNumber: s.toolNumber,
+      scope: s.scope,
       machineId: machineId ?? 'unknown',
       jobFile: this.filename ?? '',
+      startMs: s.startMs,
       endMs,
     }
     await appendRuntimeSession(session)
@@ -940,7 +953,6 @@ class JobRunner {
     this.sendPtr = this.lines.length
     this._recordExecution('success')
     this._setStatus('complete', {
-      startWallClock: null,
       sendPtr: this.lines.length,
       execPtr: this.lines.length,
       inPlanner: 0,
@@ -953,12 +965,13 @@ class JobRunner {
   private _recordExecution(status: 'success' | 'error' | 'aborted', errorMessage?: string): void {
     const startedAt = this._execStartedAt
     const fileId = this.fileId
+    const activeDurationMs = this._currentRunMs()
     this._execStartedAt = null
     if (!startedAt || !fileId) return
     const completedAt = Date.now()
     this._getActiveMachineId()
-      .then((machineId) => appendExecution(fileId, { startedAt, completedAt, status, machineId: machineId ?? 'unknown', errorMessage }))
-      .catch(() => {})
+      .then((machineId) => appendExecution(fileId, { startedAt, completedAt, activeDurationMs, status, machineId: machineId ?? 'unknown', errorMessage }))
+      .catch((err) => console.error('[jobRunner] appendExecution error:', err))
   }
 
   private _checkpointIfDue(): void {
@@ -976,7 +989,8 @@ class JobRunner {
         execPtr: this._execPtr,
         savedAt: now,
         transformMode: this._transformMode,
-      }).catch(() => {})
+        accumulatedRunMs: this._currentRunMs(),
+      }).catch((err) => console.error('[jobRunner] saveCheckpoint error:', err))
     }
   }
 
@@ -1007,22 +1021,56 @@ class JobRunner {
     return op
   }
 
+  /** Reset the active-runtime clock — call whenever a new job (or a restart of the
+   *  current one) begins, so a previous job's accumulated time doesn't carry over. */
+  private _resetRunClock(): void {
+    this._accumulatedRunMs = 0
+    this._runStartedAt = null
+  }
+
+  /** Freeze the run clock if it's currently ticking (idempotent). */
+  private _freezeRunClock(): void {
+    if (this._runStartedAt === null) return
+    this._accumulatedRunMs += Date.now() - this._runStartedAt
+    this._runStartedAt = null
+  }
+
+  /** Start the run clock if it isn't already ticking (idempotent). */
+  private _unfreezeRunClock(): void {
+    if (this._runStartedAt !== null) return
+    this._runStartedAt = Date.now()
+  }
+
+  /** Active runtime so far, live if the clock is currently ticking. */
+  private _currentRunMs(): number {
+    return this._accumulatedRunMs + (this._runStartedAt !== null ? Date.now() - this._runStartedAt : 0)
+  }
+
+  /** Sole gateway for job status transitions — also owns the active-runtime clock
+   *  (ticks only while status === 'running') and startWallClock (set on entering
+   *  'running', null otherwise), so no call site can forget to freeze/unfreeze it. */
   private _setStatus(status: JobState['status'], extra?: Partial<JobState>): void {
     jLog(`status: ${this._status} → ${status}`)
     if (this._status === 'program_pause' && status !== 'program_pause') {
       const closeOp = this._closeModal()
       if (closeOp) broadcastPatch([closeOp])
     }
+    if (status === 'running') this._unfreezeRunClock()
+    else this._freezeRunClock()
     this._status = status
-    broadcastPatch([setJobState({ status, ...extra })])
+    broadcastPatch([setJobState({
+      status,
+      startWallClock: status === 'running' ? this._runStartedAt : null,
+      accumulatedRunMs: this._currentRunMs(),
+      ...extra,
+    })])
   }
 
   private _broadcastError(msg: string): void {
     const closeOp = this._closeModal()
     if (closeOp) broadcastPatch([closeOp])
     this._recordExecution('error', msg)
-    this._status = 'error'
-    broadcastPatch([setJobState({ status: 'error', errorMessage: msg })])
+    this._setStatus('error', { errorMessage: msg })
   }
 }
 

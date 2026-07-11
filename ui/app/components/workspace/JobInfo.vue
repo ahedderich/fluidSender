@@ -73,13 +73,17 @@
 
     <!-- Stats -->
     <div v-if="job" class="px-3 py-2 border-b border-gray-100 dark:border-slate-700 shrink-0 flex gap-4">
-      <!-- XYZ range -->
+      <!-- XYZ range + measured time -->
       <table class="text-xs flex-1 min-w-0">
         <tbody>
           <tr v-for="axis in axisRanges" :key="axis.label">
             <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2 whitespace-nowrap">{{ axis.label }} Range</td>
             <td class="font-mono text-gray-800 dark:text-slate-200 text-right pr-2">{{ axis.from }}</td>
             <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ axis.to }}</td>
+          </tr>
+          <tr>
+            <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2 whitespace-nowrap">Meas. Time</td>
+            <td class="font-mono text-gray-800 dark:text-slate-200 text-right" colspan="2">{{ formatRuntime(measuredMs) }}</td>
           </tr>
         </tbody>
       </table>
@@ -92,8 +96,12 @@
             <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ job!.totalLines.toLocaleString() }}</td>
           </tr>
           <tr>
-            <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2 whitespace-nowrap">Sent / Exec</td>
-            <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ job!.sendPtr.toLocaleString() }} / {{ job!.execPtr.toLocaleString() }}</td>
+            <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2 whitespace-nowrap">Sent</td>
+            <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ job!.sendPtr.toLocaleString() }}</td>
+          </tr>
+          <tr>
+            <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2 whitespace-nowrap">Exec</td>
+            <td class="font-mono text-gray-800 dark:text-slate-200 text-right">{{ job!.execPtr.toLocaleString() }}</td>
           </tr>
           <tr>
             <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2 whitespace-nowrap">Est. Time</td>
@@ -721,6 +729,26 @@ const axisRanges = computed(() => {
     { label: 'Y', from: r ? fmt(r.y.min) : '—', to: r ? fmt(r.y.max) : '—' },
     { label: 'Z', from: r ? fmt(r.z.min) : '—', to: r ? fmt(r.z.max) : '—' },
   ]
+})
+
+// Live measured-time timer — ticks locally off the server-owned accumulatedRunMs/startWallClock
+// rather than being pushed every second, so it stays a cheap client-side derivation.
+const nowTick = ref(Date.now())
+let measuredTickInterval: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  measuredTickInterval = setInterval(() => { nowTick.value = Date.now() }, 1000)
+})
+onUnmounted(() => {
+  if (measuredTickInterval) clearInterval(measuredTickInterval)
+})
+
+const measuredMs = computed(() => {
+  const j = job.value
+  if (!j) return 0
+  const base = j.accumulatedRunMs ?? 0
+  return j.status === 'running' && j.startWallClock
+    ? base + Math.max(0, nowTick.value - j.startWallClock)
+    : base
 })
 
 function formatRuntime(ms: number) {
