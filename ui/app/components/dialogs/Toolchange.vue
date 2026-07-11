@@ -34,42 +34,40 @@
         </div>
       </div>
 
-      <!-- Tool info from library -->
-      <div v-if="props.nextToolNumber !== null && phase !== 'error'" class="bg-gray-50 dark:bg-slate-700/50 rounded-lg px-4 py-3 text-xs">
+      <!-- Tool info from library, with the colored tool number -->
+      <div v-if="props.nextToolNumber !== null && phase !== 'error'" class="bg-gray-50 dark:bg-slate-700/50 rounded-lg px-4 py-3 text-xs flex items-center gap-4">
+        <div class="w-12 h-12 rounded-full bg-amber-500 flex items-center justify-center text-xl font-bold text-white shrink-0">
+          {{ props.nextToolNumber }}
+        </div>
         <template v-if="toolInfo">
-          <p class="font-semibold text-gray-800 dark:text-slate-200">{{ toolInfo.name }}</p>
-          <dl class="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-gray-600 dark:text-slate-400">
-            <div class="flex justify-between gap-2">
-              <dt>Diameter</dt>
-              <dd class="font-mono">⌀{{ toolInfo.diameter }}mm</dd>
-            </div>
-            <div v-if="toolInfo.fluteCount" class="flex justify-between gap-2">
-              <dt>Flutes</dt>
-              <dd class="font-mono">{{ toolInfo.fluteCount }}</dd>
-            </div>
-            <div v-if="toolInfo.overallLength" class="flex justify-between gap-2">
-              <dt>Length</dt>
-              <dd class="font-mono">{{ toolInfo.overallLength }}mm</dd>
-            </div>
-            <div v-if="toolInfo.material" class="flex justify-between gap-2">
-              <dt>Material</dt>
-              <dd>{{ toolInfo.material }}</dd>
-            </div>
-          </dl>
+          <div>
+            <p class="font-semibold text-gray-800 dark:text-slate-200">{{ toolInfo.name }}</p>
+            <dl class="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-gray-600 dark:text-slate-400">
+              <div class="flex justify-between gap-2">
+                <dt>Diameter</dt>
+                <dd class="font-mono">⌀{{ toolInfo.diameter }}mm</dd>
+              </div>
+              <div v-if="toolInfo.fluteCount" class="flex justify-between gap-2">
+                <dt>Flutes</dt>
+                <dd class="font-mono">{{ toolInfo.fluteCount }}</dd>
+              </div>
+              <div v-if="toolInfo.overallLength" class="flex justify-between gap-2">
+                <dt>Length</dt>
+                <dd class="font-mono">{{ toolInfo.overallLength }}mm</dd>
+              </div>
+              <div v-if="toolInfo.material" class="flex justify-between gap-2">
+                <dt>Material</dt>
+                <dd>{{ toolInfo.material }}</dd>
+              </div>
+            </dl>
+          </div>
         </template>
-        <p v-else class="text-gray-500 dark:text-slate-400">No library entry for T{{ props.nextToolNumber }}</p>
       </div>
 
       <!-- Phase: waiting_for_swap -->
       <template v-if="phase === 'waiting_for_swap'">
-        <div class="flex items-center gap-4">
-          <div v-if="props.nextToolNumber !== null" class="text-center">
-            <div class="w-12 h-12 rounded-full bg-amber-500 flex items-center justify-center text-xl font-bold text-white mx-auto">
-              {{ props.nextToolNumber }}
-            </div>
-            <p class="text-xs text-gray-500 dark:text-slate-400 mt-1">Install T{{ props.nextToolNumber }}</p>
-          </div>
-          <div v-else-if="props.operation === 'unload'" class="text-center">
+        <div v-if="props.operation === 'unload'" class="flex items-center gap-4">
+          <div class="text-center">
             <div class="w-12 h-12 rounded-full bg-gray-400 flex items-center justify-center text-xl font-bold text-white mx-auto">
               <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
