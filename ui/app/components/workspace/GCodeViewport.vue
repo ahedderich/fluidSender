@@ -951,7 +951,9 @@ function toggleLayer(layer: (typeof layers)[number]) {
   requestRender()
 }
 
-// Update tool position when machine moves
+// Update tool position when machine moves. workPos is always replaced
+// wholesale (never mutated in place), so a shallow watch already sees the
+// change — deep would traverse the object for no benefit on every tick.
 watch(
   () => machine.workPos,
   (wp) => {
@@ -961,8 +963,7 @@ watch(
     const h = (objectMap['tool'] as any).scale.y as number
     obj.position.set(wp.x, wp.y, wp.z + h / 2)
     requestRender()
-  },
-  { deep: true }
+  }
 )
 
 // Recreate tool scale when the active tool's diameter changes
