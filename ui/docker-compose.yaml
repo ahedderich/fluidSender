@@ -4,12 +4,14 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-    # The image runs as a fixed non-root user (uid/gid 65532). Bind-mounted
-    # ./config and ./data must be readable/writable by that uid — either
-    # `chown -R 65532:65532 ./config ./data` once before first start, or
-    # override to your own host user below (uncomment) if you'd rather match
-    # existing directory ownership instead:
-    # user: "${UID:-1000}:${GID:-1000}"
+    # Runs as a non-root user matching your host user via UID/GID (defaults
+    # to 1000:1000, the typical first Linux user, if unset — set these in a
+    # .env file next to this compose file otherwise, since UID is read-only
+    # in bash and can't be exported on the command line). Bind-mounted
+    # ./config and ./data must be readable/writable by that uid.
+    # To instead run as the image's built-in uid/gid 65532, comment this
+    # line out and `chown -R 65532:65532 ./config ./data` once beforehand.
+    user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - ./config:/app/config
       - ./data:/app/data

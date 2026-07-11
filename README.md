@@ -4,6 +4,8 @@ A modern, web-based GCode sender built specifically for [FluidNC](https://github
 
 FluidSender is a native FluidNC client — not a generic GRBL sender. It implements the full FluidNC feature set including firmware configuration, real-time machine control, probing macros, and more. It ships with a built-in Rust-based FluidNC simulator for safe, offline development and testing.
 
+![FluidSender main interface](docs/screenshots/main-ui.png)
+
 ---
 
 ## Pre-Release Version Note
@@ -118,6 +120,20 @@ docker compose up -d
 
 The UI is available at `http://localhost:3000`. Config and data are persisted in `./config` and `./data`.
 
+#### Container user (uid/gid)
+
+The production image is [hardened](#security): it runs as a non-root user, no shell, no package manager. By default `docker-compose.yaml` starts the container as `${UID:-1000}:${GID:-1000}` — matching the typical first user on a Linux system — so on most single-user Linux hosts (including Raspberry Pi OS) the bind-mounted `./config` and `./data` directories, which `mkdir -p` above already creates as your own user, just work with no extra steps.
+
+If your host user isn't uid/gid `1000:1000` (check with `id -u` / `id -g`), set `UID`/`GID` explicitly. Docker Compose reads a `.env` file in the deployment directory for variable substitution — use that rather than `export`, since `UID` is a read-only shell variable in bash and can't be reassigned on the command line:
+
+```bash
+printf "UID=%s\nGID=%s\n" "$(id -u)" "$(id -g)" > ~/fluidsender/.env
+```
+
+Alternatively, comment out the `user:` line in `docker-compose.yaml` to run as the image's built-in non-root user (fixed uid/gid `65532`), and `chown -R 65532:65532 ./config ./data` once before first start instead.
+
+If connecting over USB, the container also needs group membership matching the host group that owns the serial device (commonly `dialout`, gid `20` — check with `getent group dialout` and adjust the `group_add` entry in `docker-compose.yaml` if it differs).
+
 ---
 
 ## Configuration
@@ -178,6 +194,10 @@ None of this has been tested against real hardware other than FluidNC. It's plau
 
 Planned features and areas of future development, roughly in order of priority:
 
+- **Executed toolpath dimming** — render already-executed vectors in the 3D viewport at reduced opacity/transparency, so completed cuts are visually distinguishable from what's left during a running job
+- **GCode analyzer performance** — optimize `analyzer.ts` to reduce load times for large GCode files on weaker hardware
+- **Raspberry Pi optimized build pipeline** — extend the image build pipeline to publish Raspberry Pi optimized images
+- **User documentation** — dedicated end-user documentation (setup, configuration, workflows) beyond this README
 - **Testing, Testing, Testing** — Since this release is still an early alpha i intend to test all functionallities as much as possible on a real maschine. Latest fixes have been mostly ui polishing and minior bugfixes but that is not to say there aren't any bugs left. Besides the real live testing the CI/CD testsuite needs to refined and expended. The project is to complex to retest everything by hand so reliable automatic testing is curcial.
 - **Stock definition via STEP file** — import a STEP model as the stock definition instead of defining a simple rectangular or round shape manually
 - **Extended probing wizards** — guided probing workflows for more complex stock geometry, building on the existing edge-finding and corner-probing primitives
@@ -185,6 +205,8 @@ Planned features and areas of future development, roughly in order of priority:
 - **Firmware OTA update** — over-the-air firmware flashing via the FluidNC web server upload mechanism (or the web UI routes), similar to what the FluidNC web UI already supports — requires coordination with bdring before implementation
 - **3+1 and 5-axis extended support** — dedicated probing wizards and extended testing for machines with rotary axes; blocked on upgrading personal hardware first
 - **Full laser engraver and plasma cutter support** — I do not personally own either type of machine, so this hasn't been prioritized; might revisit depending on future need
+- **Mobile / small-screen optimized styling** — responsive layout pass for phones and small tablets
+- **Pendant integration** — support for physical jog pendants / MPGs
 
 ---
 
