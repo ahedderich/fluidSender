@@ -85,6 +85,42 @@ function stop() {
   }
 }
 
-onMounted(start)
-onUnmounted(stop)
+// Tab backgrounding stalls the live stream instead of pausing it cleanly: hls.js's
+// segment-fetch loop runs on JS timers that browsers throttle for hidden tabs, so it
+// falls behind the live edge and — once buffered segments age out of the server's DVR
+// window — errors out. Tearing the stream down while hidden and reconnecting fresh on
+// return avoids both the catch-up delay and the eventual error. Debounce the teardown
+// so a brief tab switch doesn't cause a visible reconnect glitch.
+let hideTimeout: ReturnType<typeof setTimeout> | null = null
+let suspendedByVisibility = false
+
+function onVisibilityChange() {
+  if (document.hidden) {
+    hideTimeout = setTimeout(() => {
+      hideTimeout = null
+      stop()
+      suspendedByVisibility = true
+      status.value = 'loading'
+    }, 2000)
+  } else {
+    if (hideTimeout !== null) {
+      clearTimeout(hideTimeout)
+      hideTimeout = null
+    }
+    if (suspendedByVisibility) {
+      suspendedByVisibility = false
+      start()
+    }
+  }
+}
+
+onMounted(() => {
+  start()
+  document.addEventListener('visibilitychange', onVisibilityChange)
+})
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  if (hideTimeout !== null) clearTimeout(hideTimeout)
+  stop()
+})
 </script>
