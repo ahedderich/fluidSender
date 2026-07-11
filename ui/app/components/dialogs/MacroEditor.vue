@@ -2,7 +2,7 @@
   <DialogsDialogFrame
     :open="true"
     :title="props.macro ? 'Edit Macro' : 'New Macro'"
-    size="2xl"
+    size="3xl"
     @close="$emit('close')"
   >
         <div class="space-y-5">

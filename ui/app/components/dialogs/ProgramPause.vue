@@ -1,5 +1,5 @@
 <template>
-  <DialogsDialogFrame :open="!!entry" size="sm" :dismissible="false" :closable="false">
+  <DialogsDialogFrame :open="!!entry" size="3xl" :dismissible="false" :closable="false">
     <!-- Header -->
     <div class="flex items-start gap-3 mb-4">
       <div class="w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center shrink-0 mt-0.5">

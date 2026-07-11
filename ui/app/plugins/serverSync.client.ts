@@ -32,6 +32,17 @@ export default defineNuxtPlugin((nuxtApp) => {
   }
   setWsSend(send)
 
+  // machine:status and job progress arrive up to ~10/sec each while a job is
+  // running. A client too slow to keep up must never build an unbounded
+  // backlog of stale frames — coalesce to the latest value instead of
+  // applying every one in strict arrival order.
+  const applyMachineStatusCoalesced = createLatestCoalescer((status: MachineStatus) => {
+    machineStore.applyMachineStatus(status)
+  })
+  const applyJobStateCoalesced = createLatestCoalescer((state: JobState) => {
+    syncStore.applyJobState(state)
+  })
+
   function applyPatchOp(op: PatchOp) {
     switch (op.path) {
       case 'connection':
@@ -49,7 +60,7 @@ export default defineNuxtPlugin((nuxtApp) => {
         }
         break
       case 'job':
-        if ('set' in op) syncStore.applyJobState(op.set as unknown as JobState)
+        if ('set' in op) applyJobStateCoalesced(op.set as unknown as JobState)
         break
       case 'stock':
         if ('set' in op) {
@@ -134,7 +145,7 @@ export default defineNuxtPlugin((nuxtApp) => {
         break
       }
       case 'machine:status': {
-        machineStore.applyMachineStatus(msg.payload as MachineStatus)
+        applyMachineStatusCoalesced(msg.payload as MachineStatus)
         break
       }
     }

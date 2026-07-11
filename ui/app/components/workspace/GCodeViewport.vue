@@ -1,9 +1,12 @@
 <template>
   <div ref="containerRef" class="relative bg-gray-100 dark:bg-slate-950 rounded-lg overflow-hidden">
-    <!-- 3D canvas — always full container, hidden only in cam-only mode -->
+    <!-- 3D canvas — always full container, hidden only in cam-only mode.
+         absolute + inset-0 (not w-full h-full) keeps it out of normal flow entirely,
+         so its intrinsic aspect ratio (from the width/height attributes Three.js sets)
+         can never feed back into the container's own flex/grid sizing. -->
     <canvas
       ref="canvasRef"
-      class="block"
+      class="absolute inset-0"
       :class="viewMode === 'cam' ? 'invisible' : ''"
     />
 
@@ -330,6 +333,7 @@ let animId: number | null = null
 const objectMap: Record<string, unknown> = {}
 let removeRotateListeners: (() => void) | null = null
 let removeVisibilityListener: (() => void) | null = null
+let removeResizeListener: (() => void) | null = null
 
 // No-op defaults until initThree() assigns real implementations
 let requestRender: () => void = () => {}
@@ -380,7 +384,10 @@ async function initThree() {
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-  renderer.setSize(width, height || 400)
+  // updateStyle=false: canvas layout size stays CSS-driven (absolute + inset-0 of container)
+  // so it can never feed its own size back into the container's layout — only the internal
+  // drawing-buffer resolution is set here.
+  renderer.setSize(width, height || 400, false)
 
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.mouseButtons = {
@@ -851,18 +858,30 @@ async function initThree() {
 
   requestRender() // draw the initial frame
 
-  // Resize
-  const ro = new ResizeObserver(() => {
+  // Resize — debounced so a continuous drag of the window/panel edge doesn't
+  // recalculate camera/renderer/materials on every intermediate frame; wait
+  // for the size to settle for 300ms before applying it.
+  let resizeTimeout: ReturnType<typeof setTimeout> | null = null
+  const applyResize = () => {
+    resizeTimeout = null
     if (!container) return
     const { width: w, height: h } = container.getBoundingClientRect()
     if (!w || !h) return
     camera.aspect = w / h
     camera.updateProjectionMatrix()
-    renderer.setSize(w, h)
+    renderer.setSize(w, h, false)
     for (const m of lineMats) m.resolution.set(w, h)
     requestRender()
+  }
+  const ro = new ResizeObserver(() => {
+    if (resizeTimeout !== null) clearTimeout(resizeTimeout)
+    resizeTimeout = setTimeout(applyResize, 300)
   })
   ro.observe(container)
+  removeResizeListener = () => {
+    ro.disconnect()
+    if (resizeTimeout !== null) clearTimeout(resizeTimeout)
+  }
 
   // Resume rendering when the browser tab returns to the foreground
   const onVisibilityChange = () => {
@@ -932,7 +951,9 @@ function toggleLayer(layer: (typeof layers)[number]) {
   requestRender()
 }
 
-// Update tool position when machine moves
+// Update tool position when machine moves. workPos is always replaced
+// wholesale (never mutated in place), so a shallow watch already sees the
+// change — deep would traverse the object for no benefit on every tick.
 watch(
   () => machine.workPos,
   (wp) => {
@@ -942,8 +963,7 @@ watch(
     const h = (objectMap['tool'] as any).scale.y as number
     obj.position.set(wp.x, wp.y, wp.z + h / 2)
     requestRender()
-  },
-  { deep: true }
+  }
 )
 
 // Recreate tool scale when the active tool's diameter changes
@@ -1025,6 +1045,7 @@ onUnmounted(() => {
   if (animId !== null) cancelAnimationFrame(animId)
   removeRotateListeners?.()
   removeVisibilityListener?.()
+  removeResizeListener?.()
   threeCtx?.renderer.dispose()
   threeCtx = null
 })

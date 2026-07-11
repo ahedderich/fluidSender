@@ -1,5 +1,5 @@
 <template>
-  <DialogsDialogFrame :open="!!modal" :title="dialogTitle" :size="dialogSize" :dismissible="false" :closable="false">
+  <DialogsDialogFrame :open="!!modal" :title="dialogTitle" size="3xl" :dismissible="false" :closable="false">
     <div class="space-y-4">
       <!-- Step indicator (manual-toolsetter, skipped for the measure-only flow which has no position/swap step) -->
       <div v-if="showStepIndicator" class="flex items-center gap-3 text-xs">
@@ -217,12 +217,6 @@ const dialogTitle = computed(() => {
   if (props.value.nextToolNumber !== null) return `Load Tool T${props.value.nextToolNumber}`
   return 'Tool Change'
 })
-
-// The measure flow's result view shows the probed offset plus Re-probe/Resume
-// actions — give it more breathing room than the other phases.
-const dialogSize = computed(() =>
-  props.value.operation === 'measure' && phase.value === 'probe_result' ? '3xl' : 'md',
-)
 
 function send(t: string) {
   wsSend({ t, payload: {} })
