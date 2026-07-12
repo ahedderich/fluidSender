@@ -13,9 +13,9 @@ Only the latest release on the `main` branch receives security fixes. Older vers
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Please report security issues by emailing:
+Please report security issues using GitHub's private vulnerability reporting feature:
 
-**andreas.hedderich0@gmail.com**
+**https://github.com/ahedderich/fluidSender/security/advisories/new**
 
 Include as much of the following as possible:
 
