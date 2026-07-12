@@ -8,8 +8,10 @@
       <select
         v-if="s.hasMachines"
         :value="s.activeMachineId"
+        :disabled="machine.connected || machine.connecting"
         @change="(e) => s.selectMachine((e.target as HTMLSelectElement).value)"
-        class="bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-slate-200 border border-gray-300 dark:border-slate-600 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-44 cursor-pointer"
+        class="bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-slate-200 border border-gray-300 dark:border-slate-600 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-44 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+        :title="machine.connected ? 'Disconnect to switch machines' : undefined"
       >
         <option v-for="m in s.machines" :key="m.id" :value="m.id">{{ m.name }}</option>
       </select>
@@ -33,6 +35,11 @@
         <span class="text-xs text-gray-500 dark:text-slate-400 bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded font-mono whitespace-nowrap border border-gray-200 dark:border-slate-700">
           FluidNC {{ machine.firmwareVersion }}
         </span>
+        <span
+          v-if="firmwareUpdateAvailable"
+          class="text-xs px-2 py-1 rounded-full font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 whitespace-nowrap"
+          title="A newer FluidNC release is available — see Machine Settings › General"
+        >Update available</span>
         <button
           @click="restartFirmware"
           class="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-md transition-colors"
@@ -334,6 +341,7 @@ import { useConfirm } from '~/composables/useConfirm'
 import { wsConnected } from '~/composables/useWsSend'
 import { useJobControl } from '~/composables/useJobControl'
 import { useCurrentUser } from '~/composables/useCurrentUser'
+import { isNewerVersion } from '../../../shared/version'
 
 const machine = useMachineStore()
 const sync = useSyncStore()
@@ -394,6 +402,11 @@ onMounted(() => { isMounted.value = true })
 const sensorOpen = ref(false)
 
 const fluidncCfg = computed(() => s.activeMachine?.fluidncConfig ?? null)
+
+const firmwareUpdateAvailable = computed(() => {
+  const latest = s.activeMachine?.firmwareUpdateCheck?.latestVersion
+  return !!latest && !!machine.firmwareVersion && isNewerVersion(latest, machine.firmwareVersion)
+})
 
 const isRealPin = (pin: string | undefined): boolean => !!pin && pin !== 'NO_PIN' && pin !== ''
 

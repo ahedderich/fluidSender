@@ -134,6 +134,9 @@ export default defineNuxtPlugin((nuxtApp) => {
         if (snap.probingState) {
           syncStore.applyOp({ path: 'probingState', set: snap.probingState as Record<string, unknown> })
         }
+        if (snap.appUpdateCheck) {
+          syncStore.applyOp({ path: 'appUpdateCheck', set: snap.appUpdateCheck as Record<string, unknown> })
+        }
         break
       }
       case 'patch': {

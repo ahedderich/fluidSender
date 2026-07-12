@@ -179,6 +179,10 @@ export const useMachineStore = defineStore('machine', () => {
     wsSend({ t: 'machine:firmware:reload', payload: {} })
   }
 
+  function checkFirmwareUpdate(machineId: string) {
+    wsSend({ t: 'machine:checkFirmwareUpdate', payload: { machineId } })
+  }
+
   return {
     connected,
     connecting,
@@ -221,5 +225,6 @@ export const useMachineStore = defineStore('machine', () => {
     sendOverride,
     setToolLibrary,
     reloadFirmwareConfig,
+    checkFirmwareUpdate,
   }
 })

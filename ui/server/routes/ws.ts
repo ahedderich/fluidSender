@@ -35,10 +35,13 @@ import {
   stripAuthUsers,
   getProbingState,
   persistLastMachineId,
+  getAppUpdateCheck,
+  setAppUpdateCheck,
   type ModalEntry,
   type Toast,
   type StockDef,
 } from '../utils/appState'
+import { getLatestGithubRelease, isSameCalendarDay } from '../utils/githubReleaseCheck'
 import type { SessionPayload } from '../utils/auth'
 import { verifySession, parseCookie } from '../utils/auth'
 import { macroRunner, buildTcContext, type Macro } from '../utils/macro/macroRunner'
@@ -159,6 +162,12 @@ async function _onFetchOk() {
       setActiveFirmwareVersion(version)
       const next = setConnection({ firmwareVersion: version })
       broadcastPatch([{ path: 'connection', set: { ...next } }])
+      const versionMachineId = getConnection().machineId
+      if (versionMachineId) {
+        _persistFirmwareVersionAndCheckUpdate(versionMachineId, version).catch((err) => {
+          console.error('[ws] _persistFirmwareVersionAndCheckUpdate error:', err)
+        })
+      }
     }
     _fetch.phase = 'startup-log'
     _fetch.lines = []
@@ -268,6 +277,30 @@ async function _finishConfigFetch(lines: string[]) {
     console.error('[ws] config fetch: YAML parse error:', err)
     broadcastPatch([pushToast({ id: `fw-cfg-err-${Date.now()}`, type: 'error', message: 'Failed to parse firmware YAML configuration', timeout: 5000 })])
   }
+}
+
+// Persists the freshly-read firmware version onto the machine profile (unconditionally,
+// every connect) and, at most once a day, checks bdring/FluidNC's latest release —
+// fire-and-forget from the $I handshake so a slow/unreachable GitHub never stalls connect.
+async function _persistFirmwareVersionAndCheckUpdate(machineId: string, version: string): Promise<void> {
+  const config = await getConfig()
+  const machines = (config.machines ?? []) as Array<Record<string, unknown>>
+  const machine = machines.find((m) => m.id === machineId)
+  if (!machine) return
+
+  machine.lastKnownFirmwareVersion = version
+
+  const existing = machine.firmwareUpdateCheck as { checkedAt: number | null } | undefined
+  if (!existing?.checkedAt || !isSameCalendarDay(existing.checkedAt, Date.now())) {
+    const result = await getLatestGithubRelease('bdring', 'FluidNC')
+    if ('version' in result) {
+      machine.firmwareUpdateCheck = { latestVersion: result.version, checkedAt: Date.now() }
+    }
+    // Auto check fails silently — no toast, no checkedAt update, so the next connect retries.
+  }
+
+  await setConfig(config)
+  broadcastPatch([{ path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }])
 }
 
 machineConnection.on('event', (ev) => {
@@ -461,6 +494,40 @@ export default defineWebSocketHandler({
         console.log('[ws] manual firmware config reload requested')
         _startConfigFetch(true)
         broadcastPatch([pushToast({ id: `fw-reload-${Date.now()}`, type: 'info', message: 'Loading firmware configuration…', timeout: 3000 })])
+        break
+      }
+
+      // ── Firmware update check (manual, bypasses the once-a-day gate) ───────
+      case 'machine:checkFirmwareUpdate': {
+        if (!requireRole(peer, 'operator')) break
+        const { machineId: fwMachineId } = msg.payload as { machineId: string }
+        const config = await getConfig()
+        const machines = (config.machines ?? []) as Array<Record<string, unknown>>
+        const fwMachine = machines.find((m) => m.id === fwMachineId)
+        if (!fwMachine) break
+        const result = await getLatestGithubRelease('bdring', 'FluidNC')
+        if ('error' in result) {
+          broadcastPatch([pushToast({ id: `fw-update-err-${Date.now()}`, type: 'error', message: `Couldn't check for FluidNC updates: ${result.error}`, timeout: 6000 })])
+          break
+        }
+        fwMachine.firmwareUpdateCheck = { latestVersion: result.version, checkedAt: Date.now() }
+        await setConfig(config)
+        broadcastPatch([{ path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }])
+        break
+      }
+
+      // ── FluidSender app update check (day-gated unless forced) ─────────────
+      case 'app:checkVersion': {
+        const { force } = (msg.payload as { force?: boolean } | undefined) ?? {}
+        const cached = getAppUpdateCheck()
+        if (!force && cached.checkedAt && isSameCalendarDay(cached.checkedAt, Date.now())) break
+        const result = await getLatestGithubRelease('ahedderich', 'fluidSender')
+        if ('error' in result) {
+          if (force) broadcastPatch([pushToast({ id: `app-update-err-${Date.now()}`, type: 'error', message: `Couldn't check for FluidSender updates: ${result.error}`, timeout: 6000 })])
+          break
+        }
+        const op = await setAppUpdateCheck({ latestVersion: result.version, checkedAt: Date.now() })
+        broadcastPatch([op])
         break
       }
 

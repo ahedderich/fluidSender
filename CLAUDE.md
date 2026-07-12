@@ -237,50 +237,9 @@ Note: Release Please's manifest mode tags releases `<component>-v<version>` by d
 
 ---
 
-## Development Phases
+## Project Status
 
-### Phase 1 — Initial Scaffolding `[x]`
-- Repository structure, `.gitignore`, `CLAUDE.md`
-- Nuxt 3 + Bun scaffold in `ui/` with Tailwind, Pinia, TypeScript, ESLint, Prettier, Vitest
-- Nuxt scaffold in `fluid-sim/sim-ui/` with same stack
-- Rust workspace init in `fluid-sim/sim/`
-- `ui/docker-compose.yaml` skeleton (volumes, ports, env vars documented)
-- GitHub Actions CI skeleton (lint + type-check only)
-- `config/` and `data/` volume structure defined with example files
-
-### Phase 2 — UI Design Mockups `[x]`
-- [x] Static Vue mockup of main `ui/` interface: 3D toolpath viewport, DRO, jog controls, job panel, file browser, probing wizards, tool management, spindle/coolant, macros, console, settings page
-- [x] Light/dark theme implemented and togglable in `ui/`
-- [x] Static Vue mockup of `fluid-sim/sim-ui/`: machine state viewer, dimension configurator, sensor triggers, stock definition, probe tip config, reset controls
-- [x] Light/dark theme in `sim-ui/`
-- No real serial/TCP logic yet; all data is mocked
-
-### Phase 3 — Rust Simulator Implementation `[x]`
-- Full GCode interpreter matching FluidNC command set
-- TCP server exposing FluidNC WebSocket/serial protocol
-- Simulated machine state machine: idle, run, hold, alarm, homing
-- Hard stops, door sensor, touch probe, failure mode simulation
-- Stock definition (rectangular / round, size, rotation)
-- Probe tip diameter config + half-tip offset calculation for edge detection
-- Near-realtime jog simulation
-- Unit tests for all GCode handling and state transitions
-- sim-ui wired to live simulator TCP connection (replaces mockups from Phase 2)
-
-### Phase 4 — Functional UI Development `[x]`
-- [x] Nuxt server routes: USB serial bridge (WebSerial via Bun serialport) + TCP/WiFi bridge
-- [x] Real-time WebSocket stream from server routes to browser
-- [x] FluidNC-specific features: firmware config read/write, soft-reset, unlock, homing, probing macros
-- [x] GCode file upload, queue management, job execution with progress tracking
-- [x] Replace all Phase 2 UI mockups with live-wired components
-- [x] Full Vitest unit test suite for components and composables
-- [x] Integration tests for serial/TCP bridge (using the Rust simulator as the target)
-
-### Phase 5 — Release Cycle & Versioning `[ ]`
-- SemVer versioning applied; initial release `v0.1.0`
-- `release.yaml` GitHub Actions workflow: build → Trivy scan → push to ghcr.io → GitHub Release
-- `ui/docker-compose.yaml` finalized with versioned image tags
-- Branch protection rules on `main` and `test`
-- CHANGELOG introduced
+FluidSender is past initial scaffolding and into active development: the UI, simulator, and functional wiring described in [Architecture](#architecture) are built and live-wired, and the SemVer/Release Please pipeline in [Commit & PR Title Convention](#commit--pr-title-convention) is publishing real tagged releases to `ghcr.io`. There's no phase gate to track anymore — work proceeds as an ongoing mix of bugfixes and new features, tracked via GitHub issues and PRs rather than a checklist.
 
 ---
 

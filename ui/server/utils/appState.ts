@@ -219,6 +219,30 @@ const peers = new Set<Peer>()
 let cachedConfig: AppConfig = structuredClone(DEFAULT_CONFIG)
 let configLoaded = false
 
+// ─── App update check (server-authoritative, persisted in app.yaml) ───────────
+// Tracks the latest known ahedderich/fluidSender release, checked at most once a
+// day (see server/utils/githubReleaseCheck.ts). One global value — unlike FluidNC
+// firmware, there's only one running FluidSender instance to compare against.
+
+export interface AppUpdateCheck {
+  latestVersion: string | null
+  checkedAt: number | null
+}
+
+let appUpdateCheck: AppUpdateCheck = { latestVersion: null, checkedAt: null }
+
+export function getAppUpdateCheck(): AppUpdateCheck {
+  return appUpdateCheck
+}
+
+export async function setAppUpdateCheck(patch: Partial<AppUpdateCheck>): Promise<PatchOp> {
+  Object.assign(appUpdateCheck, patch)
+  const config = await getConfig()
+  config.app = { ...(config.app ?? {}), appUpdateCheck }
+  await setConfig(config)
+  return { path: 'appUpdateCheck', set: { ...appUpdateCheck } }
+}
+
 // ─── Stock definition (server-authoritative, persisted in app.yaml) ───────────
 
 let stockDef: StockDef | null = null
@@ -567,6 +591,8 @@ export async function getConfig(): Promise<AppConfig> {
     }
   }
   stockDef = (cachedConfig.app?.stock as StockDef | null | undefined) ?? null
+  const savedAppUpdateCheck = cachedConfig.app?.appUpdateCheck as AppUpdateCheck | undefined
+  if (savedAppUpdateCheck) appUpdateCheck = savedAppUpdateCheck
   const savedResults = cachedConfig.app?.probingResults as { rotation?: ProbingRotationResult | null; heightmap?: HeightmapResult | null } | undefined
   if (savedResults) {
     if (savedResults.rotation !== undefined) ui.probingState.rotation = savedResults.rotation ?? null
@@ -633,5 +659,6 @@ export function getSnapshot() {
     toolLibrary: _getToolLibrary ? _getToolLibrary(machineId) : { machine: [], app: [] },
     macroRun: ui.macroRun,
     probingState: ui.probingState,
+    appUpdateCheck,
   }
 }

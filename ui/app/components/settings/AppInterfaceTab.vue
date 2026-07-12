@@ -46,16 +46,56 @@
 
   <SettingsCard title="About">
     <SettingsRow label="FluidSender">
-      <span class="text-sm text-gray-600 dark:text-slate-400 font-mono">v{{ appVersion }}</span>
+      <div class="flex items-center gap-2">
+        <span class="text-sm text-gray-600 dark:text-slate-400 font-mono">v{{ appVersion }}</span>
+        <span
+          v-if="updateAvailable"
+          class="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400"
+        >Update available</span>
+      </div>
     </SettingsRow>
+    <SettingsRow label="Latest Release">
+      <span class="text-sm text-gray-600 dark:text-slate-400 font-mono">
+        {{ sync.appUpdateCheck.latestVersion ? `v${sync.appUpdateCheck.latestVersion}` : '—' }}
+      </span>
+    </SettingsRow>
+    <SettingsRow label="Last Checked">
+      <span class="text-xs text-gray-500 dark:text-slate-400">{{ lastCheckedLabel }}</span>
+    </SettingsRow>
+    <div class="px-3 pb-3">
+      <button
+        type="button"
+        @click="s.checkAppVersion(true)"
+        class="px-4 py-1.5 rounded-lg text-sm font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 transition-colors"
+      >
+        Check Now
+      </button>
+    </div>
   </SettingsCard>
 </template>
 
 <script setup lang="ts">
 import { useSettingsStore } from '~/stores/settings'
 import { useUiStore } from '~/stores/ui'
+import { useSyncStore } from '~/stores/sync'
+import { isNewerVersion } from '../../../shared/version'
 
 const s = useSettingsStore()
 const ui = useUiStore()
+const sync = useSyncStore()
 const { public: { appVersion } } = useRuntimeConfig()
+
+const updateAvailable = computed(() => {
+  const latest = sync.appUpdateCheck.latestVersion
+  return !!latest && isNewerVersion(latest, appVersion as string)
+})
+
+const lastCheckedLabel = computed(() => {
+  const checkedAt = sync.appUpdateCheck.checkedAt
+  return checkedAt ? new Date(checkedAt).toLocaleString() : 'Never checked'
+})
+
+onMounted(() => {
+  s.checkAppVersion()
+})
 </script>

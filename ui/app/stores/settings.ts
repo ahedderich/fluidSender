@@ -88,6 +88,11 @@ export interface ParkPosition {
   z: number
 }
 
+export interface FirmwareUpdateCheck {
+  latestVersion: string | null
+  checkedAt: number | null
+}
+
 export interface MachineProfile {
   id: string
   name: string
@@ -105,6 +110,10 @@ export interface MachineProfile {
   parkPosition?: ParkPosition
   /** Webcam view config; undefined until configured in the Webcam settings tab */
   webcam?: WebcamConfig
+  /** Last version reported by $I on any connect — a display cache, never treated as live truth while disconnected */
+  lastKnownFirmwareVersion?: string | null
+  /** Latest bdring/FluidNC release known as of the last check for this machine */
+  firmwareUpdateCheck?: FirmwareUpdateCheck
 }
 
 // ─── App-level settings types ─────────────────────────────────────────────────
@@ -389,6 +398,10 @@ export const useSettingsStore = defineStore('settings', () => {
     wsSend({ t: 'macro:run', payload: { macroId, formValues } })
   }
 
+  function checkAppVersion(force = false) {
+    wsSend({ t: 'app:checkVersion', payload: { force } })
+  }
+
   return {
     initialized,
     saving,
@@ -410,6 +423,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateMachineMacro,
     removeMachineMacro,
     runMacro,
+    checkAppVersion,
     app,
   }
 })
