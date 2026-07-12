@@ -1,105 +1,242 @@
-use crate::machine::state::{MachineState, MachineStatus, AXIS_COUNT, MAX_PLANNER_SLOTS};
+use serde::Serialize;
 
-pub const GREETING: &str =
-    "Grbl 4.0.3 [FluidNC v4.0.3 (Simulator)] ready\r\n[MSG: Machine: Connected]\r\nok\r\n";
+use crate::machine::state::{
+    MachineState, MachineStatus, AXIS_COUNT, MAX_PLANNER_SLOTS, SIM_BOARD_NAME, SIM_MACHINE_NAME,
+};
 
-pub const BUILD_INFO_RESPONSE: &str =
-    "[VER:4.0.3 FluidNC sim-build (Simulator-SPIFFS) :]\r\n[OPT:MPH]\r\nok\r\n";
+/// `Grbl <ver> [FluidNC v<ver> (Simulator)] ready` — sent on connect and after a soft reset.
+pub fn greeting(firmware_version: &str) -> String {
+    format!(
+        "Grbl {ver} [FluidNC v{ver} (Simulator)] ready\r\n[MSG: Machine: Connected]\r\nok\r\n",
+        ver = firmware_version
+    )
+}
 
-pub const STARTUP_LOG: &str = concat!(
-    "[MSG:INFO: FluidNC v4.0.3 https://github.com/bdring/FluidNC\r\n",
-    "[MSG:INFO: Compiled with Simulator SDK\r\n",
-    "[MSG:INFO: Local filesystem type is spiffs\r\n",
-    "[MSG:INFO: Configuration file:config.yaml\r\n",
-    "[MSG:INFO: Machine CNC Router (Simulator)\r\n",
-    "[MSG:INFO: Board BlackBox X32\r\n",
-    "[MSG:INFO: Axis count 3\r\n",
-    "[MSG:INFO: Connected - IP is 127.0.0.1\r\n",
-    "ok\r\n",
-);
+/// `$I` response.
+pub fn build_info(firmware_version: &str) -> String {
+    format!(
+        "[VER:{ver} FluidNC sim-build (Simulator-SPIFFS) :]\r\n[OPT:MPH]\r\nok\r\n",
+        ver = firmware_version
+    )
+}
 
-pub const SIM_CONFIG_YAML: &str = concat!(
-    "name: CNC Router (Simulator)\r\n",
-    "board: BlackBox X32\r\n",
-    "stepping:\r\n",
-    "  engine: RMT\r\n",
-    "  idle_ms: 0\r\n",
-    "  pulse_us: 4\r\n",
-    "  dir_delay_us: 0\r\n",
-    "  disable_delay_us: 0\r\n",
-    "axes:\r\n",
-    "  x:\r\n",
-    "    steps_per_mm: 400\r\n",
-    "    max_rate_mm_per_min: 10000\r\n",
-    "    acceleration: 2000\r\n",
-    "    max_travel_mm: 500\r\n",
-    "    soft_limits: false\r\n",
-    "    homing:\r\n",
-    "      cycle: 1\r\n",
-    "      positive_direction: false\r\n",
-    "      mpos: 0\r\n",
-    "      feed_rate: 200\r\n",
-    "      seek_rate: 1000\r\n",
-    "      settle_ms: 500\r\n",
-    "    motor0:\r\n",
-    "      standard_stepper:\r\n",
-    "        step_pin: gpio.12\r\n",
-    "        direction_pin: gpio.14\r\n",
-    "        disable_pin: gpio.13\r\n",
-    "      limit_neg_pin: gpio.15\r\n",
-    "  y:\r\n",
-    "    steps_per_mm: 400\r\n",
-    "    max_rate_mm_per_min: 10000\r\n",
-    "    acceleration: 2000\r\n",
-    "    max_travel_mm: 500\r\n",
-    "    soft_limits: false\r\n",
-    "    homing:\r\n",
-    "      cycle: 1\r\n",
-    "      positive_direction: false\r\n",
-    "      mpos: 0\r\n",
-    "      feed_rate: 200\r\n",
-    "      seek_rate: 1000\r\n",
-    "      settle_ms: 500\r\n",
-    "    motor0:\r\n",
-    "      standard_stepper:\r\n",
-    "        step_pin: gpio.26\r\n",
-    "        direction_pin: gpio.27\r\n",
-    "        disable_pin: gpio.28\r\n",
-    "      limit_neg_pin: gpio.29\r\n",
-    "  z:\r\n",
-    "    steps_per_mm: 400\r\n",
-    "    max_rate_mm_per_min: 5000\r\n",
-    "    acceleration: 1000\r\n",
-    "    max_travel_mm: 100\r\n",
-    "    soft_limits: false\r\n",
-    "    homing:\r\n",
-    "      cycle: 2\r\n",
-    "      positive_direction: true\r\n",
-    "      mpos: 0\r\n",
-    "      feed_rate: 200\r\n",
-    "      seek_rate: 500\r\n",
-    "      settle_ms: 500\r\n",
-    "    motor0:\r\n",
-    "      standard_stepper:\r\n",
-    "        step_pin: gpio.30\r\n",
-    "        direction_pin: gpio.31\r\n",
-    "        disable_pin: gpio.32\r\n",
-    "      limit_neg_pin: gpio.33\r\n",
-    "spindle:\r\n",
-    "  type: PWM\r\n",
-    "  output_pin: gpio.2\r\n",
-    "  pwm_freq: 5000\r\n",
-    "  min_rpm: 0\r\n",
-    "  max_rpm: 24000\r\n",
-    "probe:\r\n",
-    "  pin: gpio.34\r\n",
-    "  hard_stop: true\r\n",
-    "  check_mode_start: false\r\n",
-    "coolant:\r\n",
-    "  flood_pin: gpio.4\r\n",
-    "  mist_pin: gpio.5\r\n",
-    "ok\r\n",
-);
+/// `$SS` startup-log response.
+pub fn startup_log(state: &MachineState) -> String {
+    format!(
+        concat!(
+            "[MSG:INFO: FluidNC v{ver} https://github.com/bdring/FluidNC\r\n",
+            "[MSG:INFO: Compiled with Simulator SDK\r\n",
+            "[MSG:INFO: Local filesystem type is spiffs\r\n",
+            "[MSG:INFO: Configuration file:config.yaml\r\n",
+            "[MSG:INFO: Machine {name}\r\n",
+            "[MSG:INFO: Board {board}\r\n",
+            "[MSG:INFO: Axis count {axis_count}\r\n",
+            "[MSG:INFO: Connected - IP is 127.0.0.1\r\n",
+            "ok\r\n",
+        ),
+        ver = state.firmware_version,
+        name = SIM_MACHINE_NAME,
+        board = SIM_BOARD_NAME,
+        axis_count = state.axis_count,
+    )
+}
+
+#[derive(Serialize)]
+struct HomingCfg {
+    cycle: u8,
+    positive_direction: bool,
+    mpos: f64,
+    feed_rate: u32,
+    seek_rate: u32,
+    settle_ms: u32,
+}
+
+#[derive(Serialize)]
+struct StandardStepper {
+    step_pin: &'static str,
+    direction_pin: &'static str,
+    disable_pin: &'static str,
+}
+
+#[derive(Serialize)]
+struct Motor0 {
+    standard_stepper: StandardStepper,
+    limit_neg_pin: &'static str,
+}
+
+#[derive(Serialize)]
+struct AxisCfg {
+    steps_per_mm: f64,
+    max_rate_mm_per_min: f64,
+    acceleration: f64,
+    max_travel_mm: f64,
+    soft_limits: bool,
+    homing: HomingCfg,
+    motor0: Motor0,
+}
+
+#[derive(Serialize)]
+struct AxesCfg {
+    x: AxisCfg,
+    y: AxisCfg,
+    z: AxisCfg,
+}
+
+#[derive(Serialize)]
+struct SteppingCfg {
+    engine: &'static str,
+    idle_ms: u32,
+    pulse_us: u32,
+    dir_delay_us: u32,
+    disable_delay_us: u32,
+}
+
+#[derive(Serialize)]
+struct SpindleCfg {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    output_pin: &'static str,
+    pwm_freq: u32,
+    min_rpm: u32,
+    max_rpm: u32,
+}
+
+#[derive(Serialize)]
+struct ProbeCfg {
+    pin: &'static str,
+    hard_stop: bool,
+    check_mode_start: bool,
+}
+
+#[derive(Serialize)]
+struct CoolantCfg {
+    flood_pin: &'static str,
+    mist_pin: &'static str,
+}
+
+#[derive(Serialize)]
+struct SimConfigYaml {
+    name: &'static str,
+    board: &'static str,
+    stepping: SteppingCfg,
+    axes: AxesCfg,
+    spindle: SpindleCfg,
+    probe: ProbeCfg,
+    coolant: CoolantCfg,
+}
+
+/// Cosmetic per-axis wiring (pins, homing timing) — not modeled by the sim's motion
+/// logic, so these stay fixed regardless of live config. Only `steps_per_mm`,
+/// `max_rate_mm_per_min`, `acceleration`, and `max_travel_mm` are pulled from live
+/// state below, since those are the fields a tester can actually change at runtime.
+fn axis_cfg(state: &MachineState, i: usize, homing: HomingCfg, motor0: Motor0) -> AxisCfg {
+    AxisCfg {
+        steps_per_mm: state.steps_per_mm[i],
+        max_rate_mm_per_min: state.max_rate[i],
+        acceleration: state.acceleration[i],
+        max_travel_mm: state.travel[i],
+        soft_limits: false,
+        homing,
+        motor0,
+    }
+}
+
+/// `$LocalFS/Show=config.yaml` response: a config.yaml reflecting the sim's current
+/// live configuration (travel/max_rate/acceleration/steps_per_mm), not a fixed mockup.
+pub fn config_yaml(state: &MachineState) -> String {
+    let cfg = SimConfigYaml {
+        name: SIM_MACHINE_NAME,
+        board: SIM_BOARD_NAME,
+        stepping: SteppingCfg {
+            engine: "RMT",
+            idle_ms: 0,
+            pulse_us: 4,
+            dir_delay_us: 0,
+            disable_delay_us: 0,
+        },
+        axes: AxesCfg {
+            x: axis_cfg(
+                state,
+                0,
+                HomingCfg {
+                    cycle: 1,
+                    positive_direction: false,
+                    mpos: 0.0,
+                    feed_rate: 200,
+                    seek_rate: 1000,
+                    settle_ms: 500,
+                },
+                Motor0 {
+                    standard_stepper: StandardStepper {
+                        step_pin: "gpio.12",
+                        direction_pin: "gpio.14",
+                        disable_pin: "gpio.13",
+                    },
+                    limit_neg_pin: "gpio.15",
+                },
+            ),
+            y: axis_cfg(
+                state,
+                1,
+                HomingCfg {
+                    cycle: 1,
+                    positive_direction: false,
+                    mpos: 0.0,
+                    feed_rate: 200,
+                    seek_rate: 1000,
+                    settle_ms: 500,
+                },
+                Motor0 {
+                    standard_stepper: StandardStepper {
+                        step_pin: "gpio.26",
+                        direction_pin: "gpio.27",
+                        disable_pin: "gpio.28",
+                    },
+                    limit_neg_pin: "gpio.29",
+                },
+            ),
+            z: axis_cfg(
+                state,
+                2,
+                HomingCfg {
+                    cycle: 2,
+                    positive_direction: true,
+                    mpos: 0.0,
+                    feed_rate: 200,
+                    seek_rate: 500,
+                    settle_ms: 500,
+                },
+                Motor0 {
+                    standard_stepper: StandardStepper {
+                        step_pin: "gpio.30",
+                        direction_pin: "gpio.31",
+                        disable_pin: "gpio.32",
+                    },
+                    limit_neg_pin: "gpio.33",
+                },
+            ),
+        },
+        spindle: SpindleCfg {
+            kind: "PWM",
+            output_pin: "gpio.2",
+            pwm_freq: 5000,
+            min_rpm: 0,
+            max_rpm: 24000,
+        },
+        probe: ProbeCfg {
+            pin: "gpio.34",
+            hard_stop: true,
+            check_mode_start: false,
+        },
+        coolant: CoolantCfg {
+            flood_pin: "gpio.4",
+            mist_pin: "gpio.5",
+        },
+    };
+
+    let yaml = serde_yaml::to_string(&cfg).unwrap_or_default();
+    format!("{}{}", yaml.replace('\n', "\r\n"), ok())
+}
 
 pub fn ok() -> String {
     "ok\r\n".to_string()
@@ -343,5 +480,41 @@ mod tests {
         state.tool_length_offset[2] = -3.75;
         let out = gcode_params(&state);
         assert!(out.contains("[TLO:-3.750]"), "out: {}", out);
+    }
+
+    #[test]
+    fn greeting_reports_custom_version() {
+        let g = greeting("9.9.9");
+        assert!(g.contains("Grbl 9.9.9"), "greeting: {}", g);
+        assert!(g.contains("[FluidNC v9.9.9"), "greeting: {}", g);
+    }
+
+    #[test]
+    fn build_info_reports_custom_version() {
+        let b = build_info("9.9.9");
+        assert!(b.starts_with("[VER:9.9.9"), "build_info: {}", b);
+    }
+
+    #[test]
+    fn startup_log_reports_state_version_and_axis_count() {
+        let mut state = test_state();
+        state.firmware_version = "9.9.9".to_string();
+        let log = startup_log(&state);
+        assert!(log.contains("FluidNC v9.9.9"), "startup_log: {}", log);
+        assert!(log.contains("Axis count 3"), "startup_log: {}", log);
+    }
+
+    #[test]
+    fn config_yaml_reflects_live_travel_and_max_rate() {
+        let mut state = test_state();
+        state.travel[0] = 456.0;
+        state.max_rate[0] = 7777.0;
+        let yaml = config_yaml(&state);
+        assert!(yaml.contains("max_travel_mm: 456.0"), "yaml: {}", yaml);
+        assert!(
+            yaml.contains("max_rate_mm_per_min: 7777.0"),
+            "yaml: {}",
+            yaml
+        );
     }
 }

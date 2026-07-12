@@ -3,10 +3,12 @@ import type { Macro, MacroTrigger, MacroVariable } from '~/types/macro'
 import { wsSend } from '~/composables/useWsSend'
 import type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig } from '~/../../shared/toolchange'
 import type { WebcamConfig } from '~/types/webcam'
+import type { FluidNCBootInfo } from '~~/server/utils/machine/bootInfoParser'
 
 export type { Macro, MacroTrigger, MacroVariable }
 export type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig }
 export type { WebcamConfig }
+export type { FluidNCBootInfo }
 
 export type ConnectionType = 'usb' | 'tcp'
 export type MachineType = 'router' | 'laser' | 'plasma'
@@ -88,6 +90,11 @@ export interface ParkPosition {
   z: number
 }
 
+export interface FirmwareUpdateCheck {
+  latestVersion: string | null
+  checkedAt: number | null
+}
+
 export interface MachineProfile {
   id: string
   name: string
@@ -105,6 +112,13 @@ export interface MachineProfile {
   parkPosition?: ParkPosition
   /** Webcam view config; undefined until configured in the Webcam settings tab */
   webcam?: WebcamConfig
+  /** Last version reported by $I on any connect — a display cache, never treated as live truth while disconnected */
+  lastKnownFirmwareVersion?: string | null
+  /** Latest bdring/FluidNC release known as of the last check for this machine */
+  firmwareUpdateCheck?: FirmwareUpdateCheck
+  /** Config-validity/network/HTTP status parsed from $SS on the last connect — a display
+   *  cache ("latest boot information"), never treated as live truth while disconnected. */
+  bootInfo?: FluidNCBootInfo | null
 }
 
 // ─── App-level settings types ─────────────────────────────────────────────────
@@ -389,6 +403,10 @@ export const useSettingsStore = defineStore('settings', () => {
     wsSend({ t: 'macro:run', payload: { macroId, formValues } })
   }
 
+  function checkAppVersion(force = false) {
+    wsSend({ t: 'app:checkVersion', payload: { force } })
+  }
+
   return {
     initialized,
     saving,
@@ -410,6 +428,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateMachineMacro,
     removeMachineMacro,
     runMacro,
+    checkAppVersion,
     app,
   }
 })

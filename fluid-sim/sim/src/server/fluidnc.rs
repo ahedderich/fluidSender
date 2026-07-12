@@ -13,9 +13,7 @@ use crate::machine::state::{
 use crate::protocol::parser::{parse_line, ParsedLine};
 use crate::protocol::realtime::classify;
 use crate::protocol::realtime::RealtimeCmd;
-use crate::protocol::response::{
-    self, BUILD_INFO_RESPONSE, GREETING, SIM_CONFIG_YAML, STARTUP_LOG,
-};
+use crate::protocol::response;
 
 /// Distinguishes what to do when an async operation's receiver fires.
 enum PendingKind {
@@ -173,8 +171,9 @@ async fn handle_connection(
     let (alarm_tx, mut alarm_rx) = mpsc::channel::<String>(32);
 
     // Send greeting
-    writer.write_all(GREETING.as_bytes()).await?;
-    log_console(&console, "tx", &peer, GREETING);
+    let greeting = response::greeting(&shared.read().await.firmware_version);
+    writer.write_all(greeting.as_bytes()).await?;
+    log_console(&console, "tx", &peer, &greeting);
 
     // Command lines received while a B2 command (probe/dwell/homing/M0) is awaiting its
     // result. Real FluidNC keeps reading its input channel and executes these afterwards;
@@ -451,7 +450,7 @@ async fn handle_realtime(
             state.soft_reset();
             let _ = broadcast.send(());
             // Send greeting after reset
-            Some(GREETING.to_string())
+            Some(response::greeting(&state.firmware_version))
         }
         RealtimeCmd::JogCancel => {
             let mut state = shared.write().await;
@@ -582,7 +581,7 @@ async fn dispatch(
             let mut state = shared.write().await;
             state.soft_reset();
             let _ = broadcast.send(());
-            (GREETING.to_string(), None)
+            (response::greeting(&state.firmware_version), None)
         }
         ParsedLine::GCodeQuery => {
             let state = shared.read().await;
@@ -604,16 +603,26 @@ async fn dispatch(
                 (response::error(8), None)
             }
         }
-        ParsedLine::BuildInfo => (BUILD_INFO_RESPONSE.to_string(), None),
-        ParsedLine::StartupShow => (STARTUP_LOG.to_string(), None),
-        ParsedLine::LocalFsShow(_path) => (SIM_CONFIG_YAML.to_string(), None),
+        ParsedLine::BuildInfo => {
+            let state = shared.read().await;
+            (response::build_info(&state.firmware_version), None)
+        }
+        ParsedLine::StartupShow => {
+            let state = shared.read().await;
+            (response::startup_log(&state), None)
+        }
+        ParsedLine::LocalFsShow(_path) => {
+            let state = shared.read().await;
+            (response::config_yaml(&state), None)
+        }
         ParsedLine::DumpSettings => {
             let state = shared.read().await;
+            let config = state.effective_fluid_config();
             let mut out = String::new();
-            let mut keys: Vec<_> = state.fluid_config.keys().collect();
+            let mut keys: Vec<_> = config.keys().collect();
             keys.sort();
             for k in keys {
-                let v = &state.fluid_config[k];
+                let v = &config[k];
                 out.push_str(&response::settings_line(k, v));
             }
             out.push_str(&response::ok());
@@ -621,7 +630,8 @@ async fn dispatch(
         }
         ParsedLine::ConfigRead(key) => {
             let state = shared.read().await;
-            if let Some(val) = state.fluid_config.get(&key) {
+            let config = state.effective_fluid_config();
+            if let Some(val) = config.get(&key) {
                 (
                     format!("{}{}", response::config_value(&key, val), response::ok()),
                     None,

@@ -35,10 +35,13 @@ import {
   stripAuthUsers,
   getProbingState,
   persistLastMachineId,
+  getAppUpdateCheck,
+  setAppUpdateCheck,
   type ModalEntry,
   type Toast,
   type StockDef,
 } from '../utils/appState'
+import { getLatestGithubRelease, isSameCalendarDay } from '../utils/githubReleaseCheck'
 import type { SessionPayload } from '../utils/auth'
 import { verifySession, parseCookie } from '../utils/auth'
 import { macroRunner, buildTcContext, type Macro } from '../utils/macro/macroRunner'
@@ -52,6 +55,7 @@ import {
   initPoller,
 } from '../utils/machine/poller'
 import { parseGreetingVersion } from '../utils/machine/statusParser'
+import { parseBootInfo } from '../utils/machine/bootInfoParser'
 import { getToolLengthOffset, setToolLengthOffset, resetToolLengthSession } from '../utils/machine/toolLengthState'
 import { setActiveFirmwareVersion } from '../utils/gcode/classifier'
 import { initMachineMode } from '../utils/machine/machineMode'
@@ -159,6 +163,12 @@ async function _onFetchOk() {
       setActiveFirmwareVersion(version)
       const next = setConnection({ firmwareVersion: version })
       broadcastPatch([{ path: 'connection', set: { ...next } }])
+      const versionMachineId = getConnection().machineId
+      if (versionMachineId) {
+        _persistFirmwareVersionAndCheckUpdate(versionMachineId, version).catch((err) => {
+          console.error('[ws] _persistFirmwareVersionAndCheckUpdate error:', err)
+        })
+      }
     }
     _fetch.phase = 'startup-log'
     _fetch.lines = []
@@ -167,15 +177,19 @@ async function _onFetchOk() {
   }
 
   if (phase === 'startup-log') {
-    const cfgLine = lines.find((l) => /Configuration file:/i.test(l))
-    if (!cfgLine) {
+    // Sentinel for "this is really $SS's reply" — unlike "Configuration file:", this
+    // banner line is present even on the panic-fallback-to-defaults path, where no
+    // config file is read at all.
+    const sentinelLine = lines.find((l) => /FluidNC v[\d.]+ https:\/\/github\.com\/bdring\/FluidNC/i.test(l))
+    if (!sentinelLine) {
       // Spurious ok before $SS has responded — discard and keep waiting
       _fetch.lines = []
       onOk()
       if (!isJobActive()) broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
       return
     }
-    const cfgMatch = cfgLine.match(/Configuration file:\s*([^\]\s]+)/)
+    const cfgLine = lines.find((l) => /Configuration file:/i.test(l))
+    const cfgMatch = cfgLine?.match(/Configuration file:\s*([^\]\s]+)/)
     const filename = cfgMatch?.[1]?.trim() ?? 'config.yaml'
 
     const ipLine = lines.find((l) => /Connected - IP is/i.test(l))
@@ -186,13 +200,28 @@ async function _onFetchOk() {
     _fetch.machineIp = machineIp ?? undefined
 
     const simulatorMode = lines.some((l) => /Simulator SDK/i.test(l))
-    const connWithSim = setConnection({ simulatorMode })
+    const bootInfo = parseBootInfo(lines)
+    const connWithSim = setConnection({ simulatorMode, configValid: bootInfo.configValid })
     broadcastPatch([{ path: 'connection', set: { ...connWithSim } }])
 
-    const errLine = lines.find((l) => l.includes('MSG:ERR') && /config/i.test(l))
-    if (errLine) {
-      console.warn('[ws] config fetch: startup log indicates config load error:', errLine)
-      broadcastPatch([pushToast({ id: `fw-cfg-warn-${Date.now()}`, type: 'warning', message: `Config load warning: ${errLine.replace(/\[MSG:ERR:\s*/i, '')}`, timeout: 7000 })])
+    if (!bootInfo.configValid) {
+      console.warn('[ws] config fetch: startup log indicates config load error:', bootInfo.configError)
+      broadcastPatch([pushToast({ id: `fw-cfg-warn-${Date.now()}`, type: 'warning', message: `Config load warning: ${bootInfo.configError}`, timeout: 7000 })])
+    }
+
+    // Persisted independently of the config-file fetch below, which only succeeds
+    // when the YAML actually parses — boot info (esp. the invalid-config case) must
+    // still be recorded even when that fetch fails or the file was never read.
+    const bootMachineId = getConnection().machineId
+    if (bootMachineId) {
+      const bootConfig = await getConfig()
+      const bootMachines = (bootConfig.machines ?? []) as Array<Record<string, unknown>>
+      const bootMachine = bootMachines.find((m) => m.id === bootMachineId)
+      if (bootMachine) {
+        bootMachine.bootInfo = bootInfo
+        await setConfig(bootConfig)
+        broadcastPatch([{ path: 'config', set: stripAuthUsers(bootConfig) as unknown as Record<string, unknown> }])
+      }
     }
 
     _fetch.phase = 'config-file'
@@ -270,6 +299,30 @@ async function _finishConfigFetch(lines: string[]) {
   }
 }
 
+// Persists the freshly-read firmware version onto the machine profile (unconditionally,
+// every connect) and, at most once a day, checks bdring/FluidNC's latest release —
+// fire-and-forget from the $I handshake so a slow/unreachable GitHub never stalls connect.
+async function _persistFirmwareVersionAndCheckUpdate(machineId: string, version: string): Promise<void> {
+  const config = await getConfig()
+  const machines = (config.machines ?? []) as Array<Record<string, unknown>>
+  const machine = machines.find((m) => m.id === machineId)
+  if (!machine) return
+
+  machine.lastKnownFirmwareVersion = version
+
+  const existing = machine.firmwareUpdateCheck as { checkedAt: number | null } | undefined
+  if (!existing?.checkedAt || !isSameCalendarDay(existing.checkedAt, Date.now())) {
+    const result = await getLatestGithubRelease('bdring', 'FluidNC')
+    if ('version' in result) {
+      machine.firmwareUpdateCheck = { latestVersion: result.version, checkedAt: Date.now() }
+    }
+    // Auto check fails silently — no toast, no checkedAt update, so the next connect retries.
+  }
+
+  await setConfig(config)
+  broadcastPatch([{ path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }])
+}
+
 machineConnection.on('event', (ev) => {
   switch (ev.type) {
     case 'connected': {
@@ -305,7 +358,7 @@ machineConnection.on('event', (ev) => {
       // jobRunner must update status before sender fires its terminal event
       jobRunner.onMachineDisconnected()
       senderDisconnected()
-      const next = setConnection({ machineId: null, connected: false, status: 'DISCONNECTED', firmwareVersion: '', simulatorMode: false, toolLengthOffset: null })
+      const next = setConnection({ machineId: null, connected: false, status: 'DISCONNECTED', firmwareVersion: '', simulatorMode: false, configValid: null, toolLengthOffset: null })
       broadcastPatch([
         { path: 'connection', set: { ...next } },
         clearLoadedToolDisplay(),
@@ -461,6 +514,40 @@ export default defineWebSocketHandler({
         console.log('[ws] manual firmware config reload requested')
         _startConfigFetch(true)
         broadcastPatch([pushToast({ id: `fw-reload-${Date.now()}`, type: 'info', message: 'Loading firmware configuration…', timeout: 3000 })])
+        break
+      }
+
+      // ── Firmware update check (manual, bypasses the once-a-day gate) ───────
+      case 'machine:checkFirmwareUpdate': {
+        if (!requireRole(peer, 'operator')) break
+        const { machineId: fwMachineId } = msg.payload as { machineId: string }
+        const config = await getConfig()
+        const machines = (config.machines ?? []) as Array<Record<string, unknown>>
+        const fwMachine = machines.find((m) => m.id === fwMachineId)
+        if (!fwMachine) break
+        const result = await getLatestGithubRelease('bdring', 'FluidNC')
+        if ('error' in result) {
+          broadcastPatch([pushToast({ id: `fw-update-err-${Date.now()}`, type: 'error', message: `Couldn't check for FluidNC updates: ${result.error}`, timeout: 6000 })])
+          break
+        }
+        fwMachine.firmwareUpdateCheck = { latestVersion: result.version, checkedAt: Date.now() }
+        await setConfig(config)
+        broadcastPatch([{ path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }])
+        break
+      }
+
+      // ── FluidSender app update check (day-gated unless forced) ─────────────
+      case 'app:checkVersion': {
+        const { force } = (msg.payload as { force?: boolean } | undefined) ?? {}
+        const cached = getAppUpdateCheck()
+        if (!force && cached.checkedAt && isSameCalendarDay(cached.checkedAt, Date.now())) break
+        const result = await getLatestGithubRelease('ahedderich', 'fluidSender')
+        if ('error' in result) {
+          if (force) broadcastPatch([pushToast({ id: `app-update-err-${Date.now()}`, type: 'error', message: `Couldn't check for FluidSender updates: ${result.error}`, timeout: 6000 })])
+          break
+        }
+        const op = await setAppUpdateCheck({ latestVersion: result.version, checkedAt: Date.now() })
+        broadcastPatch([op])
         break
       }
 
