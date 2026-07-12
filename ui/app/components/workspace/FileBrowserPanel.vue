@@ -221,14 +221,13 @@
               <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   v-if="file.isNc"
+                  type="button"
                   :disabled="isViewer"
-                  class="p-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                  class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 font-medium hover:bg-green-100 dark:hover:bg-green-900/30 hover:text-green-700 dark:hover:text-green-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                   title="Load job"
                   @click="loadFile(file.path)"
                 >
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z" />
-                  </svg>
+                  Load
                 </button>
                 <a
                   class="p-1 text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors rounded cursor-pointer"
