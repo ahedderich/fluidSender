@@ -68,6 +68,8 @@ export interface ConnectionState {
   status: string
   firmwareVersion: string
   simulatorMode: boolean
+  /** Null = unknown/not yet resolved this session (set once `$SS` parses on connect). */
+  configValid: boolean | null
   /** Null = unknown/unverified this session — never a bare 0 (see toolLengthState.ts). */
   toolLengthOffset: number | null
 }
@@ -339,6 +341,7 @@ const connection: ConnectionState = {
   status: 'DISCONNECTED',
   firmwareVersion: '',
   simulatorMode: false,
+  configValid: null,
   toolLengthOffset: null,
 }
 

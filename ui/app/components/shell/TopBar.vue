@@ -59,6 +59,12 @@
       >Simulator mode</span>
 
       <span
+        v-if="machine.configValid === false"
+        class="text-xs text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-600/50 px-2 py-1 rounded whitespace-nowrap font-medium"
+        title="FluidNC could not load config.yaml — see Machine Settings › General"
+      >Invalid FluidNC YAML config</span>
+
+      <span
         v-if="!wsConnected"
         class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 px-2 py-1 rounded whitespace-nowrap"
         title="Lost connection to server — reconnecting…"
@@ -341,7 +347,7 @@ import { useConfirm } from '~/composables/useConfirm'
 import { wsConnected } from '~/composables/useWsSend'
 import { useJobControl } from '~/composables/useJobControl'
 import { useCurrentUser } from '~/composables/useCurrentUser'
-import { isNewerVersion } from '../../../shared/version'
+import { isNewerVersion } from '~~/shared/version'
 
 const machine = useMachineStore()
 const sync = useSyncStore()

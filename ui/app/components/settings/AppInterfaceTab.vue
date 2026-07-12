@@ -78,7 +78,7 @@
 import { useSettingsStore } from '~/stores/settings'
 import { useUiStore } from '~/stores/ui'
 import { useSyncStore } from '~/stores/sync'
-import { isNewerVersion } from '../../../shared/version'
+import { isNewerVersion } from '~~/shared/version'
 
 const s = useSettingsStore()
 const ui = useUiStore()

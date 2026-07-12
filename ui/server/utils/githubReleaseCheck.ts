@@ -1,4 +1,4 @@
-import { normalizeVersionTag } from '../../shared/version'
+import { normalizeVersionTag } from '~~/shared/version'
 
 export type LatestReleaseResult = { version: string } | { error: string }
 

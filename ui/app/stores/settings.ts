@@ -3,10 +3,12 @@ import type { Macro, MacroTrigger, MacroVariable } from '~/types/macro'
 import { wsSend } from '~/composables/useWsSend'
 import type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig } from '~/../../shared/toolchange'
 import type { WebcamConfig } from '~/types/webcam'
+import type { FluidNCBootInfo } from '~~/server/utils/machine/bootInfoParser'
 
 export type { Macro, MacroTrigger, MacroVariable }
 export type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig }
 export type { WebcamConfig }
+export type { FluidNCBootInfo }
 
 export type ConnectionType = 'usb' | 'tcp'
 export type MachineType = 'router' | 'laser' | 'plasma'
@@ -114,6 +116,9 @@ export interface MachineProfile {
   lastKnownFirmwareVersion?: string | null
   /** Latest bdring/FluidNC release known as of the last check for this machine */
   firmwareUpdateCheck?: FirmwareUpdateCheck
+  /** Config-validity/network/HTTP status parsed from $SS on the last connect — a display
+   *  cache ("latest boot information"), never treated as live truth while disconnected. */
+  bootInfo?: FluidNCBootInfo | null
 }
 
 // ─── App-level settings types ─────────────────────────────────────────────────

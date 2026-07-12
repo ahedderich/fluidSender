@@ -116,12 +116,51 @@
     </div>
   </SettingsCard>
 
+  <SettingsCard title="Network">
+    <p class="px-3 pt-2 pb-1 text-[11px] text-gray-400 dark:text-slate-500 italic">
+      Latest boot information — reflects the last successful connect, not necessarily the current state.
+    </p>
+    <SettingsRow label="Config Status">
+      <span v-if="!machine.bootInfo" class="text-sm text-gray-400 dark:text-slate-500">Unknown — connect at least once</span>
+      <span v-else-if="machine.bootInfo.configValid" class="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400">Valid</span>
+      <span
+        v-else
+        class="text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 max-w-56 truncate"
+        :title="machine.bootInfo.configError ?? undefined"
+      >Invalid — {{ machine.bootInfo.configError ?? 'see boot log' }}</span>
+    </SettingsRow>
+    <SettingsRow label="Network Mode">
+      <span class="text-sm font-mono text-gray-600 dark:text-slate-400">{{ networkModeLabel }}</span>
+    </SettingsRow>
+    <SettingsRow label="SSID">
+      <span class="text-sm font-mono text-gray-600 dark:text-slate-400">{{ machine.bootInfo?.ssid ?? '—' }}</span>
+    </SettingsRow>
+    <SettingsRow label="IP Address">
+      <span class="text-sm font-mono text-gray-600 dark:text-slate-400">{{ machine.bootInfo?.ip ?? '—' }}</span>
+    </SettingsRow>
+    <SettingsRow label="HTTP Server">
+      <span class="text-sm font-mono text-gray-600 dark:text-slate-400">
+        {{ machine.bootInfo?.httpPort ? `Running on port ${machine.bootInfo.httpPort}` : '—' }}
+      </span>
+    </SettingsRow>
+    <div v-if="webUiUrl" class="px-3 pb-3">
+      <a
+        :href="webUiUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="inline-block px-4 py-1.5 rounded-lg text-sm font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 transition-colors"
+      >
+        Open FluidNC WebUI ↗
+      </a>
+    </div>
+  </SettingsCard>
+
 </template>
 
 <script setup lang="ts">
 import type { MachineProfile } from '~/stores/settings'
 import { useMachineStore } from '~/stores/machine'
-import { isNewerVersion } from '../../../shared/version'
+import { isNewerVersion } from '~~/shared/version'
 
 const machine = defineModel<MachineProfile>('machine', { required: true })
 const machineStore = useMachineStore()
@@ -135,6 +174,19 @@ const updateAvailable = computed(() => {
 const lastCheckedLabel = computed(() => {
   const checkedAt = machine.value.firmwareUpdateCheck?.checkedAt
   return checkedAt ? new Date(checkedAt).toLocaleString() : 'Never checked'
+})
+
+const networkModeLabel = computed(() => {
+  const mode = machine.value.bootInfo?.networkMode
+  if (mode === 'sta') return 'WiFi (Station)'
+  if (mode === 'ap') return 'WiFi (Access Point)'
+  return '—'
+})
+
+const webUiUrl = computed(() => {
+  const info = machine.value.bootInfo
+  if (!info?.ip || !info?.httpPort) return null
+  return `http://${info.ip}:${info.httpPort}/`
 })
 
 interface SerialPortInfo {
