@@ -109,7 +109,7 @@
 
     <!-- Table -->
     <div class="flex-1 overflow-auto min-h-0">
-      <table v-if="!pending && (visibleFolders.length || visibleFiles.length)" class="w-full text-xs min-w-[520px]">
+      <table v-if="!pending && (visibleFolders.length || visibleFiles.length)" class="w-full text-xs min-w-[580px]">
         <thead class="sticky top-0 z-10">
           <tr class="bg-gray-50 dark:bg-slate-900 border-b border-gray-200 dark:border-slate-700">
             <th class="text-left px-3 py-2 font-medium text-gray-500 dark:text-slate-400 cursor-pointer select-none" @click="setSort('name')">
@@ -123,6 +123,9 @@
             </th>
             <th class="text-right px-2 py-2 font-medium text-gray-500 dark:text-slate-400 cursor-pointer select-none whitespace-nowrap" @click="setSort('lastRun')">
               Last Run <span v-if="sortCol === 'lastRun'" class="ml-0.5 opacity-60">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+            </th>
+            <th class="text-right px-2 py-2 font-medium text-gray-500 dark:text-slate-400 cursor-pointer select-none whitespace-nowrap" title="Duration of the last run" @click="setSort('runtime')">
+              Runtime <span v-if="sortCol === 'runtime'" class="ml-0.5 opacity-60">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
             </th>
             <th class="text-right px-2 py-2 font-medium text-gray-500 dark:text-slate-400 cursor-pointer select-none" title="Successful runs" @click="setSort('success')">
               ✓ <span v-if="sortCol === 'success'" class="ml-0.5 opacity-60">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
@@ -150,6 +153,7 @@
                 <span class="text-gray-400 dark:text-slate-500 text-[10px] shrink-0">({{ folder.childCount }})</span>
               </div>
             </td>
+            <td class="px-2 py-2 text-right text-gray-400 dark:text-slate-500">—</td>
             <td class="px-2 py-2 text-right text-gray-400 dark:text-slate-500">—</td>
             <td class="px-2 py-2 text-right text-gray-400 dark:text-slate-500">—</td>
             <td class="px-2 py-2 text-right text-gray-400 dark:text-slate-500">—</td>
@@ -206,6 +210,11 @@
                   <span>{{ file.lastExecution.status === 'success' ? '✓' : '✗' }}</span>
                 </span>
               </template>
+              <span v-else-if="file.isNc" class="text-gray-400 dark:text-slate-500">—</span>
+              <span v-else class="text-gray-300 dark:text-slate-600">—</span>
+            </td>
+            <td class="px-2 py-2 text-right text-gray-500 dark:text-slate-400 whitespace-nowrap">
+              <span v-if="file.isNc && file.lastExecution" :title="lastRunTitle(file.lastExecution)">{{ formatDuration(runtimeMs(file.lastExecution)) }}</span>
               <span v-else-if="file.isNc" class="text-gray-400 dark:text-slate-500">—</span>
               <span v-else class="text-gray-300 dark:text-slate-600">—</span>
             </td>
@@ -277,6 +286,7 @@ import { useConfirm } from '~/composables/useConfirm'
 interface ExecutionRecord {
   startedAt: number
   completedAt: number
+  activeDurationMs?: number
   status: 'success' | 'error' | 'aborted'
   machineId: string
   machineName?: string
@@ -302,7 +312,7 @@ interface FileEntry {
   totalFailed: number
 }
 
-type SortCol = 'name' | 'size' | 'uploadedAt' | 'lastRun' | 'success' | 'failed'
+type SortCol = 'name' | 'size' | 'uploadedAt' | 'lastRun' | 'runtime' | 'success' | 'failed'
 
 // ----- state -----
 
@@ -354,6 +364,7 @@ function sortValue(f: FileEntry): string | number {
     case 'size': return f.size
     case 'uploadedAt': return f.uploadedAt
     case 'lastRun': return f.lastExecution?.completedAt ?? 0
+    case 'runtime': return f.lastExecution ? runtimeMs(f.lastExecution) : 0
     case 'success': return f.totalSuccessful
     case 'failed': return f.totalFailed
   }
@@ -459,6 +470,20 @@ useDialogShortcuts(() => isAnalyzing.value, { onCancel: () => abortAnalysis() })
 
 // ----- formatting -----
 
+function runtimeMs(exec: ExecutionRecord): number {
+  return exec.activeDurationMs ?? Math.max(0, exec.completedAt - exec.startedAt)
+}
+
+function formatDuration(ms: number): string {
+  const totalSec = Math.round(ms / 1000)
+  if (totalSec < 60) return `${totalSec}s`
+  const totalMin = Math.floor(totalSec / 60)
+  if (totalMin < 60) return `${totalMin}m`
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  return m === 0 ? `${h}h` : `${h}h ${m}m`
+}
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
@@ -479,7 +504,7 @@ function relDate(epochMs: number): string {
 
 function lastRunTitle(exec: ExecutionRecord): string {
   const when = new Date(exec.completedAt).toLocaleString()
-  const parts = [`${exec.status.toUpperCase()} on ${when}`]
+  const parts = [`${exec.status.toUpperCase()} on ${when}`, `Runtime: ${formatDuration(runtimeMs(exec))}`]
   if (exec.machineId && exec.machineId !== 'unknown') parts.push(`Machine: ${exec.machineName ?? exec.machineId}`)
   if (exec.errorMessage) parts.push(`Error: ${exec.errorMessage}`)
   return parts.join('\n')
