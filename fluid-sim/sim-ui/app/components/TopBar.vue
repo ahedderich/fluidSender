@@ -45,6 +45,20 @@
       </button>
     </div>
 
+    <!-- Firmware version (for testing FluidSender's update-check flow) -->
+    <div class="flex items-center gap-2 shrink-0">
+      <span class="text-xs text-gray-400 dark:text-slate-500 whitespace-nowrap" title="Reported FluidNC version">FW</span>
+      <input
+        :value="s.firmwareVersion"
+        @change="(e) => s.setFirmwareVersion((e.target as HTMLInputElement).value)"
+        type="text"
+        placeholder="4.0.3"
+        class="w-16 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 font-mono text-xs text-center px-1.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+      />
+    </div>
+
+    <span class="h-4 w-px bg-gray-200 dark:bg-slate-700 shrink-0" />
+
     <!-- Sim speed -->
     <div class="flex items-center gap-2 shrink-0">
       <span class="text-xs text-gray-400 dark:text-slate-500 whitespace-nowrap">Sim speed</span>

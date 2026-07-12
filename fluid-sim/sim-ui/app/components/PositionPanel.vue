@@ -2,27 +2,11 @@
   <div
     class="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-3"
   >
-    <!-- Header with axis count selector -->
+    <!-- Header -->
     <div class="flex items-center justify-between mb-2">
       <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
         Position
       </h2>
-      <div class="flex items-center gap-1.5">
-        <span class="text-[10px] text-gray-400 dark:text-slate-500">Axes</span>
-        <div class="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-900 rounded p-0.5">
-          <button
-            v-for="n in [3, 4, 5, 6]"
-            :key="n"
-            @click="s.axisCount = n"
-            :class="s.axisCount === n
-              ? 'bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 shadow-sm'
-              : 'text-gray-400 dark:text-slate-500'"
-            class="w-5 h-5 rounded text-[10px] font-bold transition-all flex items-center justify-center"
-          >
-            {{ n }}
-          </button>
-        </div>
-      </div>
     </div>
 
     <!-- Column headers -->

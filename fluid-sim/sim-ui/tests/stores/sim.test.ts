@@ -74,4 +74,30 @@ describe('useSimStore', () => {
     await expect(store.setSimSpeed(3)).resolves.toBeUndefined()
     await expect(store.applyScenario(scenario)).resolves.toBeUndefined()
   })
+
+  it('setMaxRate updates local state synchronously and posts the new rate', async () => {
+    const store = useSimStore()
+
+    const pending = store.setMaxRate({ x: 7500 })
+    expect(store.maxRate.x).toBe(7500)
+    await pending
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/sim/machine/config', {
+      method: 'POST',
+      body: { maxRate: { x: 7500 } },
+    })
+  })
+
+  it('setFirmwareVersion updates local state synchronously and posts the new version', async () => {
+    const store = useSimStore()
+
+    const pending = store.setFirmwareVersion('9.9.9')
+    expect(store.firmwareVersion).toBe('9.9.9')
+    await pending
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/sim/machine/version', {
+      method: 'POST',
+      body: { version: '9.9.9' },
+    })
+  })
 })

@@ -65,6 +65,22 @@ async fn main() {
         cfg.machine.max_rate.b,
         cfg.machine.max_rate.c,
     ];
+    state.acceleration = [
+        cfg.machine.acceleration.x,
+        cfg.machine.acceleration.y,
+        cfg.machine.acceleration.z,
+        cfg.machine.acceleration.a,
+        cfg.machine.acceleration.b,
+        cfg.machine.acceleration.c,
+    ];
+    state.steps_per_mm = [
+        cfg.machine.steps_per_mm.x,
+        cfg.machine.steps_per_mm.y,
+        cfg.machine.steps_per_mm.z,
+        cfg.machine.steps_per_mm.a,
+        cfg.machine.steps_per_mm.b,
+        cfg.machine.steps_per_mm.c,
+    ];
 
     let (shared, broadcast) = new_shared(state);
     let console = new_console();

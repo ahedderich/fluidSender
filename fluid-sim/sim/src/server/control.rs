@@ -49,10 +49,12 @@ pub struct SimState {
     pub sim_speed: u8,
     pub axis_count: usize,
     pub travel: AxisMap,
+    pub max_rate: AxisMap,
     pub fluid_config: HashMap<String, String>,
     pub tool_length: f64,
     pub tool_length_offset: f64,
     pub toolsetter: ToolsetterConfig,
+    pub firmware_version: String,
 }
 
 impl SimState {
@@ -72,10 +74,12 @@ impl SimState {
             sim_speed: s.sim_speed,
             axis_count: s.axis_count,
             travel: AxisMap::from_arr(&s.travel),
-            fluid_config: s.fluid_config.clone(),
+            max_rate: AxisMap::from_arr(&s.max_rate),
+            fluid_config: s.effective_fluid_config(),
             tool_length: s.tool_length,
             tool_length_offset: s.tool_length_offset[2],
             toolsetter: s.toolsetter.clone(),
+            firmware_version: s.firmware_version.clone(),
         }
     }
 }
@@ -91,6 +95,7 @@ pub fn router(app: AppState) -> Router {
         .route("/api/machine/position", post(set_position))
         .route("/api/machine/wco", post(set_wco))
         .route("/api/machine/config", post(set_machine_config))
+        .route("/api/machine/version", post(set_firmware_version))
         .route("/api/stock", post(set_stock))
         .route("/api/tool/current", post(set_tool_current))
         .route("/api/machine/toolsetter", post(set_toolsetter))
@@ -275,6 +280,7 @@ async fn set_wco(State(app): State<AppState>, Json(body): Json<AxisInput>) -> St
 #[serde(rename_all = "camelCase")]
 struct MachineConfigInput {
     travel: Option<AxisInput>,
+    max_rate: Option<AxisInput>,
     axis_count: Option<usize>,
     probe_deviations: Option<ProbeDeviations>,
 }
@@ -287,6 +293,9 @@ async fn set_machine_config(
     if let Some(t) = body.travel {
         t.apply_to(&mut state.travel);
     }
+    if let Some(r) = body.max_rate {
+        r.apply_to(&mut state.max_rate);
+    }
     if let Some(n) = body.axis_count {
         state.axis_count = n.clamp(1, AXIS_COUNT);
     }
@@ -294,6 +303,28 @@ async fn set_machine_config(
         // Deviations are deliberately unclamped — negative values (late trigger) are valid.
         state.probe.deviations = devs;
     }
+    let _ = app.broadcast.send(());
+    StatusCode::NO_CONTENT
+}
+
+#[derive(Deserialize)]
+struct SetFirmwareVersionBody {
+    version: String,
+}
+
+/// Sets the version string reported in the greeting/`$I`/`$SS` banners — lets the
+/// sim-ui exercise FluidSender's update-check flow against an arbitrary version
+/// without restarting the sim.
+async fn set_firmware_version(
+    State(app): State<AppState>,
+    Json(body): Json<SetFirmwareVersionBody>,
+) -> StatusCode {
+    let version = body.version.trim();
+    if version.is_empty() {
+        return StatusCode::BAD_REQUEST;
+    }
+    let mut state = app.machine.write().await;
+    state.firmware_version = version.to_string();
     let _ = app.broadcast.send(());
     StatusCode::NO_CONTENT
 }
