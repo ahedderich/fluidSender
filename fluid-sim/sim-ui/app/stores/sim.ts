@@ -133,6 +133,12 @@ export const useSimStore = defineStore('sim', () => {
   // that FluidSender's probe sequence actually reached the firmware and took effect.
   const toolLengthOffset = ref(0)
 
+  // Read-only: the tool number the sim firmware last received via T/M6. Display-only
+  // feedback that FluidSender's atc-passthrough strategy actually sent the right T
+  // value and the firmware applied it (unlike loadedToolNumber above, which is set
+  // from the sim-ui as an operator stand-in for the manual/toolsetter strategies).
+  const toolNumber = ref(0)
+
   // Limit switches + door sensor
   const limits = reactive<Record<LimitKey, boolean>>({
     xMin: false, xMax: false,
@@ -457,7 +463,7 @@ export const useSimStore = defineStore('sim', () => {
     triggerProbe, triggerLimit, softReset, triggerAlarm,
     setSimSpeed, setPosition, setWco, setTravel, setMaxRate, setFirmwareVersion, pushProbeConfig, pushStockToSim,
     applyScenario, scenarios, defaultScenarioId, applyDefaultScenario,
-    tools, loadedToolNumber, toolsetter, toolLengthOffset,
+    tools, loadedToolNumber, toolsetter, toolLengthOffset, toolNumber,
     persistTools, addTool, removeTool, setLoadedTool, importTools,
     pushToolsetterToSim, pushLoadedToolToSim, persistToolsetter, loadPersistedConfig,
   }

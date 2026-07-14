@@ -53,6 +53,7 @@ pub struct SimState {
     pub fluid_config: HashMap<String, String>,
     pub tool_length: f64,
     pub tool_length_offset: f64,
+    pub tool_number: u32,
     pub toolsetter: ToolsetterConfig,
     pub firmware_version: String,
 }
@@ -78,6 +79,7 @@ impl SimState {
             fluid_config: s.effective_fluid_config(),
             tool_length: s.tool_length,
             tool_length_offset: s.tool_length_offset[2],
+            tool_number: s.tool_number,
             toolsetter: s.toolsetter.clone(),
             firmware_version: s.firmware_version.clone(),
         }
