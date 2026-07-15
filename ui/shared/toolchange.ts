@@ -28,31 +28,64 @@ export interface ToolsetterConfig extends ToolchangeSpatialConfig {
   tolBaseline: number
 }
 
+export interface SlotPosition {
+  x: number
+  y: number
+  z: number
+}
+
+export interface MagazineApproach {
+  /** Pick/place leg axis. X/Y describe a lateral approach (e.g. a front- or side-loaded
+   *  rack), on top of the standard safe-travel descent to slot height. Z describes a
+   *  purely vertical approach (e.g. a top-loaded rack) — extra travel along Z, beyond
+   *  the slot's own height, to seat/unseat the tool. */
+  axis: 'x' | 'y' | 'z'
+  /** Direction of travel along `axis` to seat a tool into its slot. */
+  direction: 1 | -1
+  /** mm of travel for the pick/place leg. */
+  distance: number
+}
+
+/** Physical ATC automation description for `atc-managed`. This is meant to fully define
+ *  the toolchange sequence — `atc-managed` has no macro escape hatch (use `custom-macro`
+ *  for that). Not yet consumed by any runtime GCode generation — pending that engine,
+ *  `atc-managed` currently just falls back to the manual swap-confirm dialog. */
+export type MagazineAutomation =
+  | { type: 'fixed'; gripCommand: string; releaseCommand: string; slots: SlotPosition[]; approach: MagazineApproach }
+  | {
+      type: 'moving'
+      gripCommand: string
+      releaseCommand: string
+      loadPosition: ToolchangeSpatialConfig
+      /** Supports {current_slot}/{next_slot} placeholders, same substitution as the ATC macro box. */
+      slotSelectCommand: string
+      /** Single-shot swap-arm style exchange (e.g. double-gripper swingarm). */
+      toolswapCommand?: string
+      /** Same pick/place approach leg as `fixed`, applied at the single load/unload position. */
+      approach: MagazineApproach
+    }
+
 export interface MagazineConfig {
   enabled: boolean
   size: number
+  /** Absent = not configured. Only meaningful today for `atc-managed`. */
+  automation?: MagazineAutomation
 }
 
-export type ToolchangeConfig =
+export type ToolchangeStrategy =
   | { strategy: 'manual-basic' }
   | { strategy: 'manual-toolsetter'; position: ToolsetterConfig; confirmMissingOffset?: boolean }
-  | {
-      strategy: 'atc-passthrough'
-      magazine: MagazineConfig
-      magazineSlots: (number | null)[]
-      confirmMissingOffset?: boolean
-    }
-  | {
-      strategy: 'atc-managed'
-      macro: string
-      magazine: MagazineConfig
-      magazineSlots: (number | null)[]
-      confirmMissingOffset?: boolean
-    }
-  | {
-      strategy: 'custom-macro'
-      macro: string
-      magazine: MagazineConfig
-      magazineSlots: (number | null)[]
-      confirmMissingOffset?: boolean
-    }
+  | { strategy: 'atc-passthrough'; confirmMissingOffset?: boolean }
+  | { strategy: 'atc-managed'; confirmMissingOffset?: boolean; toolsetter?: ToolsetterConfig }
+  | { strategy: 'custom-macro'; macro: string; confirmMissingOffset?: boolean }
+
+export type ToolchangeConfig = ToolchangeStrategy & {
+  magazine: MagazineConfig
+  magazineSlots: (number | null)[]
+}
+
+export const DEFAULT_TOOLCHANGE_CONFIG: ToolchangeConfig = {
+  strategy: 'manual-basic',
+  magazine: { enabled: false, size: 4 },
+  magazineSlots: [],
+}

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import type { Macro, MacroTrigger, MacroVariable } from '~/types/macro'
 import { wsSend } from '~/composables/useWsSend'
 import type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig } from '~/../../shared/toolchange'
+import { DEFAULT_TOOLCHANGE_CONFIG } from '#shared/toolchange'
 import type { WebcamConfig } from '~/types/webcam'
 import type { FluidNCBootInfo } from '~~/server/utils/machine/bootInfoParser'
 
@@ -203,7 +204,11 @@ export const useSettingsStore = defineStore('settings', () => {
       type: 'router',
       connection: { type: 'tcp', serialPort: '', baudRate: 115200, tcpHost: '', tcpPort: 23 },
       macros: [],
-      toolchange: { strategy: 'manual-basic' },
+      toolchange: {
+        ...DEFAULT_TOOLCHANGE_CONFIG,
+        magazine: { ...DEFAULT_TOOLCHANGE_CONFIG.magazine },
+        magazineSlots: [],
+      },
       fluidncConfig: null,
     })
     activeMachineId.value = id
@@ -312,9 +317,20 @@ export const useSettingsStore = defineStore('settings', () => {
         delete (m as Record<string, unknown>).probe
         delete (m as Record<string, unknown>).magazine
       }
+      const toolchange = m.toolchange ?? { strategy: 'manual-basic' as const }
+      const magazine = toolchange.magazine ?? { ...DEFAULT_TOOLCHANGE_CONFIG.magazine }
+      // Backfill: `approach` was added to moving-magazine automation after some configs
+      // may already have been saved without it.
+      if (magazine.automation?.type === 'moving' && !magazine.automation.approach) {
+        magazine.automation.approach = { axis: 'x', direction: 1, distance: 50 }
+      }
       return {
         ...m,
-        toolchange: m.toolchange ?? { strategy: 'manual-basic' as const },
+        toolchange: {
+          ...toolchange,
+          magazine,
+          magazineSlots: toolchange.magazineSlots ?? [],
+        } as ToolchangeConfig,
         macros: _migrateMacros(m.macros ?? []),
       }
     })

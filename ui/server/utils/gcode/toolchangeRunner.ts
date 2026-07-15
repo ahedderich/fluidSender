@@ -25,6 +25,7 @@ import { setToolLengthOffset } from '../machine/toolLengthState'
 import type { SendHandle } from '../machine/types'
 import type { JobState, ToolSection } from './types'
 import type { ToolchangeConfig, ToolsetterConfig } from '../../../shared/toolchange'
+import { DEFAULT_TOOLCHANGE_CONFIG } from '../../../shared/toolchange'
 import type { TcVars } from '../macro/macroRunner'
 
 export async function getToolchangeConfig(): Promise<ToolchangeConfig> {
@@ -34,9 +35,9 @@ export async function getToolchangeConfig(): Promise<ToolchangeConfig> {
     const machine = machineId
       ? (config.machines?.find((m) => m.id === machineId) ?? config.machines?.[0])
       : config.machines?.[0]
-    return machine?.toolchange ?? { strategy: 'manual-basic' }
+    return machine?.toolchange ?? DEFAULT_TOOLCHANGE_CONFIG
   } catch {
-    return { strategy: 'manual-basic' }
+    return DEFAULT_TOOLCHANGE_CONFIG
   }
 }
 
@@ -115,12 +116,13 @@ class ToolchangeRunner {
         this.deps.resumeAfterToolChange()
         break
 
-      case 'atc-managed': {
+      case 'atc-managed':
+        // Pending the GCode-generation engine reading tc.magazine.automation — no macro
+        // exists for this strategy, so it falls back to a manual swap-confirm dialog,
+        // same as manual-basic, until that engine lands.
         this._pendingToolchange = { operation: 'load', toolNumber: section.toolNumber, isJobContext: true, requiresProbe: false }
-        const tcVars = await this._buildTcVars(section.toolNumber, tc)
-        this._runToolchangeMacro(tc.macro, toolChangeRequest, tcVars)
+        this._openToolchangeDialog({ phase: 'waiting_for_swap', currentToolNumber: null, nextToolNumber: section.toolNumber, isJobContext: true })
         break
-      }
 
       case 'custom-macro': {
         this._pendingToolchange = { operation: 'load', toolNumber: section.toolNumber, isJobContext: true, requiresProbe: false }
@@ -205,7 +207,7 @@ class ToolchangeRunner {
 
   private async _buildTcVars(
     nextToolNumber: number,
-    tc: Extract<ToolchangeConfig, { magazineSlots: (number | null)[] }>,
+    tc: ToolchangeConfig,
   ): Promise<TcVars> {
     const machineId = await this._getActiveMachineId() ?? ''
     const currentTool = await getLoadedToolForMachine(machineId) ?? 0
@@ -401,6 +403,10 @@ class ToolchangeRunner {
         break
 
       case 'atc-managed':
+        this._pendingToolchange = { operation, toolNumber: operation === 'load' ? targetToolNumber : null, isJobContext: false, requiresProbe: false }
+        this._openToolchangeDialog({ phase: 'waiting_for_swap', currentToolNumber: null, nextToolNumber: targetToolNumber, isJobContext: false, operation })
+        break
+
       case 'custom-macro': {
         const tn = targetToolNumber ?? 0
         const tcVars = await this._buildTcVars(tn, tc)

@@ -116,7 +116,7 @@
     </div>
 
     <!-- Tool Magazine (shown when machine has magazine configured) -->
-    <template v-if="isAtcStrategy && magazineConfig?.enabled && magazineConfig.size > 0">
+    <template v-if="magazineConfig?.enabled && magazineConfig.size > 0">
       <div class="px-3 pt-2.5 pb-2.5 border-b border-gray-100 dark:border-slate-700 shrink-0">
         <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">
           Tool Magazine <span class="normal-case font-normal text-gray-400 dark:text-slate-500">({{ magazineConfig!.size }} slots)</span>
@@ -981,11 +981,6 @@ function clearSlot(slot: number) {
   wsSend({ t: 'tool:magazineSlots:set', payload: { slots: [...machine.magazineSlots] } })
 }
 
-const isAtcStrategy = computed(() => {
-  const tc = settings.activeMachine?.toolchange
-  return tc?.strategy === 'atc-passthrough' || tc?.strategy === 'atc-managed' || tc?.strategy === 'custom-macro'
-})
-
 // Typical session start for a toolsetter machine: home, then measure — TLO always
 // resets to null on (re)connect since FluidNC never persists G43.1 across sessions.
 const showMeasureOffsetButton = computed(() =>
@@ -994,11 +989,7 @@ const showMeasureOffsetButton = computed(() =>
   && machine.toolLengthOffset === null,
 )
 
-const magazineConfig = computed(() => {
-  const tc = settings.activeMachine?.toolchange
-  if (!tc || !('magazine' in tc)) return null
-  return (tc as { magazine: { enabled: boolean; size: number } }).magazine
-})
+const magazineConfig = computed(() => settings.activeMachine?.toolchange?.magazine ?? null)
 const machineName = computed(() => settings.activeMachine?.name ?? 'Machine')
 
 const TOOL_TYPES = [
