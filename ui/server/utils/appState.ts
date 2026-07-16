@@ -458,6 +458,11 @@ export interface ToolchangeModalProps {
   operation?: 'load' | 'unload' | 'measure'
   probedOffset?: number
   errorMessage?: string
+  /** True when this swap will be followed by an automatic toolsetter probe — drives the
+   *  step indicator and button copy client-side. Not derived from toolchange strategy
+   *  there, since a magazine-missing-slot fallback can enter this same dialog from an ATC
+   *  strategy that isn't 'manual-toolsetter'. */
+  requiresProbe?: boolean
 }
 
 export function openToolchangeModal(props: ToolchangeModalProps): { id: string; op: PatchOp } {

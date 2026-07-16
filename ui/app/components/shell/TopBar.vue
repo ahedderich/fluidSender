@@ -387,8 +387,31 @@ const cycleStartEnabled = computed(() =>
 async function cycleStartAction() {
   const isResume = job.value?.status === 'paused'
   const tc = s.activeMachine?.toolchange
-  // manual-basic has no TLO concept at all — tools are touched off by hand each swap.
-  const offsetCheckApplies = tc && tc.strategy !== 'manual-basic' && (tc.confirmMissingOffset ?? true)
+
+  if (tc?.magazine.enabled) {
+    const requiredTools = new Set((job.value?.toolSections ?? []).map((t) => t.toolNumber).filter((n) => n > 0))
+    const missingTools = [...requiredTools].filter((n) => !machine.magazineSlots.includes(n))
+    if (missingTools.length > 0) {
+      const plural = missingTools.length > 1
+      const ok = await confirm({
+        title: `Tool${plural ? 's' : ''} not assigned to a magazine slot`,
+        message: `This job needs tool${plural ? 's' : ''} T${missingTools.join(', T')}, which ${plural ? 'are' : 'is'} not assigned to a slot in the magazine. Any toolchange to ${plural ? 'these tools' : 'this tool'} will fall back to a manual swap instead of running automatically.`,
+        confirmLabel: isResume ? 'Resume anyway' : 'Start anyway',
+        danger: true,
+      })
+      if (!ok) return
+    }
+  }
+
+  // Only applies when a toolsetter is actually probing tool length — inherent for
+  // manual-toolsetter, opt-in via "Enable Toolsetter" for the ATC strategies. Other
+  // strategies (manual-basic, custom-macro) have no toolsetter concept at all.
+  let offsetCheckApplies = false
+  if (tc?.strategy === 'manual-toolsetter') {
+    offsetCheckApplies = tc.confirmMissingOffset ?? true
+  } else if (tc?.strategy === 'atc-passthrough' || tc?.strategy === 'atc-managed' || tc?.strategy === 'atc-rapidchange') {
+    offsetCheckApplies = !!tc.toolsetter && (tc.confirmMissingOffset ?? true)
+  }
   if (offsetCheckApplies && machine.toolLengthOffset === null) {
     const ok = await confirm({
       title: 'Tool length offset not confirmed',

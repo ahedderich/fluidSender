@@ -57,10 +57,6 @@ export type MagazineAutomation =
       gripCommand: string
       releaseCommand: string
       loadPosition: ToolchangeSpatialConfig
-      /** Supports {current_slot}/{next_slot} placeholders, same substitution as the ATC macro box. */
-      slotSelectCommand: string
-      /** Single-shot swap-arm style exchange (e.g. double-gripper swingarm). */
-      toolswapCommand?: string
       /** Same pick/place approach leg as `fixed`, applied at the single load/unload position. */
       approach: MagazineApproach
     }
@@ -75,8 +71,29 @@ export interface MagazineConfig {
 export type ToolchangeStrategy =
   | { strategy: 'manual-basic' }
   | { strategy: 'manual-toolsetter'; position: ToolsetterConfig; confirmMissingOffset?: boolean }
-  | { strategy: 'atc-passthrough'; confirmMissingOffset?: boolean }
-  | { strategy: 'atc-managed'; confirmMissingOffset?: boolean; toolsetter?: ToolsetterConfig }
+  | {
+      strategy: 'atc-passthrough'
+      confirmMissingOffset?: boolean
+      toolsetter?: ToolsetterConfig
+      /** When true, the tool library number in M6 Tn is translated to the tool's assigned
+       *  magazine slot number before the command reaches the machine (e.g. M6 T28 becomes
+       *  M6 T4 if T28 is loaded in slot 4). When false, Tn is forwarded unchanged. */
+      translateToolNumberToSlot: boolean
+    }
+  | {
+      strategy: 'atc-managed'
+      confirmMissingOffset?: boolean
+      toolsetter?: ToolsetterConfig
+      /** Same translation as `atc-passthrough`'s field of the same name. */
+      translateToolNumberToSlot: boolean
+    }
+  | {
+      strategy: 'atc-rapidchange'
+      confirmMissingOffset?: boolean
+      toolsetter?: ToolsetterConfig
+      /** Same translation as `atc-passthrough`'s field of the same name. */
+      translateToolNumberToSlot: boolean
+    }
   | { strategy: 'custom-macro'; macro: string; confirmMissingOffset?: boolean }
 
 export type ToolchangeConfig = ToolchangeStrategy & {

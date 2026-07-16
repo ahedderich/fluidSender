@@ -168,12 +168,10 @@
 <script setup lang="ts">
 import { useModals } from '~/composables/useModals'
 import { wsSend } from '~/composables/useWsSend'
-import { useSettingsStore } from '~/stores/settings'
 import { useMachineStore } from '~/stores/machine'
 import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 
 const modals = useModals()
-const settings = useSettingsStore()
 const machine = useMachineStore()
 
 const modal = modals.active('toolchange')
@@ -188,6 +186,7 @@ const props = computed(() => {
     operation: (p?.operation ?? undefined) as 'load' | 'unload' | 'measure' | undefined,
     probedOffset: (p?.probedOffset ?? undefined) as number | undefined,
     errorMessage: (p?.errorMessage ?? undefined) as string | undefined,
+    requiresProbe: (p?.requiresProbe ?? false) as boolean,
   }
 })
 
@@ -199,10 +198,9 @@ const toolInfo = computed(() => {
   return [...machine.toolLibrary.machine, ...machine.toolLibrary.app].find((t) => t.number === n) ?? null
 })
 
-const isToolsetterStrategy = computed(() => {
-  const tc = settings.activeMachine?.toolchange
-  return tc?.strategy === 'manual-toolsetter'
-})
+// Server-driven, not derived from strategy — a magazine-missing-slot fallback can land
+// here from an ATC strategy that isn't 'manual-toolsetter' but still has a toolsetter configured.
+const isToolsetterStrategy = computed(() => props.value.requiresProbe)
 
 // The measure-only flow starts directly at the probing phase — there's no
 // toolchange-position/swap step to show progress against.

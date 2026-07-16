@@ -324,6 +324,14 @@ export const useSettingsStore = defineStore('settings', () => {
       if (magazine.automation?.type === 'moving' && !magazine.automation.approach) {
         magazine.automation.approach = { axis: 'x', direction: 1, distance: 50 }
       }
+      // Backfill: `translateToolNumberToSlot` was added after some atc-passthrough/
+      // atc-managed/atc-rapidchange configs may already have been saved without it.
+      if (
+        (toolchange.strategy === 'atc-passthrough' || toolchange.strategy === 'atc-managed' || toolchange.strategy === 'atc-rapidchange')
+        && toolchange.translateToolNumberToSlot === undefined
+      ) {
+        toolchange.translateToolNumberToSlot = false
+      }
       return {
         ...m,
         toolchange: {

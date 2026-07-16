@@ -29,7 +29,8 @@
         <option value="manual-basic">Manual — Basic</option>
         <option value="manual-toolsetter">Manual — With Toolsetter</option>
         <option value="atc-passthrough">ATC — M6 Passthrough</option>
-        <option value="atc-managed">ATC — FluidSender Managed</option>
+        <option value="atc-managed">ATC — ATC Spindle</option>
+        <option value="atc-rapidchange">ATC — RapidChange ATC</option>
         <option value="custom-macro">Custom Macro</option>
       </select>
     </SettingsRow>
@@ -50,24 +51,35 @@
 
   <!-- atc-passthrough -->
   <template v-else-if="tc.strategy === 'atc-passthrough'">
-    <div class="rounded-lg border border-gray-200 dark:border-slate-700 px-4 py-3 text-sm text-gray-500 dark:text-slate-400">
-      M6 is forwarded to FluidNC as-is. No macro configuration required.
-    </div>
+    <SettingsCard title="M6 Passthrough">
+      <SettingsRow label="Automatic Toolnumber Translation to Slotnumber">
+        <UiToggleSwitch v-model="(tc as any).translateToolNumberToSlot" />
+      </SettingsRow>
+      <p class="px-3 pb-2 text-xs text-gray-500 dark:text-slate-400">
+        M6 is forwarded to FluidNC as-is. If enabled, the library tool number is translated to its assigned magazine
+        slot number before the M6 command is sent to the machine. Example: M6 T28 becomes M6 T4 if tool T28 is
+        loaded in magazine slot 4 in Tool Management.
+      </p>
+    </SettingsCard>
+
+    <SettingsCard title="Toolsetter">
+      <SettingsRow label="Enable Toolsetter">
+        <UiToggleSwitch :model-value="!!tc.toolsetter" @update:model-value="toggleToolsetter" />
+        <span class="text-xs text-gray-400 ml-1.5">Probe tool length after the swap and apply G43.1.</span>
+      </SettingsRow>
+    </SettingsCard>
+
+    <SettingsToolsetterFields v-if="tc.toolsetter" v-model:position="(tc as any).toolsetter" :is-connected="isConnected" />
   </template>
 
   <!-- atc-managed -->
   <template v-else-if="tc.strategy === 'atc-managed'">
     <div v-if="!tc.magazine.enabled" class="rounded-lg border border-gray-200 dark:border-slate-700 px-4 py-3 text-sm text-gray-500 dark:text-slate-400">
-      Enable the Tool Magazine above and configure automation to define the toolchange sequence. No macro — the entire
-      sequence is defined by the configuration parameters below.
+      Enable the Tool Magazine above to define the toolchange sequence. No macro — the entire sequence is defined by
+      the configuration parameters below.
     </div>
 
     <SettingsCard v-if="tc.magazine.enabled" title="Magazine Automation">
-      <SettingsRow label="Configure Automation">
-        <UiToggleSwitch :model-value="!!tc.magazine.automation" @update:model-value="toggleAutomation" />
-        <span class="text-xs text-gray-400 ml-1.5">Not yet executed automatically — falls back to a manual swap-confirm dialog until the generation engine lands.</span>
-      </SettingsRow>
-
       <template v-if="tc.magazine.automation">
         <SettingsRow label="Magazine Type">
           <select :value="tc.magazine.automation.type" @change="changeAutomationType(($event.target as HTMLSelectElement).value as MagazineAutomation['type'])" class="settings-input w-40">
@@ -122,6 +134,13 @@
         </template>
 
         <template v-else-if="tc.magazine.automation.type === 'moving'">
+          <div class="mx-3 mb-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 rounded-md">
+            <p class="text-xs text-amber-700 dark:text-amber-400 font-medium">
+              Slot selection is done via the standard M6 T{slotnumber} call to the machine — there's no separate
+              slot-select step here. The machine itself needs a macro (configured in FluidNC) that moves the magazine
+              into position for the target slot when it receives that M6.
+            </p>
+          </div>
           <div class="px-3 pt-2 pb-1 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Load/Unload Position (machine coordinates)</div>
           <SettingsRow label="Safe Z">
             <div class="flex items-center gap-1.5">
@@ -165,25 +184,19 @@
             Same pick/place approach leg as a fixed rack, applied at the load/unload position above once the magazine has
             indexed to the requested slot.
           </p>
-
-          <SettingsRow label="Slot Select Command">
-            <input v-model="tc.magazine.automation.slotSelectCommand" type="text" placeholder="e.g. M-slot [next_slot]" class="settings-input w-64 font-mono" />
-          </SettingsRow>
-          <p class="px-3 pb-2 text-xs text-gray-500 dark:text-slate-400">
-            Moves the magazine to the requested slot. Variables:
-            <code class="font-mono bg-gray-100 dark:bg-slate-700 px-1 rounded">{current_slot}</code>
-            <code class="font-mono bg-gray-100 dark:bg-slate-700 px-1 rounded ml-1">{next_slot}</code>
-          </p>
-
-          <SettingsRow label="Toolswap Command">
-            <input v-model="tc.magazine.automation.toolswapCommand" type="text" placeholder="optional — e.g. swingarm exchange macro" class="settings-input w-64 font-mono" />
-          </SettingsRow>
-          <p class="px-3 pb-2 text-xs text-gray-500 dark:text-slate-400">
-            Optional. For a single-shot exchange (e.g. a swingarm that swaps the spindle tool with the targeted slot in one
-            motion) instead of separate grip/release steps.
-          </p>
         </template>
       </template>
+    </SettingsCard>
+
+    <SettingsCard v-if="tc.magazine.enabled" title="Tool Number Translation">
+      <SettingsRow label="Automatic Toolnumber Translation to Slotnumber">
+        <UiToggleSwitch v-model="(tc as any).translateToolNumberToSlot" />
+      </SettingsRow>
+      <p class="px-3 pb-2 text-xs text-gray-500 dark:text-slate-400">
+        If enabled, the library tool number is translated to its assigned magazine slot number before the M6 command
+        is sent to the machine. Example: M6 T28 becomes M6 T4 if tool T28 is loaded in magazine slot 4 in Tool
+        Management.
+      </p>
     </SettingsCard>
 
     <SettingsCard title="Toolsetter">
@@ -191,6 +204,41 @@
         <UiToggleSwitch :model-value="!!tc.toolsetter" @update:model-value="toggleToolsetter" />
         <span class="text-xs text-gray-400 ml-1.5">Probe tool length after the swap and apply G43.1.</span>
       </SettingsRow>
+    </SettingsCard>
+
+    <SettingsToolsetterFields v-if="tc.toolsetter" v-model:position="(tc as any).toolsetter" :is-connected="isConnected" />
+  </template>
+
+  <!-- atc-rapidchange -->
+  <template v-else-if="tc.strategy === 'atc-rapidchange'">
+    <div class="rounded-lg border border-gray-200 dark:border-slate-700 px-4 py-3 text-sm text-gray-500 dark:text-slate-400">
+      The RapidChange macro itself must be created with RapidChange's
+      <a href="https://services.rapidchangeatc.com/" target="_blank" rel="noopener noreferrer" class="text-blue-600 dark:text-blue-400 hover:underline">macro creation tool</a>
+      and configured in FluidNC — see the
+      <a href="http://wiki.fluidnc.com/en/features/atc" target="_blank" rel="noopener noreferrer" class="text-blue-600 dark:text-blue-400 hover:underline">FluidNC ATC wiki page</a>.
+      FluidSender does not generate or upload that macro.
+    </div>
+
+    <SettingsCard title="Tool Number Translation">
+      <SettingsRow label="Automatic Toolnumber Translation to Slotnumber">
+        <UiToggleSwitch v-model="(tc as any).translateToolNumberToSlot" />
+      </SettingsRow>
+      <p class="px-3 pb-2 text-xs text-gray-500 dark:text-slate-400">
+        If enabled, the library tool number is translated to its assigned magazine slot number before the M6 command
+        is sent to the machine. Example: M6 T28 becomes M6 T4 if tool T28 is loaded in magazine slot 4 in Tool
+        Management.
+      </p>
+    </SettingsCard>
+
+    <SettingsCard title="Toolsetter">
+      <SettingsRow label="Enable Toolsetter">
+        <UiToggleSwitch :model-value="!!tc.toolsetter" @update:model-value="toggleToolsetter" />
+        <span class="text-xs text-gray-400 ml-1.5">Probe tool length after the swap and apply G43.1.</span>
+      </SettingsRow>
+      <p class="px-3 pb-2 text-xs text-gray-500 dark:text-slate-400">
+        Don't enable this if tool-setting is already configured inside the RapidChange macro itself — doing both
+        would probe the tool length twice.
+      </p>
     </SettingsCard>
 
     <SettingsToolsetterFields v-if="tc.toolsetter" v-model:position="(tc as any).toolsetter" :is-connected="isConnected" />
@@ -217,8 +265,8 @@
     </SettingsCard>
   </template>
 
-  <!-- shared across every strategy except manual-basic, where there is no offset to track -->
-  <SettingsCard v-if="tc.strategy !== 'manual-basic'" title="Job Safety">
+  <!-- shared across strategies with an active toolsetter — no offset to track otherwise -->
+  <SettingsCard v-if="hasActiveToolsetter" title="Job Safety">
     <SettingsRow label="Warn on Unconfirmed Tool Offset">
       <UiToggleSwitch v-model="confirmMissingOffset" />
       <span class="text-xs text-gray-400 ml-1.5">Confirm before starting/resuming a job if the tool length offset hasn't been verified this session</span>
@@ -261,8 +309,9 @@ function changeStrategy(newStrategy: ToolchangeConfig['strategy']) {
   switch (newStrategy) {
     case 'manual-basic': strategyPart = { strategy: 'manual-basic' }; break
     case 'manual-toolsetter': strategyPart = { strategy: 'manual-toolsetter', position: toolsetterDefaults(), confirmMissingOffset: true }; break
-    case 'atc-passthrough': strategyPart = { strategy: 'atc-passthrough', confirmMissingOffset: true }; break
-    case 'atc-managed': strategyPart = { strategy: 'atc-managed', confirmMissingOffset: true }; break
+    case 'atc-passthrough': strategyPart = { strategy: 'atc-passthrough', confirmMissingOffset: true, translateToolNumberToSlot: false }; break
+    case 'atc-managed': strategyPart = { strategy: 'atc-managed', confirmMissingOffset: true, translateToolNumberToSlot: false }; break
+    case 'atc-rapidchange': strategyPart = { strategy: 'atc-rapidchange', confirmMissingOffset: true, translateToolNumberToSlot: false }; break
     case 'custom-macro': strategyPart = { strategy: 'custom-macro', macro: '', confirmMissingOffset: true }; break
   }
   machine.value.toolchange = {
@@ -273,8 +322,9 @@ function changeStrategy(newStrategy: ToolchangeConfig['strategy']) {
 }
 
 function toggleToolsetter(enabled: boolean) {
-  if (tc.value.strategy !== 'atc-managed') return
-  tc.value.toolsetter = enabled ? toolsetterDefaults() : undefined
+  const t = tc.value
+  if (t.strategy !== 'atc-passthrough' && t.strategy !== 'atc-managed' && t.strategy !== 'atc-rapidchange') return
+  t.toolsetter = enabled ? toolsetterDefaults() : undefined
 }
 
 function fixedAutomationDefaults(): Extract<MagazineAutomation, { type: 'fixed' }> {
@@ -293,14 +343,23 @@ function movingAutomationDefaults(): Extract<MagazineAutomation, { type: 'moving
     gripCommand: '',
     releaseCommand: '',
     loadPosition: { safeZ: -10, toolchangeX: 0, toolchangeY: 0, toolchangeZ: -30 },
-    slotSelectCommand: '',
     approach: { axis: 'x', direction: 1, distance: 50 },
   }
 }
 
-function toggleAutomation(enabled: boolean) {
-  tc.value.magazine.automation = enabled ? fixedAutomationDefaults() : undefined
-}
+// atc-managed has no macro escape hatch — automation is the only way it does anything,
+// so it's implied by strategy + magazine rather than a separate opt-in toggle. Never
+// clears it back out (disabling magazine or leaving atc-managed just hides the fields,
+// same as magazine/magazineSlots persisting across strategy switches elsewhere).
+watch(
+  () => tc.value.strategy === 'atc-managed' && tc.value.magazine.enabled,
+  (needsAutomation) => {
+    if (needsAutomation && !tc.value.magazine.automation) {
+      tc.value.magazine.automation = fixedAutomationDefaults()
+    }
+  },
+  { immediate: true },
+)
 
 function changeAutomationType(newType: MagazineAutomation['type']) {
   const prev = tc.value.magazine.automation
@@ -320,6 +379,16 @@ watch(() => tc.value.magazine.size, (size) => {
   if (auto.slots.length > size) auto.slots.splice(size)
 }, { immediate: true })
 
+// The offset-confirmation warning only makes sense when a toolsetter is actually
+// probing tool length: inherent for manual-toolsetter, opt-in via "Enable Toolsetter"
+// for the ATC strategies. manual-basic/custom-macro have no toolsetter concept.
+const hasActiveToolsetter = computed(() => {
+  const t = tc.value
+  if (t.strategy === 'manual-toolsetter') return true
+  if (t.strategy === 'atc-passthrough' || t.strategy === 'atc-managed' || t.strategy === 'atc-rapidchange') return !!t.toolsetter
+  return false
+})
+
 const confirmMissingOffset = computed<boolean>({
   get: () => {
     const t = tc.value
@@ -336,7 +405,8 @@ const strategyDescription = computed(() => {
     case 'manual-basic': return 'Pauses the job and shows a dialog prompting the operator to swap the tool manually. No automated motion.'
     case 'manual-toolsetter': return 'Moves the machine to a defined toolchange position, prompts for a manual swap, then automatically probes tool length and applies G43.1.'
     case 'atc-passthrough': return 'Passes M6 directly to FluidNC. The ATC controller handles the entire toolchange sequence independently.'
-    case 'atc-managed': return 'The entire toolchange sequence is defined by the Magazine Automation configuration below — no macro. Not yet executed automatically; falls back to a manual swap-confirm dialog until the generation engine lands.'
+    case 'atc-managed': return 'The entire toolchange sequence is defined by the Magazine Automation configuration below — no macro.'
+    case 'atc-rapidchange': return 'RapidChange ATC magazine — the toolchange macro is created and configured outside FluidSender.'
     case 'custom-macro': return 'Runs a custom GCode macro for every M6 command. Variables for current/next tool numbers are substituted.'
     default: return ''
   }
