@@ -18,6 +18,7 @@ function jobPaths(mode: TransformMode) {
     analysis: join(dir, 'analysis.json'),
     vectors: join(dir, 'vectors.json'),
     modal: join(dir, 'modal-states.json'),
+    lines: join(dir, 'lines.json'),
   }
 }
 
@@ -50,6 +51,7 @@ export async function clearAnalysis(mode: TransformMode = 'none'): Promise<void>
     unlink(paths.analysis),
     unlink(paths.vectors),
     unlink(paths.modal),
+    unlink(paths.lines),
   ])
 }
 
@@ -121,6 +123,7 @@ export async function analyzeGCodeFile(
     writeFile(paths.analysis, JSON.stringify(analysis), 'utf8'),
     writeFile(paths.vectors, JSON.stringify(vectors), 'utf8'),
     writeFile(paths.modal, JSON.stringify(modalStates), 'utf8'),
+    writeFile(paths.lines, JSON.stringify(lines), 'utf8'),
   ])
 
   if (signal.aborted) {
