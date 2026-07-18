@@ -259,6 +259,21 @@ const layers = reactive([
   { key: 'machineBounds', label: 'Machine', color: '#475569', visible: true },
 ])
 
+// Toolpath layer base colors — kept in sync with the swatches above (numeric
+// hex here since THREE.Color/LineMaterial want that form, not the CSS strings).
+const LAYER_BASE_COLOR = {
+  travel: 0x22c55e,
+  cutting: 0x3b82f6,
+  zmove: 0xeab308,
+} as const
+
+// How far (0–1) an already-executed segment's color is blended toward the
+// scene background — the cheap stand-in for "more transparent" discussed for
+// issue #45: LineMaterial's fat-line pipeline supports per-vertex color but
+// not per-vertex alpha, so fading toward the background reads the same
+// visually without needing a custom shader.
+const DIM_BLEND_FACTOR = 0.65
+
 const sendPct = computed(() => job.value?.totalLines ? Math.round((job.value.sendPtr / job.value.totalLines) * 100) : 0)
 const execPct = computed(() => job.value?.totalLines ? Math.round((job.value.execPtr / job.value.totalLines) * 100) : 0)
 
@@ -379,6 +394,7 @@ let rebuildStock: (s: import('~/stores/machine').StockDef | null) => void = () =
 let loadToolpathSegments: (vectors: Array<LineVector | null>) => void = () => {}
 let clearToolpath: () => void = () => {}
 let frameLine: (lineIndex: number) => void = () => {}
+let applyExecutedDimming: (execPtr: number) => void = () => {}
 
 // Retained raw per-line data — kept around (rather than discarded after building
 // 3D geometry) so the GCode panel can look lines/vectors up by index. See
@@ -388,9 +404,14 @@ const gcodeLines = ref<GCodeLine[]>([])
 const selectedLineIndex = ref<number | null>(null)
 
 // Per-line offset/count into the merged toolpath geometry buffers, built by
-// buildToolpathGeometry(). Not consumed yet — groundwork for a future "dim
-// already-processed lines" feature. See GCODE_VIEWER_PLAN.md §6.
+// buildToolpathGeometry(). Consumed by applyExecutedDimming() to recolor the
+// segments for already-executed lines (issue #45).
 const lineGeometryIndex = ref(new Map<number, { layer: 'travel' | 'cutting' | 'zmove'; vertexOffset: number; vertexCount: number }>())
+
+// Total point count per layer's merged position buffer — needed to allocate a
+// correctly-sized color array in applyExecutedDimming (points, not floats;
+// every 2 points is one rendered segment, matching lineGeometryIndex's units).
+let layerPointCounts: Record<'travel' | 'cutting' | 'zmove', number> = { travel: 0, cutting: 0, zmove: 0 }
 
 function onLineSelect(index: number) {
   selectedLineIndex.value = index
@@ -418,9 +439,18 @@ async function initThree() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lineMats: any[] = []
 
+  // vertexColors: true is used for the toolpath layers (travel/cutting/zmove)
+  // so applyExecutedDimming() can recolor individual segments; the material's
+  // own `color` is forced to white in that case so it doesn't tint the vertex
+  // colors (LineMaterial multiplies the two).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function lineMat2(color: number, linewidth = 1.5): any {
-    const m = new LineMaterial({ color, linewidth, resolution: new THREE.Vector2(width, height) })
+  function lineMat2(color: number, linewidth = 1.5, vertexColors = false): any {
+    const m = new LineMaterial({
+      color: vertexColors ? 0xffffff : color,
+      linewidth,
+      resolution: new THREE.Vector2(width, height),
+      vertexColors,
+    })
     lineMats.push(m)
     return m
   }
@@ -821,9 +851,8 @@ async function initThree() {
 
     // Per-line record of where its geometry landed in the flat position arrays
     // above (offsets/counts in points, i.e. groups of 3 floats — every 2 points
-    // is one rendered segment). Not consumed yet; groundwork for the future
-    // "dim already-processed lines" feature, which will need to address
-    // individual lines within these merged buffers. See GCODE_VIEWER_PLAN.md §6.
+    // is one rendered segment). Consumed by applyExecutedDimming() below to
+    // recolor individual lines within these merged buffers (issue #45).
     const newLineGeometryIndex = new Map<number, { layer: 'travel' | 'cutting' | 'zmove'; vertexOffset: number; vertexCount: number }>()
 
     vectors.forEach((vec, lineIndex) => {
@@ -850,11 +879,16 @@ async function initThree() {
     })
 
     lineGeometryIndex.value = newLineGeometryIndex
+    layerPointCounts = {
+      travel: rapidPts.length / 3,
+      cutting: feedPts.length / 3,
+      zmove: zmovePts.length / 3,
+    }
 
     if (rapidPts.length > 0) {
       const geo = new LineSegmentsGeometry()
       geo.setPositions(rapidPts)
-      const obj = new LineSegments2(geo, lineMat2(0x22c55e, 1.0))
+      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.travel, 1.0, true))
       obj.visible = layers.find(l => l.key === 'travel')?.visible ?? true
       scene.add(obj)
       objectMap['travel'] = obj
@@ -863,7 +897,7 @@ async function initThree() {
     if (feedPts.length > 0) {
       const geo = new LineSegmentsGeometry()
       geo.setPositions(feedPts)
-      const obj = new LineSegments2(geo, lineMat2(0x3b82f6, 1.5))
+      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.cutting, 1.5, true))
       obj.visible = layers.find(l => l.key === 'cutting')?.visible ?? true
       scene.add(obj)
       objectMap['cutting'] = obj
@@ -872,17 +906,27 @@ async function initThree() {
     if (zmovePts.length > 0) {
       const geo = new LineSegmentsGeometry()
       geo.setPositions(zmovePts)
-      const obj = new LineSegments2(geo, lineMat2(0xeab308, 1.0))
+      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.zmove, 1.0, true))
       obj.visible = layers.find(l => l.key === 'zmove')?.visible ?? true
       scene.add(obj)
       objectMap['zmove'] = obj
     }
 
+    // Initialize per-vertex colors immediately so a job that's already
+    // partway through (e.g. reconnecting mid-run) shows correct dimming right
+    // away, rather than waiting for the next execPtr change.
+    applyExecutedDimming(job.value?.execPtr ?? 0)
+
     requestRender()
   }
 
   loadToolpathSegments = (vectors: Array<LineVector | null>) => buildToolpathGeometry(vectors)
-  clearToolpath = () => { disposeToolpathObjects(); requestRender() }
+  clearToolpath = () => {
+    disposeToolpathObjects()
+    lineGeometryIndex.value = new Map()
+    layerPointCounts = { travel: 0, cutting: 0, zmove: 0 }
+    requestRender()
+  }
 
   // Tool representation — unit CylinderGeometry (r=1, h=1), rotated so axis aligns with world Z.
   // scale.x/z = radius, scale.y = height. Tip placed at workPos.z, body extends upward.
@@ -947,6 +991,47 @@ async function initThree() {
     controls.target.set(mx, my, mz)
     camera.position.copy(controls.target).addScaledVector(dir, dist)
     controls.update()
+    requestRender()
+  }
+
+  // Recolors the travel/cutting/zmove meshes so lines before execPtr fade
+  // toward the scene background (issue #45). Rebuilds each layer's full color
+  // buffer from scratch on every call rather than patching deltas — simpler,
+  // and correct even when execPtr moves backward (pause/recovery), at the
+  // cost of being O(total vertices); the caller throttles calls to at most
+  // once per animation frame to keep that affordable.
+  applyExecutedDimming = (execPtr: number) => {
+    const bg = scene.background as THREE.Color
+    const palette = {
+      travel: { base: new THREE.Color(LAYER_BASE_COLOR.travel), dimmed: new THREE.Color(LAYER_BASE_COLOR.travel).lerp(bg, DIM_BLEND_FACTOR) },
+      cutting: { base: new THREE.Color(LAYER_BASE_COLOR.cutting), dimmed: new THREE.Color(LAYER_BASE_COLOR.cutting).lerp(bg, DIM_BLEND_FACTOR) },
+      zmove: { base: new THREE.Color(LAYER_BASE_COLOR.zmove), dimmed: new THREE.Color(LAYER_BASE_COLOR.zmove).lerp(bg, DIM_BLEND_FACTOR) },
+    } as const
+
+    const colorArrays: Record<'travel' | 'cutting' | 'zmove', number[]> = { travel: [], cutting: [], zmove: [] }
+    for (const layer of ['travel', 'cutting', 'zmove'] as const) {
+      const { r, g, b } = palette[layer].base
+      const arr = colorArrays[layer]
+      for (let i = 0; i < layerPointCounts[layer]; i++) arr.push(r, g, b)
+    }
+
+    for (const [lineIndex, geomRef] of lineGeometryIndex.value) {
+      if (lineIndex >= execPtr) continue
+      const { r, g, b } = palette[geomRef.layer].dimmed
+      const arr = colorArrays[geomRef.layer]
+      const start = geomRef.vertexOffset * 3
+      for (let i = 0; i < geomRef.vertexCount; i++) {
+        arr[start + i * 3] = r
+        arr[start + i * 3 + 1] = g
+        arr[start + i * 3 + 2] = b
+      }
+    }
+
+    for (const layer of ['travel', 'cutting', 'zmove'] as const) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const obj = objectMap[layer] as any
+      if (obj) obj.geometry.setColors(colorArrays[layer])
+    }
     requestRender()
   }
 
@@ -1121,6 +1206,24 @@ watch(machineHomeWpos, (h) => {
     requestRender()
   }
 }, { deep: true })
+
+// Recolor already-executed toolpath segments (issue #45) as execPtr advances.
+// The server broadcasts an execPtr update on every sender event with no
+// throttling of its own (verified in jobRunner._handleSenderEvent) — on a
+// dense job that can fire many times a second, so this coalesces to at most
+// one recolor per animation frame rather than one per WS patch.
+let dimUpdatePending = false
+let latestExecPtr = 0
+watch(() => job.value?.execPtr, (ptr) => {
+  if (ptr === undefined) return
+  latestExecPtr = ptr
+  if (dimUpdatePending) return
+  dimUpdatePending = true
+  requestAnimationFrame(() => {
+    dimUpdatePending = false
+    applyExecutedDimming(latestExecPtr)
+  })
+})
 
 // Fetch and render 3D path vectors (+ raw GCode lines for the GCode panel) when
 // a job finishes loading. Clear both when the job is cleared.
