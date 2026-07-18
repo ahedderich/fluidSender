@@ -95,6 +95,15 @@
         </SettingsRow>
 
         <template v-if="tc.magazine.automation.type === 'fixed'">
+          <SettingsRow label="Safe Z">
+            <div class="flex items-center gap-1.5">
+              <input v-model.number="tc.magazine.automation.safeZ" type="number" step="0.1" class="settings-input w-24 font-mono" />
+              <span class="text-xs text-gray-400">mm</span>
+            </div>
+          </SettingsRow>
+          <p class="px-3 pb-2 text-xs text-gray-500 dark:text-slate-400">
+            Travel height used between the work area and any slot's approach point.
+          </p>
           <div class="px-3 pt-2 pb-1 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Slot Positions (machine coordinates)</div>
           <SettingsRow v-for="(slotPos, i) in tc.magazine.automation.slots" :key="i" :label="`Slot ${i + 1}`">
             <div class="flex items-center gap-1.5">
@@ -127,9 +136,16 @@
               <span class="text-xs text-gray-400">mm</span>
             </div>
           </SettingsRow>
+          <SettingsRow label="Seat Feed Rate">
+            <div class="flex items-center gap-1.5">
+              <input v-model.number="tc.magazine.automation.seatFeedMmPerMin" type="number" min="1" step="10" class="settings-input w-24 font-mono" />
+              <span class="text-xs text-gray-400">mm/min</span>
+            </div>
+          </SettingsRow>
           <p class="px-3 pb-2 text-xs text-gray-500 dark:text-slate-400">
             Example — a front-loaded rack: axis X, direction +, distance 50. To unload, the machine parks 50mm out along -X from
-            the slot, moves down to slot Z, then travels +50mm in X to seat the tool. Loading reverses the sequence.
+            the slot, moves down to slot Z, then travels +50mm in X to seat the tool. Loading reverses the sequence. The seat/unseat
+            leg runs at the controlled feed rate above, not a rapid.
           </p>
         </template>
 
@@ -180,9 +196,15 @@
               <span class="text-xs text-gray-400">mm</span>
             </div>
           </SettingsRow>
+          <SettingsRow label="Seat Feed Rate">
+            <div class="flex items-center gap-1.5">
+              <input v-model.number="tc.magazine.automation.seatFeedMmPerMin" type="number" min="1" step="10" class="settings-input w-24 font-mono" />
+              <span class="text-xs text-gray-400">mm/min</span>
+            </div>
+          </SettingsRow>
           <p class="px-3 pb-2 text-xs text-gray-500 dark:text-slate-400">
             Same pick/place approach leg as a fixed rack, applied at the load/unload position above once the magazine has
-            indexed to the requested slot.
+            indexed to the requested slot. The seat/unseat leg runs at the controlled feed rate above, not a rapid.
           </p>
         </template>
       </template>
@@ -332,8 +354,10 @@ function fixedAutomationDefaults(): Extract<MagazineAutomation, { type: 'fixed' 
     type: 'fixed',
     gripCommand: '',
     releaseCommand: '',
+    safeZ: -10,
     slots: Array.from({ length: tc.value.magazine.size }, () => ({ x: 0, y: 0, z: 0 })),
     approach: { axis: 'x', direction: 1, distance: 50 },
+    seatFeedMmPerMin: 100,
   }
 }
 
@@ -344,6 +368,7 @@ function movingAutomationDefaults(): Extract<MagazineAutomation, { type: 'moving
     releaseCommand: '',
     loadPosition: { safeZ: -10, toolchangeX: 0, toolchangeY: 0, toolchangeZ: -30 },
     approach: { axis: 'x', direction: 1, distance: 50 },
+    seatFeedMmPerMin: 100,
   }
 }
 
@@ -364,7 +389,7 @@ watch(
 function changeAutomationType(newType: MagazineAutomation['type']) {
   const prev = tc.value.magazine.automation
   if (!prev) return
-  const shared = { gripCommand: prev.gripCommand, releaseCommand: prev.releaseCommand, approach: prev.approach }
+  const shared = { gripCommand: prev.gripCommand, releaseCommand: prev.releaseCommand, approach: prev.approach, seatFeedMmPerMin: prev.seatFeedMmPerMin }
   tc.value.magazine.automation = newType === 'fixed'
     ? { ...fixedAutomationDefaults(), ...shared }
     : { ...movingAutomationDefaults(), ...shared }

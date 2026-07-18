@@ -51,7 +51,20 @@ export interface MagazineApproach {
  *  for that). Not yet consumed by any runtime GCode generation — pending that engine,
  *  `atc-managed` currently just falls back to the manual swap-confirm dialog. */
 export type MagazineAutomation =
-  | { type: 'fixed'; gripCommand: string; releaseCommand: string; slots: SlotPosition[]; approach: MagazineApproach }
+  | {
+      type: 'fixed'
+      gripCommand: string
+      releaseCommand: string
+      /** Safe travel height for XY moves between the work area and a slot's approach point —
+       *  `fixed` has no other position field to derive this from (unlike `moving`, which reuses
+       *  `loadPosition.safeZ`). */
+      safeZ: number
+      slots: SlotPosition[]
+      approach: MagazineApproach
+      /** Feed rate for the seat/unseat leg (the `G1` move that engages or disengages the slot
+       *  clamp) — this move must be controlled, not rapid. */
+      seatFeedMmPerMin: number
+    }
   | {
       type: 'moving'
       gripCommand: string
@@ -59,6 +72,8 @@ export type MagazineAutomation =
       loadPosition: ToolchangeSpatialConfig
       /** Same pick/place approach leg as `fixed`, applied at the single load/unload position. */
       approach: MagazineApproach
+      /** Same meaning as `fixed`'s field of the same name. */
+      seatFeedMmPerMin: number
     }
 
 export interface MagazineConfig {
