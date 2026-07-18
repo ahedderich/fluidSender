@@ -25,7 +25,7 @@ import { setMode } from '../machine/machineMode'
 import { toolStore } from '../tool/toolStore'
 import { appendRuntimeSession } from '../tool/runtimeLog'
 import { applyTransforms } from './transform'
-import { ToolchangeRunner, getToolchangeConfig } from './toolchangeRunner'
+import { ToolchangeRunner } from './toolchangeRunner'
 import type { SendHandle, SenderStatusEvent } from '../machine/types'
 import type { GCodeLine, GCodeModalState, JobState, ToolSection, TransformMode } from './types'
 
@@ -92,7 +92,7 @@ class JobRunner {
     getSendHandle: () => this._sendHandle,
     setSendHandle: (h) => { this._sendHandle = h },
     setJobStatusToolChange: () => { this._setStatus('tool_change') },
-    resumeAfterToolChange: () => this.resumeAfterToolChange(),
+    resumeAfterToolChange: (skipBoundaryCommand) => this.resumeAfterToolChange(skipBoundaryCommand),
   })
 
   get status() { return this._status }
@@ -252,7 +252,7 @@ class JobRunner {
     this._execStartedAt = Date.now()
     this._setStatus('running', { execPtr: this._execPtr })
     this._startRuntimeSession(this._toolSections[0] ?? null)
-    this._startMainSend().catch(console.error)
+    this._startMainSend()
   }
 
   /** Pause — sends feed hold, waits for Hold:0, resets machine. Fires 'suspended' event when done. */
@@ -316,7 +316,7 @@ class JobRunner {
         jLog(`resume() fallback: no modal, no suspendedChunk → fresh send from execPtr=${resumePtr}`)
         this.sendPtr = resumePtr
         this._setStatus('running')
-        this._startMainSend().catch(console.error)
+        this._startMainSend()
       }
     } catch (err) {
       jLog(`resume() ERROR: ${(err as Error).message}`)
@@ -324,10 +324,17 @@ class JobRunner {
     }
   }
 
-  /** Resume after a tool change — continue from the next section. */
-  resumeAfterToolChange(): void {
+  /** Resume after a tool change — continue from the next section. skipBoundaryCommand
+   *  drops the section's own T{n}/M6 line instead of sending it — used by the ATC
+   *  magazine-missing-slot fallback, where that line must never reach real ATC hardware
+   *  with an unassigned tool number (see ToolchangeRunnerDeps.resumeAfterToolChange). */
+  resumeAfterToolChange(skipBoundaryCommand = false): void {
     if (this._status !== 'tool_change') return
     setToolChangeModeActive(false)
+    if (skipBoundaryCommand) {
+      const section = this._toolSections[this._currentSectionIndex]
+      if (section) this.sendPtr = Math.max(this.sendPtr, section.startLine + 1)
+    }
     this._startRuntimeSession(this._toolSections[this._currentSectionIndex] ?? null)
     this._sendSection(this._currentSectionIndex)
     this._setStatus('running', { toolChangeRequest: null })
@@ -668,13 +675,12 @@ class JobRunner {
 
   // ─── Private ─────────────────────────────────────────────────────────────────
 
-  /** Start sending from current sendPtr as a flat chunk (single section or recovery). */
-  private async _startMainSend(): Promise<void> {
-    const tc = await getToolchangeConfig()
-    if (tc.strategy === 'atc-passthrough') {
-      this._startFlatSend()
-      return
-    }
+  /** Start sending from current sendPtr as a flat chunk (single section), or section-by-
+   *  section otherwise. Every strategy now sends section-by-section once there's more
+   *  than one tool section — including atc-passthrough, which used to flat-send the whole
+   *  file — so translateToolNumberToSlot and the magazine-missing-slot fallback can
+   *  intercept each T{n}/M6 boundary before it reaches the machine. */
+  private _startMainSend(): void {
     if (this._toolSections.length <= 1) {
       this._startFlatSend()
       return
@@ -850,7 +856,7 @@ class JobRunner {
           // The resumed chunk fires its own events via its existing onEvent callback.
         } else {
           this._setStatus('running')
-          this._startMainSend().catch(console.error)
+          this._startMainSend()
         }
         break
       case 'error':

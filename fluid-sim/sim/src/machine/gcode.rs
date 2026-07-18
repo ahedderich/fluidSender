@@ -64,6 +64,12 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
         state.spindle_speed = speed;
     }
 
+    // T word (category C): preselects the tool immediately, same as real FluidNC's
+    // gc_state.tool — M6 is what actually performs the swap, not T.
+    if let Some(t) = word_val(words, 'T') {
+        state.tool_number = t.max(0.0) as u32;
+    }
+
     // Modal G codes — G17-G21, G90-G91 are category C (immediate).
     // G54-G59 are B1: WCS switch requires planner drain (FORCE_BUFFER_SYNC_DURING_WCO_CHANGE).
     for &g in &gs {
@@ -130,6 +136,12 @@ pub fn interpret(words: &[Word], state: &mut MachineState) -> InterpretResult {
             }
             9 => {
                 state.coolant = CoolantState::Off;
+                drain_needed = true;
+            }
+            6 => {
+                // Tool change — B1 (safety: don't swap mid-move). The tool number
+                // itself was already applied above by the T-word handling, whether T
+                // appeared on this line or a previous one.
                 drain_needed = true;
             }
             0 => {
@@ -663,6 +675,35 @@ mod tests {
         let words = parse_gcode_words("M9").unwrap();
         interpret(&words, &mut state);
         assert_eq!(state.coolant, CoolantState::Off);
+    }
+
+    #[test]
+    fn standalone_t_word_preselects_without_drain() {
+        let mut state = default_state();
+        let words = parse_gcode_words("T5").unwrap();
+        let result = interpret(&words, &mut state);
+        assert_eq!(state.tool_number, 5);
+        assert!(matches!(result, InterpretResult::Ok));
+    }
+
+    #[test]
+    fn m6_applies_tool_number_and_drains() {
+        let mut state = default_state();
+        let words = parse_gcode_words("T3 M6").unwrap();
+        let result = interpret(&words, &mut state);
+        assert_eq!(state.tool_number, 3);
+        assert!(matches!(result, InterpretResult::DrainAndApply));
+    }
+
+    #[test]
+    fn m6_reuses_previously_selected_tool() {
+        let mut state = default_state();
+        let words = parse_gcode_words("T7").unwrap();
+        interpret(&words, &mut state);
+        let words = parse_gcode_words("M6").unwrap();
+        let result = interpret(&words, &mut state);
+        assert_eq!(state.tool_number, 7);
+        assert!(matches!(result, InterpretResult::DrainAndApply));
     }
 
     #[test]

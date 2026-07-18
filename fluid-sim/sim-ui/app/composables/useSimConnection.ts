@@ -26,6 +26,7 @@ interface SimStateMsg {
   maxRate: Record<AxisKey, number>
   fluidConfig: Record<string, string>
   toolLengthOffset: number
+  toolNumber: number
   firmwareVersion: string
 }
 
@@ -56,6 +57,7 @@ export function useSimConnection() {
     store.limits.zMax = msg.limits.zMax
     store.limits.door = msg.door
     store.toolLengthOffset = msg.toolLengthOffset ?? 0
+    store.toolNumber = msg.toolNumber ?? 0
     if (msg.firmwareVersion) store.firmwareVersion = msg.firmwareVersion
     for (const a of AXES) {
       store.pos[a] = msg.pos[a] ?? store.pos[a]

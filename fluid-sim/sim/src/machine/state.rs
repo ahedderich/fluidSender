@@ -261,6 +261,14 @@ pub struct MachineState {
     /// manual/toolsetter toolchange strategies — FluidSender intercepts it client-side).
     #[serde(rename = "toolLength")]
     pub tool_length: f64,
+    /// Selected tool number (GCode `T` word), mirroring FluidNC's `gc_state.tool`.
+    /// Updated as soon as a `T` word is parsed, regardless of `M6` — matches real
+    /// firmware, where `T` alone only preselects (Category C) and `M6` is what
+    /// performs the swap. Only meaningful for the `atc-passthrough` strategy, where
+    /// FluidSender sends `T`/`M6` straight to the firmware instead of intercepting
+    /// them client-side. Persists across soft_reset, same as tool_length above.
+    #[serde(rename = "toolNumber")]
+    pub tool_number: u32,
     /// Tool-setter trigger geometry. Persists across soft_reset (the physical switch
     /// doesn't move when an alarm is cleared).
     pub toolsetter: ToolsetterConfig,
@@ -341,6 +349,7 @@ impl MachineState {
             reset_epoch: 0,
             tool_length_offset: [0.0; AXIS_COUNT],
             tool_length: 0.0,
+            tool_number: 0,
             toolsetter: ToolsetterConfig::default(),
         }
     }

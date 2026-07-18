@@ -61,6 +61,7 @@ describe('useSimConnection', () => {
         maxRate: { x: 5000, y: 5000, z: 1000, a: 1000, b: 1000, c: 1000 },
         fluidConfig: {},
         toolLengthOffset: 0,
+        toolNumber: 0,
         firmwareVersion: '4.0.3',
       }),
     })

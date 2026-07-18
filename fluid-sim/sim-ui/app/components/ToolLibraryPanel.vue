@@ -97,6 +97,9 @@
     <div v-if="s.loadedToolNumber !== null" class="shrink-0 pt-2 border-t border-gray-100 dark:border-slate-700 text-[10px] text-gray-400 dark:text-slate-500 font-mono">
       Reported TLO (Z, from last G43.1): {{ s.toolLengthOffset.toFixed(3) }} mm
     </div>
+    <div class="shrink-0 pt-2 border-t border-gray-100 dark:border-slate-700 text-[10px] text-gray-400 dark:text-slate-500 font-mono">
+      Firmware tool number (from last T/M6): T{{ s.toolNumber }}
+    </div>
   </div>
 </template>
 
