@@ -19,7 +19,7 @@ import {
 import { getLastMachineStatus } from '../machine/poller'
 import { sendGCode } from '../machine/sender'
 import { setMode } from '../machine/machineMode'
-import { buildToolchangePositionSequence, buildToolsetterApproachSequence } from './toolchangeSequences'
+import { buildMagazineToolchangeSequence, buildToolchangePositionSequence, buildToolsetterApproachSequence } from './toolchangeSequences'
 import { runToolsetterProbe } from '../machine/toolsetterProbe'
 import { setToolLengthOffset } from '../machine/toolLengthState'
 import type { SendHandle } from '../machine/types'
@@ -106,6 +106,84 @@ class ToolchangeRunner {
     return tc.magazine.enabled && !tc.magazineSlots.includes(toolNumber)
   }
 
+  /** Library tool number → assigned magazine slot number (1-based), or null if unassigned. */
+  private _slotForTool(tc: ToolchangeConfig, toolNumber: number): number | null {
+    const idx = tc.magazineSlots.indexOf(toolNumber)
+    return idx === -1 ? null : idx + 1
+  }
+
+  /** The T-word FluidSender should actually send for an atc-passthrough/atc-rapidchange swap —
+   *  the library tool number translated to its magazine slot when `translateToolNumberToSlot`
+   *  is on, otherwise unchanged. Callers only reach this once `_needsManualFallback` has already
+   *  confirmed the tool has a slot, so a missing slot here (translation on, slot not found) can't
+   *  happen in practice — falls back to the untranslated number defensively rather than emitting T0. */
+  private _resolveOutgoingToolNumber(tc: ToolchangeConfig, toolNumber: number): number {
+    if (!('translateToolNumberToSlot' in tc) || !tc.translateToolNumberToSlot || !tc.magazine.enabled) return toolNumber
+    return this._slotForTool(tc, toolNumber) ?? toolNumber
+  }
+
+  /** True when atc-managed can't run its automated sequence: no magazine/automation
+   *  configured at all, the next tool has no slot (same check as every other ATC strategy),
+   *  or — unique to atc-managed, since it's the only strategy that must know where to put
+   *  the *current* tool back — the tool physically in the spindle has no slot either (e.g.
+   *  it was loaded via the standalone/manual path, bypassing the magazine). */
+  private async _needsManagedFallback(tc: Extract<ToolchangeConfig, { strategy: 'atc-managed' }>, nextToolNumber: number): Promise<boolean> {
+    if (!tc.magazine.enabled || !tc.magazine.automation) return true
+    if (this._needsManualFallback(tc, nextToolNumber)) return true
+    const machineId = await this._getActiveMachineId()
+    const currentToolNumber = machineId ? await getLoadedToolForMachine(machineId) : null
+    if (currentToolNumber && this._slotForTool(tc, currentToolNumber) === null) return true
+    return false
+  }
+
+  /** Builds and runs the full atc-managed unload/load sequence via buildMagazineToolchangeSequence,
+   *  then the optional toolsetter probe — the GCode-generation engine referenced by the old
+   *  "pending that engine" fallback comment. Callers must have already confirmed
+   *  !_needsManagedFallback for this exact tool. */
+  private async _runManagedAutomation(tc: Extract<ToolchangeConfig, { strategy: 'atc-managed' }>, nextToolNumber: number, isJobContext: boolean): Promise<void> {
+    const automation = tc.magazine.automation!
+    const machineId = await this._getActiveMachineId()
+    const currentToolNumber = (machineId ? await getLoadedToolForMachine(machineId) : null) || null
+    const fromSlot = currentToolNumber !== null ? this._slotForTool(tc, currentToolNumber) : null
+    const toSlot = this._slotForTool(tc, nextToolNumber)!
+
+    const sequence = buildMagazineToolchangeSequence(automation, { fromSlot, toSlot, toToolNumber: nextToolNumber })
+    const toolsetter = tc.toolsetter
+    this._pendingToolchange = { operation: 'load', toolNumber: nextToolNumber, isJobContext, requiresProbe: !!toolsetter, skipBoundaryCommand: true }
+    this.deps.setSendHandle(sendGCode(sequence, (ev) => {
+      if (ev.status !== 'completed') return
+      this.deps.setSendHandle(null)
+      if (ev.completedMode !== 'success') {
+        this._broadcastToolchangeError('Magazine automation sequence failed', isJobContext)
+        return
+      }
+      if (toolsetter) {
+        this._pendingToolsetterPos = toolsetter
+        this._openToolchangeDialog({ phase: 'probing', currentToolNumber: null, nextToolNumber, isJobContext, requiresProbe: true })
+        this._runToolsetterProbeSequence(toolsetter)
+      } else {
+        this._completeToolchange()
+      }
+    }))
+  }
+
+  /** Sends the actual T{n} M6 boundary command for an atc-passthrough/atc-rapidchange swap
+   *  (translated per _resolveOutgoingToolNumber) instead of letting the raw file line pass
+   *  through as part of the section's normal chunk — this is what lets translation and a
+   *  post-swap toolsetter probe hook in. `onSuccess` runs once the machine acks the M6. */
+  private _sendAtcSwap(tc: ToolchangeConfig, toolNumber: number, isJobContext: boolean, onSuccess: () => void): void {
+    const outgoing = this._resolveOutgoingToolNumber(tc, toolNumber)
+    this.deps.setSendHandle(sendGCode([`T${outgoing} M6`], (ev) => {
+      if (ev.status !== 'completed') return
+      this.deps.setSendHandle(null)
+      if (ev.completedMode !== 'success') {
+        this._broadcastToolchangeError('Tool change command failed', isJobContext)
+        return
+      }
+      onSuccess()
+    }))
+  }
+
   /** Manual-swap fallback entered when an ATC strategy (or custom-macro) hits a toolchange
    *  for a tool with no magazine slot. Mirrors manual-basic/manual-toolsetter exactly —
    *  same dialog, same probe flow — the only difference is the caller marks
@@ -158,25 +236,33 @@ class ToolchangeRunner {
         // Both strategies mean "FluidNC's own M6-triggered macro drives the swap" — the
         // only thing FluidSender must ever gate is handing that macro a tool with no
         // magazine slot, since the macro would act on an unassigned/wrong slot. If the
-        // slot is fine, just let the boundary's own M6 line reach the firmware macro.
+        // slot is fine, the boundary command is sent explicitly (rather than forwarded as
+        // raw file text) so translateToolNumberToSlot and a post-swap toolsetter probe can
+        // both hook in. A standalone T with no M6 is just a preselect — no swap happens,
+        // nothing to translate or probe, forward it untouched.
         if (this._needsManualFallback(tc, section.toolNumber)) {
           this._enterManualFallback(section.toolNumber, true, tc.toolsetter, true)
-        } else {
+        } else if (section.toolChangeType !== 'M6') {
           this.deps.resumeAfterToolChange()
+        } else if (tc.toolsetter) {
+          const toolsetter = tc.toolsetter
+          this._pendingToolchange = { operation: 'load', toolNumber: section.toolNumber, isJobContext: true, requiresProbe: true, skipBoundaryCommand: true }
+          this._sendAtcSwap(tc, section.toolNumber, true, () => {
+            this._pendingToolsetterPos = toolsetter
+            this._openToolchangeDialog({ phase: 'probing', currentToolNumber: null, nextToolNumber: section.toolNumber, isJobContext: true, requiresProbe: true })
+            this._runToolsetterProbeSequence(toolsetter)
+          })
+        } else {
+          this._pendingToolchange = { operation: 'load', toolNumber: section.toolNumber, isJobContext: true, requiresProbe: false, skipBoundaryCommand: true }
+          this._sendAtcSwap(tc, section.toolNumber, true, () => this._completeToolchange())
         }
         break
 
       case 'atc-managed':
-        if (this._needsManualFallback(tc, section.toolNumber)) {
+        if (await this._needsManagedFallback(tc, section.toolNumber)) {
           this._enterManualFallback(section.toolNumber, true, tc.toolsetter, false)
         } else {
-          // Pending the GCode-generation engine reading tc.magazine.automation — no macro
-          // exists for this strategy, so it falls back to a manual swap-confirm dialog,
-          // same as manual-basic, until that engine lands. No ATC hardware is tied to the
-          // file's M6 line in this mode, so forwarding it afterward (via resumeAfterToolChange's
-          // default skipBoundaryCommand: false) is harmless bookkeeping either way.
-          this._pendingToolchange = { operation: 'load', toolNumber: section.toolNumber, isJobContext: true, requiresProbe: false }
-          this._openToolchangeDialog({ phase: 'waiting_for_swap', currentToolNumber: null, nextToolNumber: section.toolNumber, isJobContext: true })
+          await this._runManagedAutomation(tc, section.toolNumber, true)
         }
         break
 
@@ -257,6 +343,13 @@ class ToolchangeRunner {
   }
 
   private _broadcastToolchangeError(message: string, isJobContext: boolean): void {
+    // A failure can land here before any dialog was ever opened (e.g. the ATC swap send
+    // itself fails) — open one now so the error and its Abort button are actually visible
+    // instead of being silently dropped by _updateToolchangeDialog's no-op-if-absent guard.
+    if (!this._toolchangeModalId) {
+      this._openToolchangeDialog({ phase: 'error', currentToolNumber: null, nextToolNumber: null, isJobContext, errorMessage: message })
+      return
+    }
     this._updateToolchangeDialog({ phase: 'error', errorMessage: message })
     if (!isJobContext) return
     // Don't auto-abort job — let user use the dialog Abort button
@@ -445,13 +538,17 @@ class ToolchangeRunner {
       case 'atc-passthrough':
       case 'atc-rapidchange':
         if (operation === 'load' && targetToolNumber !== null) {
-          this._pendingToolchange = { operation: 'load', toolNumber: targetToolNumber, isJobContext: false, requiresProbe: false }
-          this.deps.setSendHandle(sendGCode([`T${targetToolNumber}`, 'M6'], (ev) => {
-            if (ev.status !== 'completed') return
-            this.deps.setSendHandle(null)
-            if (ev.completedMode === 'success') this._completeToolchange()
-            else this._pendingToolchange = null
-          }))
+          const toolsetter = tc.toolsetter
+          this._pendingToolchange = { operation: 'load', toolNumber: targetToolNumber, isJobContext: false, requiresProbe: !!toolsetter }
+          this._sendAtcSwap(tc, targetToolNumber, false, () => {
+            if (toolsetter) {
+              this._pendingToolsetterPos = toolsetter
+              this._openToolchangeDialog({ phase: 'probing', currentToolNumber: null, nextToolNumber: targetToolNumber, isJobContext: false, requiresProbe: true })
+              this._runToolsetterProbeSequence(toolsetter)
+            } else {
+              this._completeToolchange()
+            }
+          })
         } else if (operation === 'unload') {
           this._pendingToolchange = { operation: 'unload', toolNumber: null, isJobContext: false, requiresProbe: false }
           this._completeToolchange()
@@ -459,8 +556,12 @@ class ToolchangeRunner {
         break
 
       case 'atc-managed':
-        this._pendingToolchange = { operation, toolNumber: operation === 'load' ? targetToolNumber : null, isJobContext: false, requiresProbe: false }
-        this._openToolchangeDialog({ phase: 'waiting_for_swap', currentToolNumber: null, nextToolNumber: targetToolNumber, isJobContext: false, operation })
+        if (operation === 'load' && targetToolNumber !== null && !(await this._needsManagedFallback(tc, targetToolNumber))) {
+          await this._runManagedAutomation(tc, targetToolNumber, false)
+        } else {
+          this._pendingToolchange = { operation, toolNumber: operation === 'load' ? targetToolNumber : null, isJobContext: false, requiresProbe: false }
+          this._openToolchangeDialog({ phase: 'waiting_for_swap', currentToolNumber: null, nextToolNumber: targetToolNumber, isJobContext: false, operation })
+        }
         break
 
       case 'custom-macro': {

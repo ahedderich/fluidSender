@@ -324,6 +324,14 @@ export const useSettingsStore = defineStore('settings', () => {
       if (magazine.automation?.type === 'moving' && !magazine.automation.approach) {
         magazine.automation.approach = { axis: 'x', direction: 1, distance: 50 }
       }
+      // Backfill: `safeZ` (fixed only) and `seatFeedMmPerMin` (both) were added after some
+      // magazine automation configs may already have been saved without them.
+      if (magazine.automation?.type === 'fixed' && magazine.automation.safeZ === undefined) {
+        magazine.automation.safeZ = 0
+      }
+      if (magazine.automation && magazine.automation.seatFeedMmPerMin === undefined) {
+        magazine.automation.seatFeedMmPerMin = 100
+      }
       // Backfill: `translateToolNumberToSlot` was added after some atc-passthrough/
       // atc-managed/atc-rapidchange configs may already have been saved without it.
       if (
