@@ -170,21 +170,40 @@ export interface UserRecord {
   passwordHash: string
 }
 
-interface AppConfig {
+/** A bearer token for the external file-upload API (see docs/external-api.md).
+ *  Scoped to /api/external/* only — never grants session/UI access. */
+export interface ApiTokenRecord {
+  id: string
+  label: string
+  /** SHA-256 hex digest of the raw token — tokens are high-entropy secrets,
+   *  not user-chosen passwords, so a fast hash (not bcrypt) is the correct
+   *  tradeoff: verification runs on every external API call and must stay cheap. */
+  tokenHash: string
+  /** Whether this token may use `load: true` on the upload endpoint to start
+   *  a job, vs. only ever writing/listing files. Least-privilege default. */
+  allowLoad: boolean
+  createdAt: number
+  lastUsedAt: number | null
+}
+
+export interface AppConfig {
   auth?: {
     enabled?: boolean
     users?: UserRecord[]
+    apiTokens?: ApiTokenRecord[]
   }
   machines?: unknown[]
   app?: Record<string, unknown>
 }
 
-function stripAuthUsers(config: AppConfig): AppConfig {
-  if (!config.auth?.users?.length) return config
-  return { ...config, auth: { ...config.auth, users: undefined } }
+/** Strips fields that must never reach a browser client, whether via GET /api/config
+ *  or the WS config broadcast (which goes to every connected client, not just admins). */
+function stripAuthSecrets(config: AppConfig): AppConfig {
+  if (!config.auth?.users?.length && !config.auth?.apiTokens?.length) return config
+  return { ...config, auth: { ...config.auth, users: undefined, apiTokens: undefined } }
 }
 
-export { stripAuthUsers }
+export { stripAuthSecrets }
 
 const DEFAULT_CONFIG: AppConfig = {
   auth: { enabled: false, users: [] },
@@ -495,7 +514,7 @@ export async function updateMagazineSlots(machineId: string, slots: (number | nu
       await setConfig(config)
     }
   }
-  return { path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }
+  return { path: 'config', set: stripAuthSecrets(config) as unknown as Record<string, unknown> }
 }
 
 export async function setTolBaseline(machineId: string, value: number): Promise<PatchOp> {
@@ -509,7 +528,7 @@ export async function setTolBaseline(machineId: string, value: number): Promise<
       await setConfig(config)
     }
   }
-  return { path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }
+  return { path: 'config', set: stripAuthSecrets(config) as unknown as Record<string, unknown> }
 }
 
 export function pushToast(toast: Toast): PatchOp {
@@ -640,7 +659,7 @@ export function setConnection(state: Partial<ConnectionState>): ConnectionState 
 // ─── Full state snapshot ──────────────────────────────────────────────────────
 
 export function getFullState() {
-  return { config: stripAuthUsers(cachedConfig), connection: getConnection() }
+  return { config: stripAuthSecrets(cachedConfig), connection: getConnection() }
 }
 
 // getMachineStatus is injected at startup to avoid a circular dependency with the poller
@@ -658,7 +677,7 @@ export function registerToolLibraryProvider(fn: (machineId: string) => { machine
 export function getSnapshot() {
   const machineId = ui.selection.activeMachineId
   return {
-    config: stripAuthUsers(cachedConfig),
+    config: stripAuthSecrets(cachedConfig),
     connection: getConnection(),
     ui,
     job: getJobState(),
