@@ -646,6 +646,7 @@ const centerInCfg = reactive({
 const rotationCfg = reactive({
   safeHeightMm: 20,
   insideOffset: 20,
+  probeHeightMm: -3,
   edge: 'top' as 'top' | 'bottom' | 'left' | 'right',
 })
 
