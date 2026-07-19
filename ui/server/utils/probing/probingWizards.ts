@@ -350,7 +350,7 @@ export async function runRotation(
     probeAxis = 'X'; approachDir = '-'; approachStartOffset = measuredWidth / 2 + buf
   }
 
-  const probeHeight = -compensation.zMinus
+  const probeHeight = config.probeHeightMm ?? -compensation.zMinus
   const retractSign = approachDir === '+' ? '-' : ''
   broadcastPatch([setProbingState({ totalSteps: 3 })])
 
