@@ -3,9 +3,8 @@ import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { initMeta } from '../utils/fileMetadata'
+import { UPLOADS_DIR } from '../utils/uploadPaths'
 
-const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
-const UPLOADS_DIR = join(DATA_DIR, 'uploads')
 const MAX_FILE_SIZE = 100 * 1024 * 1024
 
 export default defineEventHandler(async (event) => {

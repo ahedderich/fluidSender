@@ -32,7 +32,7 @@ import {
   clearStock,
   clearMeasurements,
   updateMagazineSlots,
-  stripAuthUsers,
+  stripAuthSecrets,
   getProbingState,
   persistLastMachineId,
   getAppUpdateCheck,
@@ -220,7 +220,7 @@ async function _onFetchOk() {
       if (bootMachine) {
         bootMachine.bootInfo = bootInfo
         await setConfig(bootConfig)
-        broadcastPatch([{ path: 'config', set: stripAuthUsers(bootConfig) as unknown as Record<string, unknown> }])
+        broadcastPatch([{ path: 'config', set: stripAuthSecrets(bootConfig) as unknown as Record<string, unknown> }])
       }
     }
 
@@ -291,7 +291,7 @@ async function _finishConfigFetch(lines: string[]) {
       await setConfig(config)
       const ops: ReturnType<typeof pushToast>[] = []
       if (manual) ops.push(pushToast({ id: `fw-cfg-ok-${Date.now()}`, type: 'success', message: 'Firmware configuration loaded', timeout: 3000 }))
-      broadcastPatch([{ path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }, ...ops])
+      broadcastPatch([{ path: 'config', set: stripAuthSecrets(config) as unknown as Record<string, unknown> }, ...ops])
     }
   } catch (err) {
     console.error('[ws] config fetch: YAML parse error:', err)
@@ -320,7 +320,7 @@ async function _persistFirmwareVersionAndCheckUpdate(machineId: string, version:
   }
 
   await setConfig(config)
-  broadcastPatch([{ path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }])
+  broadcastPatch([{ path: 'config', set: stripAuthSecrets(config) as unknown as Record<string, unknown> }])
 }
 
 machineConnection.on('event', (ev) => {
@@ -532,7 +532,7 @@ export default defineWebSocketHandler({
         }
         fwMachine.firmwareUpdateCheck = { latestVersion: result.version, checkedAt: Date.now() }
         await setConfig(config)
-        broadcastPatch([{ path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }])
+        broadcastPatch([{ path: 'config', set: stripAuthSecrets(config) as unknown as Record<string, unknown> }])
         break
       }
 
