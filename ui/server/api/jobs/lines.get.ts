@@ -20,9 +20,14 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 404, message: 'Lines not found — job not analysed yet' })
     }
 
-    const raw = await readFile(join(CURRENT_JOB_DIR, 'lines.json'), 'utf8')
+    const raw = await readFile(join(CURRENT_JOB_DIR, 'lines-text.json'), 'utf8')
     setHeader(event, 'Content-Type', 'application/json')
-    setHeader(event, 'Cache-Control', 'private, max-age=3600')
+    // No client-side caching: this URL is keyed only on fileId, not on analysis
+    // content, so a stale cached response here can silently outlive a format
+    // or content change for the same file (e.g. re-running the analyzer). The
+    // endpoint is a cheap disk read, not a computation, so there's no real
+    // cost to always refetching.
+    setHeader(event, 'Cache-Control', 'no-store')
     return raw
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
