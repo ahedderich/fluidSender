@@ -27,11 +27,13 @@
       </div>
     </div>
 
-    <!-- Log area -->
+    <!-- Log area. overflow toggles with input focus: hidden lets the mousewheel
+         pass through to the page scroll, auto lets it scroll the log while typing. -->
     <div
       ref="scrollEl"
       @scroll="onScroll"
-      class="flex-1 overflow-y-auto px-2 py-1.5 font-mono text-xs space-y-px min-h-0"
+      :class="inputFocused ? 'overflow-y-auto' : 'overflow-y-hidden'"
+      class="flex-1 px-2 py-1.5 font-mono text-xs space-y-px min-h-0"
     >
       <div
         v-for="entry in machine.consoleLog"
@@ -55,6 +57,8 @@
         @keydown.enter="sendCmd"
         @keydown.up.prevent="historyUp"
         @keydown.down.prevent="historyDown"
+        @focus="inputFocused = true"
+        @blur="inputFocused = false"
         :disabled="isViewer"
         placeholder="Send command..."
         class="flex-1 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 text-gray-900 dark:text-slate-200 text-xs font-mono px-2.5 py-1.5 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-300 dark:placeholder-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -83,6 +87,7 @@ const inputCmd = ref('')
 const autoScroll = ref(true)
 const cmdHistory = ref<string[]>([])
 const historyIndex = ref(-1)
+const inputFocused = ref(false)
 
 function prefixChar(type: SyncConsoleEntry['type']): string {
   if (type === 'sent') return '>'
