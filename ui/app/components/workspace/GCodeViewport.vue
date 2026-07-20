@@ -158,6 +158,7 @@
       <WorkspaceGCodeLinePanel
         :lines="gcodeLines"
         :tool-sections="job?.toolSections ?? null"
+        :generator-info="job?.generatorInfo ?? { generator: 'generic' }"
         :selected-index="selectedLineIndex"
         @select="onLineSelect"
       />

@@ -27,7 +27,7 @@ export async function loadCachedAnalysis(fileId: string, mode: TransformMode = '
   try {
     const raw = await readFile(jobPaths(mode).analysis, 'utf8')
     const a = JSON.parse(raw) as JobAnalysis
-    if (a.version !== 3 || a.fileId !== fileId) return null
+    if (a.version !== 4 || a.fileId !== fileId) return null
     return a
   } catch {
     return null
@@ -39,7 +39,7 @@ export async function loadRawAnalysis(mode: TransformMode = 'none'): Promise<Job
   try {
     const raw = await readFile(jobPaths(mode).analysis, 'utf8')
     const a = JSON.parse(raw) as JobAnalysis
-    if (a.version !== 3) return null
+    if (a.version !== 4) return null
     return a
   } catch {
     return null
@@ -95,7 +95,7 @@ export async function analyzeGCodeFile(
 
   // The line-by-line pass is the bulk of the work — map its own 0-100 progress
   // into the 10-80 band instead of jumping straight from 10 to 80.
-  const { lines, vectors, modalStates, tools, axisRanges, estimatedTotalMs, noToolDefinitions, headerToolDefs } = analyzeGCode(
+  const { lines, vectors, modalStates, tools, axisRanges, estimatedTotalMs, noToolDefinitions, generator, generatorInfo } = analyzeGCode(
     content,
     undefined,
     (innerPct) => {
@@ -107,7 +107,7 @@ export async function analyzeGCodeFile(
   onProgress(80)
 
   const analysis: JobAnalysis = {
-    version: 3,
+    version: 4,
     fileId,
     filename,
     analyzedAt: Date.now(),
@@ -116,7 +116,8 @@ export async function analyzeGCodeFile(
     axisRanges,
     tools,
     noToolDefinitions,
-    headerToolDefs,
+    generator,
+    generatorInfo,
   }
 
   const paths = jobPaths(mode)

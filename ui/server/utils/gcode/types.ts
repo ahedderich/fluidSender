@@ -1,4 +1,5 @@
 import type { CommandCategory } from './classifier'
+import type { GcodeGeneratorId, GeneratorExtraInfo } from './generator'
 
 export type GCodeLineType =
   | 'rapid'
@@ -45,11 +46,6 @@ export interface ToolSection {
    *   null = first section (preamble absorbed; no preceding change)
    */
   toolChangeType: 'M6' | 'T' | null
-  /** Extracted from Fusion360 header comment for this tool number. */
-  commentedName: string | null
-  commentedDiameter: number | null
-  commentedCornerRadius: number | null
-  commentedZMin: number | null
   startLine: number
   endLine: number
   lineCount: number
@@ -67,7 +63,7 @@ export type LineVector =
 
 /** Persisted analysis result stored alongside the GCode file. */
 export interface JobAnalysis {
-  version: 3
+  version: 4
   fileId: string
   filename: string
   analyzedAt: number
@@ -76,13 +72,8 @@ export interface JobAnalysis {
   axisRanges: AxisRanges
   tools: ToolSection[]
   noToolDefinitions: boolean
-  headerToolDefs: Array<{
-    number: number
-    diameter: number
-    cornerRadius: number
-    zMin: number
-    type: string
-  }>
+  generator: GcodeGeneratorId
+  generatorInfo: GeneratorExtraInfo
 }
 
 export interface AxisRanges {
@@ -145,6 +136,10 @@ export interface JobState {
   analyzeProgress: number
   /** Tool sections extracted during analysis; null before analysis completes. */
   toolSections: ToolSection[] | null
+  /** Detected CAM generator for the loaded file; null before analysis completes. */
+  generator: GcodeGeneratorId | null
+  /** Generator-specific extra tool data extracted during analysis; null before analysis completes. */
+  generatorInfo: GeneratorExtraInfo | null
   recovery: {
     available: boolean
     checkpointPtr: number

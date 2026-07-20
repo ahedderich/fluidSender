@@ -1,20 +1,12 @@
 import { word, stripComments, dist3, rToIJ, arcLength } from './utils'
 import { classifyLine, getActiveFirmwareVersion } from './classifier'
+import { detectGenerator, extractGeneratorInfo } from './generator'
+import type { GcodeGeneratorId, GeneratorExtraInfo } from './generator'
 import type { GCodeLine, GCodeLineType, LineVector, GCodeModalState, ToolSection, AxisRanges } from './types'
 
 const DEFAULT_MAX_RAPID_MM_PER_MIN = 3000
 
-// Fusion360 header tool definition: (T28 D=8 CR=0 - ZMIN=-4 - flat end mill)
-const HEADER_TOOL_RE = /^\(T(\d+)\s+D=([\d.]+)\s+CR=([\d.]+)\s+-\s+ZMIN=([-\d.]+)\s+-\s+(.+)\)$/i
 const MANUAL_TOOL_CHANGE_RE = /^\(MANUAL TOOL CHANGE TO T(\d+)\)/i
-
-export interface HeaderToolDef {
-  number: number
-  diameter: number
-  cornerRadius: number
-  zMin: number
-  type: string
-}
 
 export interface AnalysisResult {
   lines: GCodeLine[]
@@ -24,7 +16,8 @@ export interface AnalysisResult {
   axisRanges: AxisRanges
   estimatedTotalMs: number
   noToolDefinitions: boolean
-  headerToolDefs: HeaderToolDef[]
+  generator: GcodeGeneratorId
+  generatorInfo: GeneratorExtraInfo
 }
 
 function resolvePos(
@@ -90,10 +83,6 @@ export function analyzeGCode(
       toolNumber: 0,
       toolChangeCmd: null,
       toolChangeType: null,
-      commentedName: null,
-      commentedDiameter: null,
-      commentedCornerRadius: null,
-      commentedZMin: null,
       startLine: 0,
       endLine: rawLines.length - 1,
       lineCount: rawLines.length,
@@ -103,27 +92,8 @@ export function analyzeGCode(
   let firstToolKnown = false
   let sIdx = 0
 
-  // Parse header tool definitions from first ≤20 non-blank lines
-  const headerToolDefs: HeaderToolDef[] = []
-  {
-    let scanned = 0
-    for (let h = 0; h < rawLines.length && scanned < 20; h++) {
-      const hLine = rawLines[h]!.trim()
-      if (!hLine) continue
-      scanned++
-      const m = hLine.match(HEADER_TOOL_RE)
-      if (m) {
-        headerToolDefs.push({
-          number: parseInt(m[1]!, 10),
-          diameter: parseFloat(m[2]!),
-          cornerRadius: parseFloat(m[3]!),
-          zMin: parseFloat(m[4]!),
-          type: m[5]!.trim(),
-        })
-      }
-    }
-  }
-  const headerToolMap = new Map<number, HeaderToolDef>(headerToolDefs.map((d) => [d.number, d]))
+  const generator = detectGenerator(rawLines)
+  const generatorInfo = extractGeneratorInfo(generator, rawLines)
 
   let cumulativeMs = 0
   const lines: GCodeLine[] = []
@@ -197,14 +167,6 @@ export function analyzeGCode(
         const tcNum = parseInt(tcMatch[1]!, 10)
         tools[0]!.toolNumber = tcNum
         firstToolKnown = true
-        // Merge header comment data
-        const hDef = headerToolMap.get(tcNum)
-        if (hDef) {
-          tools[0]!.commentedDiameter = hDef.diameter
-          tools[0]!.commentedCornerRadius = hDef.cornerRadius
-          tools[0]!.commentedZMin = hDef.zMin
-          tools[0]!.commentedName = hDef.type
-        }
       }
       // M0 is not a chunk boundary — do not create a new section
     } else if (hasM6) {
@@ -214,28 +176,16 @@ export function analyzeGCode(
         tools[0]!.toolChangeCmd = raw.trim()
         tools[0]!.toolChangeType = 'M6'
         firstToolKnown = true
-        const hDef = headerToolMap.get(pendingTool)
-        if (hDef) {
-          tools[0]!.commentedDiameter = hDef.diameter
-          tools[0]!.commentedCornerRadius = hDef.cornerRadius
-          tools[0]!.commentedZMin = hDef.zMin
-          tools[0]!.commentedName = hDef.type
-        }
       } else {
         // Subsequent T M6 — close current section, open a new one
         const prev = tools[tools.length - 1]!
         prev.endLine = i - 1
         prev.lineCount = prev.endLine - prev.startLine + 1
         sIdx = tools.length
-        const hDef = headerToolMap.get(pendingTool)
         tools.push({
           toolNumber: pendingTool,
           toolChangeCmd: raw.trim(),
           toolChangeType: 'M6',
-          commentedDiameter: hDef?.diameter ?? null,
-          commentedCornerRadius: hDef?.cornerRadius ?? null,
-          commentedZMin: hDef?.zMin ?? null,
-          commentedName: hDef?.type ?? null,
           startLine: i,
           endLine: rawLines.length - 1,
           lineCount: rawLines.length - i,
@@ -250,28 +200,16 @@ export function analyzeGCode(
         tools[0]!.toolChangeCmd = raw.trim()
         tools[0]!.toolChangeType = 'T'
         firstToolKnown = true
-        const hDef = headerToolMap.get(tWord)
-        if (hDef) {
-          tools[0]!.commentedDiameter = hDef.diameter
-          tools[0]!.commentedCornerRadius = hDef.cornerRadius
-          tools[0]!.commentedZMin = hDef.zMin
-          tools[0]!.commentedName = hDef.type
-        }
       } else {
         // Subsequent standalone T — close current section, open a new one
         const prev = tools[tools.length - 1]!
         prev.endLine = i - 1
         prev.lineCount = prev.endLine - prev.startLine + 1
         sIdx = tools.length
-        const hDef = headerToolMap.get(tWord)
         tools.push({
           toolNumber: tWord,
           toolChangeCmd: raw.trim(),
           toolChangeType: 'T',
-          commentedDiameter: hDef?.diameter ?? null,
-          commentedCornerRadius: hDef?.cornerRadius ?? null,
-          commentedZMin: hDef?.zMin ?? null,
-          commentedName: hDef?.type ?? null,
           startLine: i,
           endLine: rawLines.length - 1,
           lineCount: rawLines.length - i,
@@ -466,6 +404,7 @@ export function analyzeGCode(
     axisRanges,
     estimatedTotalMs: cumulativeMs,
     noToolDefinitions,
-    headerToolDefs,
+    generator,
+    generatorInfo,
   }
 }

@@ -336,6 +336,8 @@ const job: JobState = {
   axisRanges: null,
   analyzeProgress: 0,
   toolSections: null,
+  generator: null,
+  generatorInfo: null,
   recovery: null,
   errorMessage: null,
   toolChangeRequest: null,

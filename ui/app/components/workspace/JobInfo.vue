@@ -12,15 +12,22 @@
           {{ job?.filename ?? 'No file loaded' }}
         </span>
       </div>
-      <button
-        v-if="job && job.status !== 'idle'"
-        :disabled="isViewer"
-        class="text-xs px-2 py-0.5 text-gray-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 rounded transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-        title="Clear loaded file"
-        @click="clearJob"
-      >
-        Clear
-      </button>
+      <div class="flex items-center gap-1.5 shrink-0">
+        <span
+          v-if="generatorLabel"
+          class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400 whitespace-nowrap"
+          title="Detected CAM generator"
+        >{{ generatorLabel }}</span>
+        <button
+          v-if="job && job.status !== 'idle'"
+          :disabled="isViewer"
+          class="text-xs px-2 py-0.5 text-gray-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 rounded transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Clear loaded file"
+          @click="clearJob"
+        >
+          Clear
+        </button>
+      </div>
     </div>
 
     <!-- Crash / checkpoint recovery banner -->
@@ -250,52 +257,46 @@
         </div>
         <div v-else class="px-3 pb-3 space-y-1.5">
           <div
-            v-for="(section, idx) in toolSections"
+            v-for="(row, idx) in toolRows"
             :key="idx"
-            :class="toolRowClass(section)"
+            :class="toolRowClass(row.section)"
             class="border rounded-lg px-2.5 py-2"
           >
             <div class="flex items-center gap-2">
               <div
-                :class="toolBadgeClass(section)"
+                :class="toolBadgeClass(row.section)"
                 class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
               >
-                {{ section.toolNumber }}
+                {{ row.section.toolNumber }}
               </div>
               <div class="min-w-0 flex-1">
                 <p class="text-xs font-medium text-gray-800 dark:text-slate-200 truncate">
-                  {{ section.commentedName ?? libraryEntry(section)?.name ?? `T${section.toolNumber}` }}
+                  {{ row.evaluation.status === 'matched' ? libraryEntry(row.section)!.name : row.evaluation.label }}
                 </p>
                 <p class="text-xs text-gray-400 dark:text-slate-500">
-                  {{ gcodeToolSubline(section) }}
+                  {{ row.evaluation.status === 'matched' ? gcodeToolSubline(row.section) : `${row.section.lineCount.toLocaleString()} lines` }}
                 </p>
               </div>
-              <!-- Not in library tag -->
-              <span
-                v-if="!libraryEntry(section)"
-                class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-300 shrink-0 whitespace-nowrap"
-                title="Tool not found in library"
-              >not in library</span>
-              <!-- Mismatch tag (name or diameter differs from library) -->
+              <!-- Mismatch tag: covers both "no library entry" and "library entry diverges" -->
               <button
-                v-if="hasMismatch(section)"
+                v-if="row.evaluation.status === 'mismatch'"
                 type="button"
                 class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 shrink-0 whitespace-nowrap hover:bg-amber-200 dark:hover:bg-amber-800/60 transition-colors cursor-pointer"
-                :title="mismatchTitle(section)"
+                :title="row.evaluation.error"
                 @click.stop="scrollToToolPanel"
               >mismatch</button>
               <!-- Load / Unload text button -->
               <button
                 type="button"
                 :disabled="!machine.connected || isViewer"
-                :class="machine.loadedToolNumber === section.toolNumber
+                :class="machine.loadedToolNumber === row.section.toolNumber
                   ? 'hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-700 dark:hover:text-red-400'
                   : 'hover:bg-green-100 dark:hover:bg-green-900/30 hover:text-green-700 dark:hover:text-green-400'"
                 class="shrink-0 text-xs px-2 py-1 rounded bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                :title="machine.loadedToolNumber === section.toolNumber ? 'Unload tool from spindle' : 'Load tool into spindle'"
-                @click="machine.loadedToolNumber === section.toolNumber ? wsSend({ t: 'tool:unload', payload: {} }) : wsSend({ t: 'tool:load', payload: { toolNumber: section.toolNumber } })"
+                :title="machine.loadedToolNumber === row.section.toolNumber ? 'Unload tool from spindle' : 'Load tool into spindle'"
+                @click="machine.loadedToolNumber === row.section.toolNumber ? wsSend({ t: 'tool:unload', payload: {} }) : wsSend({ t: 'tool:load', payload: { toolNumber: row.section.toolNumber } })"
               >
-                {{ machine.loadedToolNumber === section.toolNumber ? 'Unload' : 'Load' }}
+                {{ machine.loadedToolNumber === row.section.toolNumber ? 'Unload' : 'Load' }}
               </button>
             </div>
           </div>
@@ -476,6 +477,7 @@ import { useCurrentUser } from '~/composables/useCurrentUser'
 import { useModals } from '~/composables/useModals'
 import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 import type { ToolSection } from '~/types/job'
+import { evaluateTool, type ToolEvaluation, type GcodeGeneratorId } from '~~/server/utils/gcode/generator'
 
 const machine = useMachineStore()
 const syncStore = useSyncStore()
@@ -527,6 +529,13 @@ function doLoadFresh() {
 
 const toolSections = computed<ToolSection[]>(() => job.value?.toolSections ?? [])
 
+const GENERATOR_LABELS: Record<GcodeGeneratorId, string> = {
+  fusion360: 'Fusion 360',
+  freecad: 'FreeCAD',
+  generic: 'Generic',
+}
+const generatorLabel = computed(() => job.value?.generator ? GENERATOR_LABELS[job.value.generator] : null)
+
 const allTools = computed(() => [
   ...machine.toolLibrary.machine,
   ...machine.toolLibrary.app,
@@ -575,26 +584,15 @@ function libraryEntry(section: ToolSection) {
     ?? null
 }
 
-function hasMismatch(section: ToolSection): boolean {
-  const entry = libraryEntry(section)
-  if (!entry) return false
-  if (section.commentedName && section.commentedName.toLowerCase() !== entry.type.toLowerCase()) return true
-  if (section.commentedDiameter != null && Math.abs(section.commentedDiameter - entry.diameter) > 0.05) return true
-  return false
+function toolEvaluation(section: ToolSection): ToolEvaluation {
+  const info = job.value?.generatorInfo ?? { generator: 'generic' as const }
+  return evaluateTool(section.toolNumber, info, libraryEntry(section))
 }
 
-function mismatchTitle(section: ToolSection): string {
-  const entry = libraryEntry(section)
-  if (!entry) return ''
-  const parts: string[] = []
-  if (section.commentedName && section.commentedName.toLowerCase() !== entry.type.toLowerCase()) {
-    parts.push(`Type: "${section.commentedName}" vs "${entry.type}"`)
-  }
-  if (section.commentedDiameter != null && Math.abs(section.commentedDiameter - entry.diameter) > 0.05) {
-    parts.push(`⌀ ${section.commentedDiameter}mm vs ${entry.diameter}mm`)
-  }
-  return parts.join('; ')
-}
+const toolRows = computed(() => toolSections.value.map((section) => ({
+  section,
+  evaluation: toolEvaluation(section),
+})))
 
 const toolChangeLibEntry = computed(() => {
   const req = job.value?.toolChangeRequest
@@ -797,12 +795,8 @@ function scrollToToolPanel() {
 
 function gcodeToolSubline(section: ToolSection): string {
   const parts: string[] = []
-  if (section.commentedDiameter != null) {
-    parts.push(`⌀${section.commentedDiameter} mm`)
-  } else {
-    const lib = libraryEntry(section)
-    if (lib) parts.push(`⌀${lib.diameter} mm`)
-  }
+  const entry = libraryEntry(section)
+  if (entry) parts.push(`⌀${entry.diameter} mm`)
   parts.push(`${section.lineCount.toLocaleString()} lines`)
   return parts.join(' · ')
 }
