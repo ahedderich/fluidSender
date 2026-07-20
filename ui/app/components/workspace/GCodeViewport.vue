@@ -65,7 +65,7 @@
     </div>
 
     <!-- View presets (top-left, offset for mode switcher) — hidden when there's no 3D-only view to orient (cam/gcode) -->
-    <div v-if="!['cam', 'gcode'].includes(viewMode)" class="absolute top-10 left-2.5 flex gap-1.5 z-10">
+    <div v-if="!['cam'].includes(viewMode)" class="absolute top-10 left-2.5 flex gap-1.5 z-10">
       <button
         v-for="v in viewPresets"
         :key="v.key"
@@ -198,7 +198,7 @@ import { useJobControl } from '~/composables/useJobControl'
 import { useConfirm } from '~/composables/useConfirm'
 import { useToast } from '~/composables/useToast'
 import { wsSend } from '~/composables/useWsSend'
-import type { GCodeLine, LineVector } from '~/types/job'
+import type { LineVector } from '~/types/job'
 import type { CamMode } from '~/types/webcam'
 
 const machine = useMachineStore()
@@ -400,7 +400,10 @@ let applyExecutedDimming: (execPtr: number) => void = () => {}
 // 3D geometry) so the GCode panel can look lines/vectors up by index. See
 // GCODE_VIEWER_PLAN.md §4.4.
 const lastVectors = ref<Array<LineVector | null>>([])
-const gcodeLines = ref<GCodeLine[]>([])
+// Raw line text only (not the full per-line GCodeLine analysis objects) — the
+// text panel just displays lines, and shipping/parsing the enriched JSON for
+// every line of a large file is what used to freeze the UI on load.
+const gcodeLines = ref<string[]>([])
 const selectedLineIndex = ref<number | null>(null)
 
 // Per-line offset/count into the merged toolpath geometry buffers, built by
@@ -1242,7 +1245,7 @@ async function fetchAndLoadVectors(fileId: string) {
 
 async function fetchLines(fileId: string) {
   try {
-    gcodeLines.value = await $fetch<GCodeLine[]>(`/api/jobs/lines?fileId=${encodeURIComponent(fileId)}`)
+    gcodeLines.value = await $fetch<string[]>(`/api/jobs/lines?fileId=${encodeURIComponent(fileId)}`)
   } catch (err) {
     console.warn('[GCodeViewport] lines not available:', err)
     // Non-fatal — the GCode panel just stays empty. The 3D preview already

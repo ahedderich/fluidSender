@@ -19,6 +19,7 @@ function jobPaths(mode: TransformMode) {
     vectors: join(dir, 'vectors.json'),
     modal: join(dir, 'modal-states.json'),
     lines: join(dir, 'lines.json'),
+    linesText: join(dir, 'lines-text.json'),
   }
 }
 
@@ -52,6 +53,7 @@ export async function clearAnalysis(mode: TransformMode = 'none'): Promise<void>
     unlink(paths.vectors),
     unlink(paths.modal),
     unlink(paths.lines),
+    unlink(paths.linesText),
   ])
 }
 
@@ -124,6 +126,11 @@ export async function analyzeGCodeFile(
     writeFile(paths.vectors, JSON.stringify(vectors), 'utf8'),
     writeFile(paths.modal, JSON.stringify(modalStates), 'utf8'),
     writeFile(paths.lines, JSON.stringify(lines), 'utf8'),
+    // Lean text-only projection for the GCode text panel — avoids shipping the
+    // full per-line analysis metadata (type/category/durations) over the wire
+    // just to render text; a 20MB source file becomes a ~116MB lines.json but
+    // only ~20-25MB of raw text.
+    writeFile(paths.linesText, JSON.stringify(lines.map((l) => l.raw)), 'utf8'),
   ])
 
   if (signal.aborted) {

@@ -18,35 +18,60 @@
     <div
       ref="scrollEl"
       tabindex="0"
-      class="flex-1 overflow-y-auto px-2 py-1.5 font-mono text-xs space-y-px min-h-0 focus:outline-none"
+      class="flex-1 overflow-y-auto px-2 py-1.5 font-mono text-xs min-h-0 focus:outline-none"
       @focus="gcodeViewerFocused = true"
       @blur="gcodeViewerFocused = false"
       @keydown="onKeyDown"
     >
       <template v-if="lines.length">
-        <template v-for="line in lines" :key="line.index">
+        <!-- Virtualized: only the rows currently in view (+ overscan) are ever
+             mounted, regardless of file size. Row heights are fixed constants
+             (see ROW_HEIGHT / HEADER_ROW_HEIGHT) rather than measured, which is
+             what makes scrollToIndex-based jumps and native scrollbar dragging
+             land at the right offset without first rendering everything in between. -->
+        <div :style="{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }">
           <div
-            v-if="sectionByStartLine.get(line.index)"
-            class="flex items-baseline gap-1.5 px-1 py-1 mt-1 first:mt-0 bg-slate-700/60 rounded text-slate-300 text-[11px] font-sans"
+            v-for="vRow in virtualizer.getVirtualItems()"
+            :key="vRow.index"
+            :style="{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: `${vRow.size}px`,
+              transform: `translateY(${vRow.start}px)`,
+            }"
           >
-            <span class="font-semibold">
-              T{{ sectionByStartLine.get(line.index)!.toolNumber }}
-            </span>
-            <span class="truncate">{{ sectionByStartLine.get(line.index)!.commentedName ?? '' }}</span>
-            <span class="ml-auto shrink-0 text-slate-500">
-              lines {{ sectionByStartLine.get(line.index)!.startLine + 1 }}–{{ sectionByStartLine.get(line.index)!.endLine + 1 }}
-            </span>
+            <template v-if="resolveRow(vRow.index).type === 'header'">
+              <div
+                class="flex items-baseline gap-1.5 px-1 py-1 bg-slate-700/60 rounded text-slate-300 text-[11px] font-sans h-full box-border"
+              >
+                <span class="font-semibold">
+                  T{{ (resolveRow(vRow.index) as HeaderRow).section.toolNumber }}
+                </span>
+                <span class="truncate">{{ (resolveRow(vRow.index) as HeaderRow).section.commentedName ?? '' }}</span>
+                <span class="ml-auto shrink-0 text-slate-500">
+                  lines {{ (resolveRow(vRow.index) as HeaderRow).section.startLine + 1 }}–{{
+                    (resolveRow(vRow.index) as HeaderRow).section.endLine + 1
+                  }}
+                </span>
+              </div>
+            </template>
+            <template v-else>
+              <div
+                :data-line-index="(resolveRow(vRow.index) as LineRow).lineIndex"
+                class="flex gap-1.5 leading-5 rounded px-1 cursor-pointer hover:bg-slate-700/50 h-full box-border overflow-x-auto whitespace-nowrap"
+                :class="{ 'bg-blue-600/30': (resolveRow(vRow.index) as LineRow).lineIndex === selectedIndex }"
+                @click="emit('select', (resolveRow(vRow.index) as LineRow).lineIndex)"
+              >
+                <span class="shrink-0 select-none w-12 text-right text-slate-500">{{
+                  (resolveRow(vRow.index) as LineRow).lineIndex + 1
+                }}</span>
+                <span class="text-slate-300">{{ lines[(resolveRow(vRow.index) as LineRow).lineIndex] }}</span>
+              </div>
+            </template>
           </div>
-          <div
-            :data-line-index="line.index"
-            class="flex gap-1.5 leading-5 rounded px-1 cursor-pointer hover:bg-slate-700/50"
-            :class="{ 'bg-blue-600/30': line.index === selectedIndex }"
-            @click="emit('select', line.index)"
-          >
-            <span class="shrink-0 select-none w-12 text-right text-slate-500">{{ line.index + 1 }}</span>
-            <span class="break-all text-slate-300">{{ line.raw }}</span>
-          </div>
-        </template>
+        </div>
       </template>
       <div v-else class="text-slate-500 px-1 py-1">No GCode loaded</div>
     </div>
@@ -54,11 +79,12 @@
 </template>
 
 <script setup lang="ts">
-import type { GCodeLine, ToolSection } from '~/types/job'
+import { useVirtualizer } from '@tanstack/vue-virtual'
+import type { ToolSection } from '~/types/job'
 import { useGcodeViewerFocus } from '~/composables/useGcodeViewerFocus'
 
 const props = defineProps<{
-  lines: GCodeLine[]
+  lines: string[]
   toolSections: ToolSection[] | null
   selectedIndex: number | null
 }>()
@@ -68,11 +94,72 @@ const { gcodeViewerFocused } = useGcodeViewerFocus()
 
 const scrollEl = ref<HTMLDivElement | null>(null)
 
-const sectionByStartLine = computed(() => {
-  const m = new Map<number, ToolSection>()
-  for (const s of props.toolSections ?? []) m.set(s.startLine, s)
-  return m
-})
+const ROW_HEIGHT = 20
+const HEADER_ROW_HEIGHT = 32
+
+type HeaderRow = { type: 'header'; section: ToolSection }
+type LineRow = { type: 'line'; lineIndex: number }
+
+// toolSections arrive pre-sorted by startLine (single forward pass over the
+// file server-side) — relied on by the binary searches below.
+const sections = computed(() => props.toolSections ?? [])
+
+// Row index of the header inserted for the k-th section (0-indexed within
+// `sections`): each of the k sections before it also occupies one extra row.
+function headerRowIndex(k: number): number {
+  return sections.value[k]!.startLine + k
+}
+
+// Deliberately not materializing a flattened lines+headers array (that would
+// mean allocating one object per line just to find headers). Section count is
+// tiny compared to line count, so binary-searching over `sections` to insert
+// header rows keeps memory proportional to line count only.
+function resolveRow(rowIndex: number): HeaderRow | LineRow {
+  const secs = sections.value
+  if (!secs.length) return { type: 'line', lineIndex: rowIndex }
+  let lo = 0
+  let hi = secs.length - 1
+  let k = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (headerRowIndex(mid) <= rowIndex) {
+      k = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  if (k === -1) return { type: 'line', lineIndex: rowIndex }
+  if (headerRowIndex(k) === rowIndex) return { type: 'header', section: secs[k]! }
+  return { type: 'line', lineIndex: rowIndex - (k + 1) }
+}
+
+function rowIndexForLine(lineIndex: number): number {
+  const secs = sections.value
+  if (!secs.length) return lineIndex
+  let lo = 0
+  let hi = secs.length - 1
+  let headersBefore = 0
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (secs[mid]!.startLine <= lineIndex) {
+      headersBefore = mid + 1
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return lineIndex + headersBefore
+}
+
+const virtualizer = useVirtualizer(
+  computed(() => ({
+    count: props.lines.length + sections.value.length,
+    getScrollElement: () => scrollEl.value,
+    estimateSize: (index: number) => (resolveRow(index).type === 'header' ? HEADER_ROW_HEIGHT : ROW_HEIGHT),
+    overscan: 12,
+  })),
+)
 
 function onKeyDown(e: KeyboardEvent) {
   if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return
@@ -97,9 +184,8 @@ function onJumpToSection(value: string) {
   emit('select', startLine)
 }
 
-watch(() => props.selectedIndex, async (idx) => {
+watch(() => props.selectedIndex, (idx) => {
   if (idx === null) return
-  await nextTick()
-  scrollEl.value?.querySelector(`[data-line-index="${idx}"]`)?.scrollIntoView({ block: 'nearest' })
+  virtualizer.value.scrollToIndex(rowIndexForLine(idx), { align: 'auto' })
 })
 </script>
