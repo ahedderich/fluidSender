@@ -319,39 +319,56 @@
       <!-- Feed override -->
       <div class="flex items-center gap-2">
         <span class="text-xs text-gray-600 dark:text-slate-300 font-medium w-14 shrink-0">Feed</span>
-        <input
-          v-model.number="localFeed"
-          type="range"
-          min="10"
-          max="200"
-          step="1"
-          :style="{ '--val': localFeed }"
-          :disabled="!machine.connected || isViewer"
-          class="override-slider flex-1 disabled:opacity-40"
-          @mousedown="isDraggingFeed = true"
-          @touchstart="isDraggingFeed = true"
-          @change="applyFeed"
-        />
-        <div
-          v-if="!editingFeed"
-          class="w-11 text-right text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none shrink-0"
-          :class="{ 'opacity-40 pointer-events-none': !machine.connected || isViewer }"
-          @click="startEditFeed"
-        >
-          {{ localFeed }}%
+        <div class="flex items-center gap-1 flex-1">
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-7 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="-10%"
+            @click="bumpFeed(-10)"
+          >--</button>
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-6 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="-1%"
+            @click="bumpFeed(-1)"
+          >-</button>
+          <div
+            v-if="!editingFeed"
+            class="flex-1 text-center text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none"
+            :class="{ 'opacity-40 pointer-events-none': !machine.connected || isViewer }"
+            @click="startEditFeed"
+          >
+            {{ localFeed }}%
+          </div>
+          <input
+            v-else
+            ref="feedInput"
+            v-model.number="feedEditValue"
+            type="number"
+            min="10"
+            max="200"
+            class="flex-1 w-0 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-center px-1 py-0.5 rounded focus:outline-none"
+            @blur="commitFeedEdit"
+            @keydown.enter="commitFeedEdit"
+            @keydown.escape="cancelFeedEdit"
+          />
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-6 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="+1%"
+            @click="bumpFeed(1)"
+          >+</button>
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-7 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="+10%"
+            @click="bumpFeed(10)"
+          >++</button>
         </div>
-        <input
-          v-else
-          ref="feedInput"
-          v-model.number="feedEditValue"
-          type="number"
-          min="10"
-          max="200"
-          class="w-16 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-right px-1 py-0.5 rounded focus:outline-none shrink-0"
-          @blur="commitFeedEdit"
-          @keydown.enter="commitFeedEdit"
-          @keydown.escape="cancelFeedEdit"
-        />
         <button
           :disabled="!machine.connected || isViewer"
           class="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none shrink-0 transition-colors disabled:opacity-40"
@@ -363,39 +380,56 @@
       <!-- Spindle override -->
       <div class="flex items-center gap-2">
         <span class="text-xs text-gray-600 dark:text-slate-300 font-medium w-14 shrink-0">Spindle</span>
-        <input
-          v-model.number="localSpindle"
-          type="range"
-          min="10"
-          max="200"
-          step="1"
-          :style="{ '--val': localSpindle }"
-          :disabled="!machine.connected || isViewer"
-          class="override-slider flex-1 disabled:opacity-40"
-          @mousedown="isDraggingSpindle = true"
-          @touchstart="isDraggingSpindle = true"
-          @change="applySpindle"
-        />
-        <div
-          v-if="!editingSpindle"
-          class="w-11 text-right text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none shrink-0"
-          :class="{ 'opacity-40 pointer-events-none': !machine.connected || isViewer }"
-          @click="startEditSpindle"
-        >
-          {{ localSpindle }}%
+        <div class="flex items-center gap-1 flex-1">
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-7 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="-10%"
+            @click="bumpSpindle(-10)"
+          >--</button>
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-6 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="-1%"
+            @click="bumpSpindle(-1)"
+          >-</button>
+          <div
+            v-if="!editingSpindle"
+            class="flex-1 text-center text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none"
+            :class="{ 'opacity-40 pointer-events-none': !machine.connected || isViewer }"
+            @click="startEditSpindle"
+          >
+            {{ localSpindle }}%
+          </div>
+          <input
+            v-else
+            ref="spindleInput"
+            v-model.number="spindleEditValue"
+            type="number"
+            min="10"
+            max="200"
+            class="flex-1 w-0 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-center px-1 py-0.5 rounded focus:outline-none"
+            @blur="commitSpindleEdit"
+            @keydown.enter="commitSpindleEdit"
+            @keydown.escape="cancelSpindleEdit"
+          />
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-6 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="+1%"
+            @click="bumpSpindle(1)"
+          >+</button>
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-7 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="+10%"
+            @click="bumpSpindle(10)"
+          >++</button>
         </div>
-        <input
-          v-else
-          ref="spindleInput"
-          v-model.number="spindleEditValue"
-          type="number"
-          min="10"
-          max="200"
-          class="w-16 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-right px-1 py-0.5 rounded focus:outline-none shrink-0"
-          @blur="commitSpindleEdit"
-          @keydown.enter="commitSpindleEdit"
-          @keydown.escape="cancelSpindleEdit"
-        />
         <button
           :disabled="!machine.connected || isViewer"
           class="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none shrink-0 transition-colors disabled:opacity-40"
@@ -587,9 +621,6 @@ const editingSpindle = ref(false)
 const localFeed = ref(machine.feedOverride)
 const localSpindle = ref(machine.spindleOverride)
 
-const isDraggingFeed = ref(false)
-const isDraggingSpindle = ref(false)
-
 let lastSentFeed = machine.feedOverride
 let lastSentSpindle = machine.spindleOverride
 
@@ -601,7 +632,7 @@ let pendingSpindleTimer: ReturnType<typeof setTimeout> | null = null
 watch(
   () => machine.feedOverride,
   (v) => {
-    if (isDraggingFeed.value || editingFeed.value) return
+    if (editingFeed.value) return
     if (pendingFeed !== null) {
       if (Math.abs(v - pendingFeed) <= 1) {
         if (pendingFeedTimer) { clearTimeout(pendingFeedTimer); pendingFeedTimer = null }
@@ -620,7 +651,7 @@ watch(
 watch(
   () => machine.spindleOverride,
   (v) => {
-    if (isDraggingSpindle.value || editingSpindle.value) return
+    if (editingSpindle.value) return
     if (pendingSpindle !== null) {
       if (Math.abs(v - pendingSpindle) <= 1) {
         if (pendingSpindleTimer) { clearTimeout(pendingSpindleTimer); pendingSpindleTimer = null }
@@ -651,9 +682,8 @@ function clamp(v: number) { return Math.max(10, Math.min(200, Math.round(v))) }
 const feedInput = ref<HTMLInputElement>()
 const feedEditValue = ref(100)
 
-function applyFeed() {
-  isDraggingFeed.value = false
-  const target = clamp(localFeed.value)
+function bumpFeed(delta: number) {
+  const target = clamp(localFeed.value + delta)
   localFeed.value = target
   const bytes = deltaBytes(target - lastSentFeed, FEED_UP10, FEED_DOWN10, FEED_UP1, FEED_DOWN1)
   if (bytes.length) {
@@ -703,9 +733,8 @@ function cancelFeedEdit() {
 const spindleInput = ref<HTMLInputElement>()
 const spindleEditValue = ref(100)
 
-function applySpindle() {
-  isDraggingSpindle.value = false
-  const target = clamp(localSpindle.value)
+function bumpSpindle(delta: number) {
+  const target = clamp(localSpindle.value + delta)
   localSpindle.value = target
   const bytes = deltaBytes(target - lastSentSpindle, SPINDLE_UP10, SPINDLE_DOWN10, SPINDLE_UP1, SPINDLE_DOWN1)
   if (bytes.length) {
