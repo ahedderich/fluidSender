@@ -1,12 +1,14 @@
 <template>
   <main class="flex-1 overflow-y-auto flex flex-col min-h-0">
-    <!-- Upper section: fills available viewport height -->
+    <!-- Upper section: capped to available viewport height so long panel content
+         (e.g. a big tool list) scrolls internally instead of growing this section
+         and pushing the position/navigation/macros row out of view -->
     <div
-      class="grid gap-2 p-2 flex-none min-h-full"
+      class="grid gap-2 p-2 flex-none h-full"
       style="grid-template-columns: 1fr 22rem"
     >
       <!-- Left column: 3D viewport + control row -->
-      <div class="flex flex-col gap-2">
+      <div class="flex flex-col gap-2 min-h-0">
         <WorkspaceGCodeViewport class="flex-1 min-h-64" />
         <!-- Position / Navigation / Macros — disabled when disconnected -->
         <div

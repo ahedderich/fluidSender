@@ -227,7 +227,7 @@
               <span v-else class="text-gray-300 dark:text-slate-600">—</span>
             </td>
             <td class="px-3 py-2 text-right">
-              <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div class="flex items-center justify-end gap-1">
                 <button
                   v-if="file.isNc"
                   type="button"

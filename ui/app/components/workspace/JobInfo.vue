@@ -222,14 +222,25 @@
           <p class="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">
             Tools ({{ toolSections.length }})
           </p>
-          <div class="relative group/legend">
-            <button type="button" class="w-4 h-4 rounded-full bg-gray-200 dark:bg-slate-600 text-gray-500 dark:text-slate-300 text-[9px] font-bold flex items-center justify-center leading-none cursor-default">?</button>
-            <div class="hidden group-hover/legend:block absolute right-0 top-5 z-30 w-52 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-xl p-2.5 space-y-1.5">
-              <p class="text-[10px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Color Legend</p>
-              <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-amber-500 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Next required for job start</span></div>
-              <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-green-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Loaded & matches next required</span></div>
-              <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-purple-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Currently loaded tool</span></div>
-              <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-blue-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Other tools in this job</span></div>
+          <div class="flex items-center gap-1.5">
+            <button
+              type="button"
+              :disabled="!machine.connected || isViewer || !probeTools.length"
+              class="shrink-0 text-xs px-2 py-1 rounded bg-gray-100 dark:bg-slate-700 hover:bg-green-100 dark:hover:bg-green-900/30 hover:text-green-700 dark:hover:text-green-400 text-gray-600 dark:text-slate-300 font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              :title="probeTools.length ? 'Load a probe tool into the spindle' : 'No probe tool defined in the tool library'"
+              @click="loadProbe"
+            >
+              Load Probe
+            </button>
+            <div class="relative group/legend">
+              <button type="button" class="w-4 h-4 rounded-full bg-gray-200 dark:bg-slate-600 text-gray-500 dark:text-slate-300 text-[9px] font-bold flex items-center justify-center leading-none cursor-default">?</button>
+              <div class="hidden group-hover/legend:block absolute right-0 top-5 z-30 w-52 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-xl p-2.5 space-y-1.5">
+                <p class="text-[10px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Color Legend</p>
+                <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-amber-500 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Next required for job start</span></div>
+                <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-green-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Loaded & matches next required</span></div>
+                <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-purple-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Currently loaded tool</span></div>
+                <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-blue-600 shrink-0"></span><span class="text-[10px] text-gray-600 dark:text-slate-300">Other tools in this job</span></div>
+              </div>
             </div>
           </div>
         </div>
@@ -308,39 +319,56 @@
       <!-- Feed override -->
       <div class="flex items-center gap-2">
         <span class="text-xs text-gray-600 dark:text-slate-300 font-medium w-14 shrink-0">Feed</span>
-        <input
-          v-model.number="localFeed"
-          type="range"
-          min="10"
-          max="200"
-          step="1"
-          :style="{ '--val': localFeed }"
-          :disabled="!machine.connected || isViewer"
-          class="override-slider flex-1 disabled:opacity-40"
-          @mousedown="isDraggingFeed = true"
-          @touchstart="isDraggingFeed = true"
-          @change="applyFeed"
-        />
-        <div
-          v-if="!editingFeed"
-          class="w-11 text-right text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none shrink-0"
-          :class="{ 'opacity-40 pointer-events-none': !machine.connected || isViewer }"
-          @click="startEditFeed"
-        >
-          {{ localFeed }}%
+        <div class="flex items-center gap-1 flex-1">
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-7 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="-10%"
+            @click="bumpFeed(-10)"
+          >--</button>
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-6 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="-1%"
+            @click="bumpFeed(-1)"
+          >-</button>
+          <div
+            v-if="!editingFeed"
+            class="flex-1 text-center text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none"
+            :class="{ 'opacity-40 pointer-events-none': !machine.connected || isViewer }"
+            @click="startEditFeed"
+          >
+            {{ localFeed }}%
+          </div>
+          <input
+            v-else
+            ref="feedInput"
+            v-model.number="feedEditValue"
+            type="number"
+            min="10"
+            max="200"
+            class="flex-1 w-0 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-center px-1 py-0.5 rounded focus:outline-none"
+            @blur="commitFeedEdit"
+            @keydown.enter="commitFeedEdit"
+            @keydown.escape="cancelFeedEdit"
+          />
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-6 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="+1%"
+            @click="bumpFeed(1)"
+          >+</button>
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-7 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="+10%"
+            @click="bumpFeed(10)"
+          >++</button>
         </div>
-        <input
-          v-else
-          ref="feedInput"
-          v-model.number="feedEditValue"
-          type="number"
-          min="10"
-          max="200"
-          class="w-16 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-right px-1 py-0.5 rounded focus:outline-none shrink-0"
-          @blur="commitFeedEdit"
-          @keydown.enter="commitFeedEdit"
-          @keydown.escape="cancelFeedEdit"
-        />
         <button
           :disabled="!machine.connected || isViewer"
           class="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none shrink-0 transition-colors disabled:opacity-40"
@@ -352,39 +380,56 @@
       <!-- Spindle override -->
       <div class="flex items-center gap-2">
         <span class="text-xs text-gray-600 dark:text-slate-300 font-medium w-14 shrink-0">Spindle</span>
-        <input
-          v-model.number="localSpindle"
-          type="range"
-          min="10"
-          max="200"
-          step="1"
-          :style="{ '--val': localSpindle }"
-          :disabled="!machine.connected || isViewer"
-          class="override-slider flex-1 disabled:opacity-40"
-          @mousedown="isDraggingSpindle = true"
-          @touchstart="isDraggingSpindle = true"
-          @change="applySpindle"
-        />
-        <div
-          v-if="!editingSpindle"
-          class="w-11 text-right text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none shrink-0"
-          :class="{ 'opacity-40 pointer-events-none': !machine.connected || isViewer }"
-          @click="startEditSpindle"
-        >
-          {{ localSpindle }}%
+        <div class="flex items-center gap-1 flex-1">
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-7 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="-10%"
+            @click="bumpSpindle(-10)"
+          >--</button>
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-6 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="-1%"
+            @click="bumpSpindle(-1)"
+          >-</button>
+          <div
+            v-if="!editingSpindle"
+            class="flex-1 text-center text-xs font-mono cursor-pointer text-gray-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 select-none"
+            :class="{ 'opacity-40 pointer-events-none': !machine.connected || isViewer }"
+            @click="startEditSpindle"
+          >
+            {{ localSpindle }}%
+          </div>
+          <input
+            v-else
+            ref="spindleInput"
+            v-model.number="spindleEditValue"
+            type="number"
+            min="10"
+            max="200"
+            class="flex-1 w-0 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-center px-1 py-0.5 rounded focus:outline-none"
+            @blur="commitSpindleEdit"
+            @keydown.enter="commitSpindleEdit"
+            @keydown.escape="cancelSpindleEdit"
+          />
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-6 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="+1%"
+            @click="bumpSpindle(1)"
+          >+</button>
+          <button
+            type="button"
+            :disabled="!machine.connected || isViewer"
+            class="w-7 h-6 shrink-0 flex items-center justify-center rounded bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 text-xs font-mono font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="+10%"
+            @click="bumpSpindle(10)"
+          >++</button>
         </div>
-        <input
-          v-else
-          ref="spindleInput"
-          v-model.number="spindleEditValue"
-          type="number"
-          min="10"
-          max="200"
-          class="w-16 bg-gray-50 dark:bg-slate-900 border border-blue-500 text-gray-900 dark:text-slate-100 text-xs font-mono text-right px-1 py-0.5 rounded focus:outline-none shrink-0"
-          @blur="commitSpindleEdit"
-          @keydown.enter="commitSpindleEdit"
-          @keydown.escape="cancelSpindleEdit"
-        />
         <button
           :disabled="!machine.connected || isViewer"
           class="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none shrink-0 transition-colors disabled:opacity-40"
@@ -393,6 +438,32 @@
         >↺</button>
       </div>
     </div>
+
+    <DialogsDialogFrame :open="showSelectProbeDialog" title="Select Probe" size="sm" @close="showSelectProbeDialog = false">
+      <div class="space-y-1.5">
+        <label
+          v-for="t in probeTools"
+          :key="t.id"
+          class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors"
+          :class="selectedProbeNumber === t.number ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50'"
+        >
+          <input v-model="selectedProbeNumber" type="radio" :value="t.number" class="mt-0.5">
+          <div class="min-w-0">
+            <p class="text-sm font-medium text-gray-800 dark:text-slate-200 truncate">{{ t.name }}</p>
+            <p class="text-xs text-gray-400 dark:text-slate-500">T{{ t.number }}</p>
+          </div>
+        </label>
+      </div>
+
+      <template #footer>
+        <DialogsDialogButton variant="neutral" shortcut="dialogCancel" class="flex-1" @click="showSelectProbeDialog = false">
+          Cancel
+        </DialogsDialogButton>
+        <DialogsDialogButton variant="primary" shortcut="dialogConfirm" :disabled="selectedProbeNumber === null" class="flex-1" @click="confirmSelectProbe">
+          Load
+        </DialogsDialogButton>
+      </template>
+    </DialogsDialogFrame>
   </div>
 </template>
 
@@ -402,12 +473,15 @@ import { useSyncStore } from '~/stores/sync'
 import { useJobControl } from '~/composables/useJobControl'
 import { wsSend } from '~/composables/useWsSend'
 import { useCurrentUser } from '~/composables/useCurrentUser'
+import { useModals } from '~/composables/useModals'
+import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
 import type { ToolSection } from '~/types/job'
 
 const machine = useMachineStore()
 const syncStore = useSyncStore()
 const { job, clearJob, confirmRecovery } = useJobControl()
 const currentUser = useCurrentUser()
+const modals = useModals()
 const isViewer = computed(() => currentUser.value.isViewer)
 
 const ps = syncStore.probingState
@@ -457,6 +531,41 @@ const allTools = computed(() => [
   ...machine.toolLibrary.machine,
   ...machine.toolLibrary.app,
 ])
+
+// ── Load Probe ──────────────────────────────────────────────────────────────
+
+const probeTools = computed(() => allTools.value.filter((t) => t.type.toLowerCase().trim() === 'probe'))
+
+const selectProbeModal = modals.active('select-probe')
+const showSelectProbeDialog = computed<boolean>({
+  get: () => !!selectProbeModal.value,
+  set: (open) => {
+    if (open) modals.open('select-probe')
+    else if (selectProbeModal.value) modals.resolve(selectProbeModal.value.id)
+  },
+})
+
+const selectedProbeNumber = ref<number | null>(null)
+
+function loadProbe() {
+  const probes = probeTools.value
+  const first = probes[0]
+  if (!first) return
+  if (probes.length === 1) {
+    wsSend({ t: 'tool:load', payload: { toolNumber: first.number } })
+    return
+  }
+  selectedProbeNumber.value = first.number
+  showSelectProbeDialog.value = true
+}
+
+function confirmSelectProbe() {
+  if (selectedProbeNumber.value === null) return
+  wsSend({ t: 'tool:load', payload: { toolNumber: selectedProbeNumber.value } })
+  showSelectProbeDialog.value = false
+}
+
+useDialogShortcuts(() => showSelectProbeDialog.value, { onConfirm: confirmSelectProbe, onCancel: () => { showSelectProbeDialog.value = false } })
 
 function libraryEntry(section: ToolSection) {
   const scope = job.value?.toolPreferences?.[section.toolNumber] ?? 'M'
@@ -512,9 +621,6 @@ const editingSpindle = ref(false)
 const localFeed = ref(machine.feedOverride)
 const localSpindle = ref(machine.spindleOverride)
 
-const isDraggingFeed = ref(false)
-const isDraggingSpindle = ref(false)
-
 let lastSentFeed = machine.feedOverride
 let lastSentSpindle = machine.spindleOverride
 
@@ -526,7 +632,7 @@ let pendingSpindleTimer: ReturnType<typeof setTimeout> | null = null
 watch(
   () => machine.feedOverride,
   (v) => {
-    if (isDraggingFeed.value || editingFeed.value) return
+    if (editingFeed.value) return
     if (pendingFeed !== null) {
       if (Math.abs(v - pendingFeed) <= 1) {
         if (pendingFeedTimer) { clearTimeout(pendingFeedTimer); pendingFeedTimer = null }
@@ -545,7 +651,7 @@ watch(
 watch(
   () => machine.spindleOverride,
   (v) => {
-    if (isDraggingSpindle.value || editingSpindle.value) return
+    if (editingSpindle.value) return
     if (pendingSpindle !== null) {
       if (Math.abs(v - pendingSpindle) <= 1) {
         if (pendingSpindleTimer) { clearTimeout(pendingSpindleTimer); pendingSpindleTimer = null }
@@ -576,9 +682,8 @@ function clamp(v: number) { return Math.max(10, Math.min(200, Math.round(v))) }
 const feedInput = ref<HTMLInputElement>()
 const feedEditValue = ref(100)
 
-function applyFeed() {
-  isDraggingFeed.value = false
-  const target = clamp(localFeed.value)
+function bumpFeed(delta: number) {
+  const target = clamp(localFeed.value + delta)
   localFeed.value = target
   const bytes = deltaBytes(target - lastSentFeed, FEED_UP10, FEED_DOWN10, FEED_UP1, FEED_DOWN1)
   if (bytes.length) {
@@ -628,9 +733,8 @@ function cancelFeedEdit() {
 const spindleInput = ref<HTMLInputElement>()
 const spindleEditValue = ref(100)
 
-function applySpindle() {
-  isDraggingSpindle.value = false
-  const target = clamp(localSpindle.value)
+function bumpSpindle(delta: number) {
+  const target = clamp(localSpindle.value + delta)
   localSpindle.value = target
   const bytes = deltaBytes(target - lastSentSpindle, SPINDLE_UP10, SPINDLE_DOWN10, SPINDLE_UP1, SPINDLE_DOWN1)
   if (bytes.length) {
