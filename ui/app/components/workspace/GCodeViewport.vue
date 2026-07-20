@@ -1235,9 +1235,16 @@ let lastLoadedFileId: string | null = null
 
 async function fetchAndLoadVectors(fileId: string) {
   try {
+    const tFetch0 = performance.now()
     const vectors = await $fetch<Array<LineVector | null>>(`/api/jobs/vectors?fileId=${encodeURIComponent(fileId)}`)
+    const tFetch1 = performance.now()
     lastVectors.value = vectors
     loadToolpathSegments(vectors)
+    const tBuild1 = performance.now()
+    console.debug(
+      `[perf] fetchAndLoadVectors(${fileId}): fetch+parse=${(tFetch1 - tFetch0).toFixed(0)}ms ` +
+      `buildGeometry=${(tBuild1 - tFetch1).toFixed(0)}ms vectors=${vectors.length}`,
+    )
   } catch (err) {
     console.warn('[GCodeViewport] vectors not available:', err)
     toastError('Failed to load toolpath preview')
@@ -1246,7 +1253,10 @@ async function fetchAndLoadVectors(fileId: string) {
 
 async function fetchLines(fileId: string) {
   try {
+    const tFetch0 = performance.now()
     gcodeLines.value = await $fetch<string[]>(`/api/jobs/lines?fileId=${encodeURIComponent(fileId)}`)
+    const tFetch1 = performance.now()
+    console.debug(`[perf] fetchLines(${fileId}): fetch+parse=${(tFetch1 - tFetch0).toFixed(0)}ms lines=${gcodeLines.value.length}`)
   } catch (err) {
     console.warn('[GCodeViewport] lines not available:', err)
     // Non-fatal — the GCode panel just stays empty. The 3D preview already
@@ -1263,7 +1273,9 @@ watch(
       // Skip if Three.js isn't initialised yet — onMounted will retry after initThree() resolves.
       if (!ready.value) return
       lastLoadedFileId = fileId
+      const tLoad0 = performance.now()
       await Promise.all([fetchAndLoadVectors(fileId), fetchLines(fileId)])
+      console.debug(`[perf] job load → viewport ready(${fileId}): total=${(performance.now() - tLoad0).toFixed(0)}ms`)
     } else if (status === 'idle') {
       lastLoadedFileId = null
       clearToolpath()

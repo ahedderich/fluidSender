@@ -71,12 +71,28 @@ export function parseFirmwareVersion(raw: string): string | null {
   return m ? `${m[1]}.${m[2]}` : null
 }
 
+// Single-entry memo: classifyLine() calls resolveVersionDef() once per source line
+// with the same firmwareVersion for the whole analyzeGCode pass (it's a synchronous,
+// single-threaded traversal — the active firmware can't change mid-pass), so
+// re-deriving it every line is pure waste on large files.
+let _versionDefCache: { firmwareVersion: string | null; def: VersionDef } | null = null
+
 /**
  * Find the best matching VersionDef for a given firmware version string.
  * Picks the highest definition whose version is ≤ the firmware version.
  * Falls back to the most recent known definition if no match is lower.
  */
 export function resolveVersionDef(firmwareVersion: string | null): VersionDef {
+  if (_versionDefCache && _versionDefCache.firmwareVersion === firmwareVersion) {
+    return _versionDefCache.def
+  }
+
+  const def = computeVersionDef(firmwareVersion)
+  _versionDefCache = { firmwareVersion, def }
+  return def
+}
+
+function computeVersionDef(firmwareVersion: string | null): VersionDef {
   if (!firmwareVersion) return VERSION_DEFS[VERSION_DEFS.length - 1]!
 
   const parsed = parseFirmwareVersion(firmwareVersion)

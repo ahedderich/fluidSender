@@ -2,16 +2,21 @@ import { word, stripComments, dist3, rToIJ, arcLength } from './utils'
 import { classifyLine, getActiveFirmwareVersion } from './classifier'
 import { detectGenerator, extractGeneratorInfo } from './generator'
 import type { GcodeGeneratorId, GeneratorExtraInfo } from './generator'
-import type { GCodeLine, GCodeLineType, LineVector, GCodeModalState, ToolSection, AxisRanges } from './types'
+import type { GCodeLine, GCodeLineType, LineVector, GCodeModalState, ModalStateCheckpoint, ToolSection, AxisRanges } from './types'
 
 const DEFAULT_MAX_RAPID_MM_PER_MIN = 3000
+
+// Default granularity used when serializing modal-states.json for a full job analysis
+// (see analyzer.ts). analyzeGCode() itself defaults to interval=1 (dense) so existing
+// small-scale callers (simulateToLine, tests) are unaffected unless they opt in.
+export const MODAL_CHECKPOINT_INTERVAL = 50
 
 const MANUAL_TOOL_CHANGE_RE = /^\(MANUAL TOOL CHANGE TO T(\d+)\)/i
 
 export interface AnalysisResult {
   lines: GCodeLine[]
   vectors: Array<LineVector | null>
-  modalStates: GCodeModalState[]
+  modalStates: ModalStateCheckpoint[]
   tools: ToolSection[]
   axisRanges: AxisRanges
   estimatedTotalMs: number
@@ -41,6 +46,25 @@ function resolvePos(
   }
 }
 
+// Manual clone avoids structuredClone's much heavier structured-clone-algorithm
+// overhead for this flat, plain-data shape — measured at ~35% of total analyzeGCode
+// time on a 668k-line file since it runs once per source line.
+function cloneModalState(state: GCodeModalState): GCodeModalState {
+  return {
+    position: { x: state.position.x, y: state.position.y, z: state.position.z },
+    positionMode: state.positionMode,
+    workCoordinate: state.workCoordinate,
+    feedRate: state.feedRate,
+    spindleSpeed: state.spindleSpeed,
+    spindleMode: state.spindleMode,
+    coolant: state.coolant,
+    units: state.units,
+    plane: state.plane,
+    motionMode: state.motionMode,
+    toolNumber: state.toolNumber,
+  }
+}
+
 function clampRanges(axisRanges: AxisRanges): void {
   if (!isFinite(axisRanges.x.min)) axisRanges.x = { min: 0, max: 0 }
   if (!isFinite(axisRanges.y.min)) axisRanges.y = { min: 0, max: 0 }
@@ -50,15 +74,27 @@ function clampRanges(axisRanges: AxisRanges): void {
 /**
  * Single-pass GCode analysis. Produces all outputs needed by the job runner,
  * 3D viewport, and crash-recovery simulator in one O(N) traversal.
+ *
+ * initialState seeds the starting modal state instead of the machine defaults —
+ * used by getModalStateAtLine() to replay forward from a checkpoint over just the
+ * handful of lines between it and a target line, instead of re-analysing whole file.
+ * modalCheckpointInterval controls how often a modal-state snapshot is recorded
+ * (default 1 = every line, dense — required by simulateToLine()'s positional lookup
+ * and existing tests); analyzeGCodeFile() passes MODAL_CHECKPOINT_INTERVAL for the
+ * real on-disk artefact, since a dense snapshot-per-line is unnecessary and expensive
+ * at file scale (149MB for a 668k-line file) when only sparse point lookups are ever
+ * needed from it.
  */
 export function analyzeGCode(
   content: string,
   maxRapidMmPerMin = DEFAULT_MAX_RAPID_MM_PER_MIN,
   onProgress?: (pct: number) => void,
+  initialState?: GCodeModalState,
+  modalCheckpointInterval = 1,
 ): AnalysisResult {
   const rawLines = content.split(/\r?\n/)
 
-  const state: GCodeModalState = {
+  const state: GCodeModalState = initialState ? cloneModalState(initialState) : {
     position: { x: 0, y: 0, z: 0 },
     positionMode: 'G90',
     workCoordinate: 'G54',
@@ -98,7 +134,7 @@ export function analyzeGCode(
   let cumulativeMs = 0
   const lines: GCodeLine[] = []
   const vectors: Array<LineVector | null> = []
-  const modalStates: GCodeModalState[] = []
+  const modalStates: ModalStateCheckpoint[] = []
   const lastLineIdx = Math.max(1, rawLines.length - 1)
   let lastReportedPct = -1
 
@@ -109,7 +145,7 @@ export function analyzeGCode(
     if (!clean) {
       lines.push({ index: i, raw, type: 'comment', isMotion: false, category: 'comment', estimatedDurationMs: 0, cumulativeDurationMs: cumulativeMs })
       vectors.push(null)
-      modalStates.push(structuredClone(state))
+      if (i % modalCheckpointInterval === 0) modalStates.push({ lineIndex: i, state: cloneModalState(state) })
       continue
     }
 
@@ -377,7 +413,7 @@ export function analyzeGCode(
       ...(type === 'program_pause' ? { pauseComment } : {}),
     })
     vectors.push(vec)
-    modalStates.push(structuredClone(state))
+    if (i % modalCheckpointInterval === 0) modalStates.push({ lineIndex: i, state: cloneModalState(state) })
 
     if (onProgress) {
       const pct = Math.floor((i / lastLineIdx) * 100)

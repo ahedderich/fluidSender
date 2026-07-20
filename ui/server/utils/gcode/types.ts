@@ -61,9 +61,13 @@ export type LineVector =
   | { t: 'R' | 'F'; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; s: number }
   | { t: 'A'; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; i: number; j: number; k: number; cw: boolean; plane: 'G17' | 'G18' | 'G19'; s: number }
 
-/** Persisted analysis result stored alongside the GCode file. */
+/** Persisted analysis result stored alongside the GCode file.
+ *  version 5: lines.json switched to the compact CompactGCodeLine wire format
+ *  (see lineCodec.ts) and lines-text.json was dropped — the version bump makes
+ *  loadCachedAnalysis()'s existing gate auto-invalidate any pre-existing v4
+ *  artefacts instead of misreading them under the new schema. */
 export interface JobAnalysis {
-  version: 4
+  version: 5
   fileId: string
   filename: string
   analyzedAt: number
@@ -94,6 +98,18 @@ export interface GCodeModalState {
   plane: 'G17' | 'G18' | 'G19'
   motionMode: 'G0' | 'G1' | 'G2' | 'G3'
   toolNumber: number
+}
+
+/**
+ * A modal-state snapshot after a given source line executed. analyzeGCode() emits
+ * one of these every `modalCheckpointInterval` lines (default 1 = every line, dense)
+ * rather than a plain positional array, so a sparse checkpoint file (interval > 1)
+ * and a dense one share the same shape — lookups always resolve via lineIndex,
+ * never by array position.
+ */
+export interface ModalStateCheckpoint {
+  lineIndex: number
+  state: GCodeModalState
 }
 
 export type JobStatus =

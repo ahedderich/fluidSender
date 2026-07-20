@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { CompactGCodeLine } from '../../utils/gcode/lineCodec'
 
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
 const CURRENT_JOB_DIR = join(DATA_DIR, 'current_job')
@@ -20,7 +21,11 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 404, message: 'Lines not found — job not analysed yet' })
     }
 
-    const raw = await readFile(join(CURRENT_JOB_DIR, 'lines-text.json'), 'utf8')
+    // There's no separate lean lines-text.json artefact anymore — lines.json's
+    // compact wire format (lineCodec.ts) is already small enough that deriving
+    // the raw-text-only response from it here isn't worth a second on-disk copy.
+    const raw = await readFile(join(CURRENT_JOB_DIR, 'lines.json'), 'utf8')
+    const compact = JSON.parse(raw) as CompactGCodeLine[]
     setHeader(event, 'Content-Type', 'application/json')
     // No client-side caching: this URL is keyed only on fileId, not on analysis
     // content, so a stale cached response here can silently outlive a format
@@ -28,7 +33,7 @@ export default defineEventHandler(async (event) => {
     // endpoint is a cheap disk read, not a computation, so there's no real
     // cost to always refetching.
     setHeader(event, 'Cache-Control', 'no-store')
-    return raw
+    return JSON.stringify(compact.map((c) => c.r))
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw createError({ statusCode: 404, message: 'Lines not found — job not analysed yet' })

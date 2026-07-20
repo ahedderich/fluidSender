@@ -2,9 +2,9 @@ import { readFile } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 import { appendExecution } from '../fileMetadata'
 import { analyzeGCode } from './analysis'
-import { getModalStateAtLine } from './simulator'
+import { getModalStateAtLine, invalidateModalStatesCache } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
-import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis, clearAllTransformArtefacts } from './analyzer'
+import { analyzeGCodeFile, loadCachedAnalysis, loadCachedLines, loadRawAnalysis, clearAllTransformArtefacts } from './analyzer'
 import {
   broadcastPatch,
   setJobState,
@@ -110,11 +110,24 @@ class JobRunner {
     const filename = basename(fileId).replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')
 
     try {
+      const tRead0 = performance.now()
       const rawContent = await readFile(join(UPLOADS_DIR, fileId), 'utf8')
+      const tRead1 = performance.now()
       const content = applyTransforms(rawContent, this._transformMode, this._activeRotation, this._activeHeightmap)
+      const tTransform1 = performance.now()
 
+      // A cache hit needs both analysis.json (metadata) and lines.json (the in-memory
+      // sender's line array) — if either is missing/corrupt, fall through to a full
+      // re-analysis rather than re-deriving lines from content via analyzeGCode(),
+      // which duplicates the full O(N) parse this cache exists to avoid.
       let analysis = await loadCachedAnalysis(fileId, this._transformMode)
-      let lines
+      let lines: GCodeLine[] | null = null
+      if (analysis) {
+        lines = await loadCachedLines(this._transformMode)
+        if (!lines) analysis = null
+      }
+      const tCache1 = performance.now()
+      const cacheHit = lines !== null
 
       if (!analysis) {
         const ctrl = new AbortController()
@@ -149,11 +162,17 @@ class JobRunner {
         analysis = result.analysis
         lines = result.lines
         this.analyzeAbort = null
-      } else {
-        lines = analyzeGCode(content).lines
       }
+      const tAnalyze1 = performance.now()
 
-      this.lines = lines
+      jLog(
+        `[perf] loadJob(${fileId}): read=${(tRead1 - tRead0).toFixed(0)}ms ` +
+        `transform=${(tTransform1 - tRead1).toFixed(0)}ms cacheCheck=${(tCache1 - tTransform1).toFixed(0)}ms ` +
+        `${cacheHit ? 'cacheHit' : 'analyze+serialize'}=${(tAnalyze1 - tCache1).toFixed(0)}ms ` +
+        `total=${(tAnalyze1 - tRead0).toFixed(0)}ms lines=${lines!.length}`,
+      )
+
+      this.lines = lines!
       this.fileId = fileId
       this.filename = filename
       this.sendPtr = 0
@@ -478,6 +497,7 @@ class JobRunner {
       ambiguousTools: [],
       transformMode: 'none',
     })
+    invalidateModalStatesCache()
     clearAllJobData().catch(() => {})
   }
 
@@ -491,10 +511,15 @@ class JobRunner {
     if (!analysis) return 'empty'
 
     try {
-      const filePath = join(UPLOADS_DIR, analysis.fileId)
-      const rawContent = await readFile(filePath, 'utf8')
-      const content = applyTransforms(rawContent, mode, this._activeRotation, this._activeHeightmap)
-      this.lines = analyzeGCode(content).lines
+      const cachedLines = await loadCachedLines(mode)
+      if (cachedLines) {
+        this.lines = cachedLines
+      } else {
+        const filePath = join(UPLOADS_DIR, analysis.fileId)
+        const rawContent = await readFile(filePath, 'utf8')
+        const content = applyTransforms(rawContent, mode, this._activeRotation, this._activeHeightmap)
+        this.lines = analyzeGCode(content).lines
+      }
       this.fileId = analysis.fileId
       this.filename = analysis.filename
       this._toolSections = analysis.tools ?? []
@@ -568,9 +593,14 @@ class JobRunner {
       const filename = checkpoint.filename
 
       if (!this.lines.length || this.fileId !== checkpoint.fileId) {
-        const rawContent = await readFile(join(UPLOADS_DIR, checkpoint.fileId), 'utf8')
-        const content = applyTransforms(rawContent, this._transformMode, this._activeRotation, this._activeHeightmap)
-        this.lines = analyzeGCode(content).lines
+        const cachedLines = await loadCachedLines(this._transformMode)
+        if (cachedLines) {
+          this.lines = cachedLines
+        } else {
+          const rawContent = await readFile(join(UPLOADS_DIR, checkpoint.fileId), 'utf8')
+          const content = applyTransforms(rawContent, this._transformMode, this._activeRotation, this._activeHeightmap)
+          this.lines = analyzeGCode(content).lines
+        }
       }
       this.fileId = checkpoint.fileId
       this.filename = filename
