@@ -49,7 +49,7 @@
                 <span class="font-semibold">
                   T{{ (resolveRow(vRow.index) as HeaderRow).section.toolNumber }}
                 </span>
-                <span class="truncate">{{ (resolveRow(vRow.index) as HeaderRow).section.commentedName ?? '' }}</span>
+                <span class="truncate">{{ getGeneratorToolLabel((resolveRow(vRow.index) as HeaderRow).section.toolNumber, generatorInfo) ?? '' }}</span>
                 <span class="ml-auto shrink-0 text-slate-500">
                   lines {{ (resolveRow(vRow.index) as HeaderRow).section.startLine + 1 }}–{{
                     (resolveRow(vRow.index) as HeaderRow).section.endLine + 1
@@ -82,10 +82,12 @@
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import type { ToolSection } from '~/types/job'
 import { useGcodeViewerFocus } from '~/composables/useGcodeViewerFocus'
+import { getGeneratorToolLabel, type GeneratorExtraInfo } from '~~/server/utils/gcode/generator'
 
 const props = defineProps<{
   lines: string[]
   toolSections: ToolSection[] | null
+  generatorInfo: GeneratorExtraInfo
   selectedIndex: number | null
 }>()
 const emit = defineEmits<{ select: [index: number] }>()

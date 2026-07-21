@@ -8,6 +8,9 @@ export function applyTransforms(
   rotation: ProbingRotationResult | null,
   heightmap: HeightmapResult | null,
 ): string {
+  // Common case — avoid a full split+join pass over the whole file for a no-op.
+  if (mode === 'none') return rawContent
+
   let lines = rawContent.split('\n')
   if ((mode === 'rotated' || mode === 'rotated_height_adjusted') && rotation) {
     lines = applyRotation(lines, rotation.rotationDeg)

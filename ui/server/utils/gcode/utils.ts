@@ -1,6 +1,16 @@
+// word() is called several million times over a large file (every X/Y/Z/F/S/T/I/J/K/R
+// word on every line) — cache the compiled regex per letter instead of paying
+// `new RegExp(...)` on every call. No 'g' flag is used, so reusing the same
+// RegExp object across calls is safe (no lastIndex state to reset).
+const wordRegexCache = new Map<string, RegExp>()
+
 /** Parse a word value like `X-12.5` → -12.5. Returns undefined if word not present. */
 export function word(clean: string, letter: string): number | undefined {
-  const re = new RegExp(`${letter}([+-]?\\d*\\.?\\d+)`, 'i')
+  let re = wordRegexCache.get(letter)
+  if (!re) {
+    re = new RegExp(`${letter}([+-]?\\d*\\.?\\d+)`, 'i')
+    wordRegexCache.set(letter, re)
+  }
   const m = re.exec(clean)
   return m ? parseFloat(m[1]!) : undefined
 }

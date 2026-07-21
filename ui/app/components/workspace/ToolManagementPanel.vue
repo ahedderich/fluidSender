@@ -87,26 +87,11 @@
         </div>
         <!-- GCode vs library comparison (only when a job is loaded and values differ) -->
         <div
-          v-if="gcodeLibraryDiffs.length"
+          v-if="loadedToolMismatch"
           class="mt-2 rounded border border-amber-200 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-2"
         >
           <p class="text-[10px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wide mb-1.5">GCode / Library mismatch</p>
-          <table class="w-full text-xs">
-            <thead>
-              <tr>
-                <th class="text-left text-[10px] font-normal text-gray-400 dark:text-slate-500 pb-1 w-10" />
-                <th class="text-left text-[10px] font-normal text-gray-400 dark:text-slate-500 pb-1">GCode</th>
-                <th class="text-left text-[10px] font-normal text-gray-400 dark:text-slate-500 pb-1 pl-3">Library</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="diff in gcodeLibraryDiffs" :key="diff.field" class="align-top">
-                <td class="text-gray-400 dark:text-slate-500 py-0.5 pr-2">{{ diff.field }}</td>
-                <td class="text-amber-700 dark:text-amber-300 font-mono py-0.5 truncate max-w-0">{{ diff.gcode }}</td>
-                <td class="text-gray-500 dark:text-slate-400 font-mono py-0.5 pl-3 truncate max-w-0">{{ diff.library }}</td>
-              </tr>
-            </tbody>
-          </table>
+          <p class="text-xs text-amber-700 dark:text-amber-300">{{ loadedToolMismatch.error }}</p>
         </div>
       </template>
 
@@ -862,6 +847,7 @@
 import { defineComponent, h } from 'vue'
 import { useMachineStore, type ToolLibraryEntry } from '~/stores/machine'
 import { DEFAULT_PROBE_COMPENSATION, type ProbeCompensation } from '~~/server/utils/tool/types'
+import { evaluateTool, type ToolEvaluation } from '~~/server/utils/gcode/generator'
 import { useJobControl } from '~/composables/useJobControl'
 import { useSettingsStore } from '~/stores/settings'
 import { useModals } from '~/composables/useModals'
@@ -908,28 +894,12 @@ const loadedTool = computed(() =>
     : null,
 )
 
-const loadedGCodeSection = computed(() => {
+const loadedToolMismatch = computed<Extract<ToolEvaluation, { status: 'mismatch' }> | null>(() => {
   if (machine.loadedToolNumber === null) return null
-  return job.value?.toolSections?.find(s => s.toolNumber === machine.loadedToolNumber) ?? null
-})
-
-type DiffRow = { field: string; gcode: string; library: string }
-
-const gcodeLibraryDiffs = computed<DiffRow[]>(() => {
-  const section = loadedGCodeSection.value
-  const lib = loadedTool.value
-  if (!section || !lib) return []
-  const diffs: DiffRow[] = []
-  if (section.commentedName && section.commentedName.toLowerCase() !== lib.type.toLowerCase()) {
-    diffs.push({ field: 'Type', gcode: section.commentedName, library: lib.type })
-  }
-  if (section.commentedDiameter !== null && Math.abs(section.commentedDiameter - lib.diameter) > 0.05) {
-    diffs.push({ field: '⌀', gcode: `${section.commentedDiameter} mm`, library: `${lib.diameter} mm` })
-  }
-  if (section.commentedCornerRadius !== null && lib.cornerRadius != null && Math.abs(section.commentedCornerRadius - lib.cornerRadius) > 0.01) {
-    diffs.push({ field: 'R', gcode: `${section.commentedCornerRadius} mm`, library: `${lib.cornerRadius} mm` })
-  }
-  return diffs
+  const info = job.value?.generatorInfo
+  if (!info) return null
+  const evaluation = evaluateTool(machine.loadedToolNumber, info, loadedTool.value)
+  return evaluation.status === 'mismatch' ? evaluation : null
 })
 
 // Modal open/close synced across browsers; the edit form contents stay local.
