@@ -77,7 +77,8 @@ export function simulateToLine(glines: GCodeLine[], targetIndex: number): GCodeM
   const content = glines.map(l => l.raw).join('\n')
   // Default modalCheckpointInterval (1) — dense, one checkpoint per line, so
   // checkpoints[idx].lineIndex === idx and positional indexing still holds.
-  const { modalStates } = analyzeGCode(content)
+  // Only modalStates is needed here — skip the kinematics duration solve for perf.
+  const { modalStates } = analyzeGCode(content, undefined, undefined, undefined, undefined, false)
   const idx = Math.max(0, Math.min(targetIndex, modalStates.length - 1))
   return modalStates[idx]?.state ?? defaultState
 }
@@ -121,7 +122,8 @@ export async function getModalStateAtLine(lineIndex: number, mode: TransformMode
     const slice = rawLines.slice(floor.lineIndex + 1, lineIndex + 1)
     if (slice.length === 0) return floor.state
 
-    const { modalStates } = analyzeGCode(slice.join('\n'), undefined, undefined, floor.state)
+    // Only modalStates is needed here — skip the kinematics duration solve for perf.
+    const { modalStates } = analyzeGCode(slice.join('\n'), undefined, undefined, floor.state, undefined, false)
     return modalStates[modalStates.length - 1]?.state ?? floor.state
   } catch {
     return null

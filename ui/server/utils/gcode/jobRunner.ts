@@ -5,6 +5,8 @@ import { analyzeGCode } from './analysis'
 import { getModalStateAtLine, invalidateModalStatesCache } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
 import { analyzeGCodeFile, loadCachedAnalysis, loadCachedLines, loadRawAnalysis, clearAllTransformArtefacts } from './analyzer'
+import { DEFAULT_MACHINE_KINEMATICS, resolveMachineKinematics, fingerprintKinematics } from './kinematics'
+import type { MachineKinematics } from './kinematics'
 import {
   broadcastPatch,
   setJobState,
@@ -14,6 +16,8 @@ import {
   settleProgramPauseModal,
   setLoadedTool,
   getConnection,
+  getConfig,
+  getUiState,
   pushToast,
   type PatchOp,
   type ProbingRotationResult,
@@ -116,11 +120,16 @@ class JobRunner {
       const content = applyTransforms(rawContent, this._transformMode, this._activeRotation, this._activeHeightmap)
       const tTransform1 = performance.now()
 
+      const kinematics = await this._resolveActiveKinematics()
+      const kinematicsFingerprint = fingerprintKinematics(kinematics)
+
       // A cache hit needs both analysis.json (metadata) and lines.json (the in-memory
       // sender's line array) — if either is missing/corrupt, fall through to a full
       // re-analysis rather than re-deriving lines from content via analyzeGCode(),
-      // which duplicates the full O(N) parse this cache exists to avoid.
-      let analysis = await loadCachedAnalysis(fileId, this._transformMode)
+      // which duplicates the full O(N) parse this cache exists to avoid. A kinematics
+      // fingerprint mismatch (different machine selected since the cache was written)
+      // is also treated as a miss — see loadCachedAnalysis().
+      let analysis = await loadCachedAnalysis(fileId, this._transformMode, kinematicsFingerprint)
       let lines: GCodeLine[] | null = null
       if (analysis) {
         lines = await loadCachedLines(this._transformMode)
@@ -158,6 +167,7 @@ class JobRunner {
           },
           ctrl.signal,
           this._transformMode,
+          kinematics,
         )
         analysis = result.analysis
         lines = result.lines
@@ -968,6 +978,25 @@ class JobRunner {
 
   private async _getActiveMachineId(): Promise<string | null> {
     return getConnection().machineId
+  }
+
+  /**
+   * Kinematics (per-axis accel/max-rate + junction deviation) used for the accel/
+   * cornering-aware time estimate. Uses the currently-selected machine — persisted
+   * across reconnects/restarts via persistLastMachineId (see ws.ts `ui:selection`),
+   * so this is "currently connected or last connected", not just currently connected
+   * (unlike _getActiveMachineId()/getConnection().machineId, which is null whenever
+   * disconnected and would skip the "last connected" tier the user asked for).
+   * Falls back to DEFAULT_MACHINE_KINEMATICS when no machine is selected or it has
+   * no fetched firmware config yet.
+   */
+  private async _resolveActiveKinematics(): Promise<MachineKinematics> {
+    const machineId = getUiState().selection.activeMachineId
+    if (!machineId) return DEFAULT_MACHINE_KINEMATICS
+    const config = await getConfig()
+    const machines = (config.machines ?? []) as Array<{ id?: string; fluidncConfig?: Record<string, unknown> }>
+    const machine = machines.find((m) => m.id === machineId)
+    return resolveMachineKinematics(machine?.fluidncConfig)
   }
 
   async resumeToolsetterProbe(isJobContext: boolean): Promise<void> {

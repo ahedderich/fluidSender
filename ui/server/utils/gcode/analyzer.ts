@@ -3,12 +3,14 @@ import { join } from 'node:path'
 import { analyzeGCode, MODAL_CHECKPOINT_INTERVAL } from './analysis'
 import { invalidateModalStatesCache } from './simulator'
 import { encodeLines, decodeLines, type CompactGCodeLine } from './lineCodec'
+import { DEFAULT_MACHINE_KINEMATICS, fingerprintKinematics } from './kinematics'
+import type { MachineKinematics } from './kinematics'
 import type { GCodeLine, JobAnalysis, TransformMode } from './types'
 import { subdirForMode } from './types'
 
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
 const BASE_JOB_DIR = join(DATA_DIR, 'current_job')
-const ANALYSIS_VERSION = 5
+const ANALYSIS_VERSION = 6
 
 function getJobDir(mode: TransformMode): string {
   const sub = subdirForMode(mode)
@@ -29,11 +31,14 @@ function jobPaths(mode: TransformMode) {
   }
 }
 
-export async function loadCachedAnalysis(fileId: string, mode: TransformMode = 'none'): Promise<JobAnalysis | null> {
+export async function loadCachedAnalysis(fileId: string, mode: TransformMode = 'none', kinematicsFingerprint?: string): Promise<JobAnalysis | null> {
   try {
     const raw = await readFile(jobPaths(mode).analysis, 'utf8')
     const a = JSON.parse(raw) as JobAnalysis
     if (a.version !== ANALYSIS_VERSION || a.fileId !== fileId) return null
+    // A fingerprint mismatch means the estimate was computed for a different
+    // machine's kinematics (or before any machine kinematics existed) — stale.
+    if (kinematicsFingerprint !== undefined && a.kinematicsFingerprint !== kinematicsFingerprint) return null
     return a
   } catch {
     return null
@@ -111,6 +116,7 @@ export async function analyzeGCodeFile(
   onProgress: (pct: number) => void,
   signal: AbortSignal,
   mode: TransformMode = 'none',
+  kinematics: MachineKinematics = DEFAULT_MACHINE_KINEMATICS,
 ): Promise<{ analysis: JobAnalysis; lines: GCodeLine[] }> {
   onProgress(0)
 
@@ -121,7 +127,7 @@ export async function analyzeGCodeFile(
   // into the 10-80 band instead of jumping straight from 10 to 80.
   const { lines, vectors, modalStates, tools, axisRanges, estimatedTotalMs, noToolDefinitions, generator, generatorInfo } = analyzeGCode(
     content,
-    undefined,
+    kinematics,
     (innerPct) => {
       if (signal.aborted) return
       onProgress(10 + Math.round(innerPct * 0.7))
@@ -143,6 +149,7 @@ export async function analyzeGCodeFile(
     analyzedAt: Date.now(),
     totalLines: lines.length,
     estimatedTotalMs,
+    kinematicsFingerprint: fingerprintKinematics(kinematics),
     axisRanges,
     tools,
     noToolDefinitions,

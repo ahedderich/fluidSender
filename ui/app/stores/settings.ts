@@ -22,7 +22,7 @@ export type UserRole = 'viewer' | 'operator' | 'admin'
 export interface FluidNCAxisConfig {
   steps_per_mm?: number
   max_rate_mm_per_min?: number
-  acceleration?: number
+  acceleration_mm_per_sec2?: number
   max_travel_mm?: number
   soft_limits?: boolean
   homing?: {

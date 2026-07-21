@@ -65,14 +65,19 @@ export type LineVector =
  *  version 5: lines.json switched to the compact CompactGCodeLine wire format
  *  (see lineCodec.ts) and lines-text.json was dropped — the version bump makes
  *  loadCachedAnalysis()'s existing gate auto-invalidate any pre-existing v4
- *  artefacts instead of misreading them under the new schema. */
+ *  artefacts instead of misreading them under the new schema.
+ *  version 6: estimatedTotalMs is now accel/junction-deviation aware (see
+ *  kinematics.ts) and depends on the machine kinematics used to compute it —
+ *  kinematicsFingerprint lets loadCachedAnalysis() invalidate the cache when the
+ *  active machine (or its config) changes between loads of the same file. */
 export interface JobAnalysis {
-  version: 5
+  version: 6
   fileId: string
   filename: string
   analyzedAt: number
   totalLines: number
   estimatedTotalMs: number
+  kinematicsFingerprint: string
   axisRanges: AxisRanges
   tools: ToolSection[]
   noToolDefinitions: boolean

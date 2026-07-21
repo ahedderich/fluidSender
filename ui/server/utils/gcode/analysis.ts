@@ -3,8 +3,10 @@ import { classifyLine, getActiveFirmwareVersion } from './classifier'
 import { detectGenerator, extractGeneratorInfo } from './generator'
 import type { GcodeGeneratorId, GeneratorExtraInfo } from './generator'
 import type { GCodeLine, GCodeLineType, LineVector, GCodeModalState, ModalStateCheckpoint, ToolSection, AxisRanges } from './types'
+import { DEFAULT_MACHINE_KINEMATICS, computeKinematicDurations, limitAccelByAxisMaximum, nominalSpeedForSegment } from './kinematics'
+import type { MachineKinematics, KinematicSegment } from './kinematics'
 
-const DEFAULT_MAX_RAPID_MM_PER_MIN = 3000
+type Vec3 = readonly [number, number, number]
 
 // Default granularity used when serializing modal-states.json for a full job analysis
 // (see analyzer.ts). analyzeGCode() itself defaults to interval=1 (dense) so existing
@@ -71,9 +73,55 @@ function clampRanges(axisRanges: AxisRanges): void {
   if (!isFinite(axisRanges.z.min)) axisRanges.z = { min: 0, max: 0 }
 }
 
+function normalize3(v: Vec3): Vec3 {
+  const m = Math.hypot(v[0], v[1], v[2])
+  return m > 1e-9 ? [v[0] / m, v[1] / m, v[2] / m] : [0, 0, 0]
+}
+
+/** Unit tangent direction (in-plane) at point (px,py) on a circle centered at (cx,cy). */
+function inPlaneTangentUnit(cx: number, cy: number, px: number, py: number, cw: boolean): [number, number] {
+  const rx = px - cx
+  const ry = py - cy
+  const rmag = Math.hypot(rx, ry)
+  if (rmag < 1e-9) return [0, 0]
+  const ux = rx / rmag
+  const uy = ry / rmag
+  // CCW tangent = radius unit vector rotated +90°: (-uy, ux). CW = rotated -90°: (uy, -ux).
+  return cw ? [uy, -ux] : [-uy, ux]
+}
+
 /**
- * Single-pass GCode analysis. Produces all outputs needed by the job runner,
- * 3D viewport, and crash-recovery simulator in one O(N) traversal.
+ * True start/end tangent unit vectors for an arc, approximated as a single kinematic
+ * segment (see kinematics.ts doc comment — no internal subdivision). For a helical arc,
+ * the ratio of the helical axis's contribution to the in-plane tangential contribution is
+ * constant along the whole arc (both are linear in the sweep angle), and equals
+ * helicalDelta / arcLen — so both endpoints share the same third-axis ratio and differ
+ * only in their in-plane heading.
+ */
+function arcTangents(
+  planeCx: number, planeCy: number,
+  startA: number, startB: number, endA: number, endB: number,
+  cwLocal: boolean, arcLen: number, helicalDelta: number,
+  build: (a: number, b: number, helical: number) => Vec3,
+): { dirIn: Vec3; dirOut: Vec3 } {
+  const helicalRatio = arcLen > 1e-9 ? helicalDelta / arcLen : 0
+  const [a0, b0] = inPlaneTangentUnit(planeCx, planeCy, startA, startB, cwLocal)
+  const [a1, b1] = inPlaneTangentUnit(planeCx, planeCy, endA, endB, cwLocal)
+  return {
+    dirIn: normalize3(build(a0, b0, helicalRatio)),
+    dirOut: normalize3(build(a1, b1, helicalRatio)),
+  }
+}
+
+/**
+ * GCode analysis. Produces all outputs needed by the job runner, 3D viewport, and
+ * crash-recovery simulator. Geometry, classification, tool sections and modal states
+ * are all built in one O(N) forward traversal, same as before. Duration estimation is
+ * a second phase: the forward pass collects a KinematicSegment per motion line, then
+ * (when estimateDurations) computeKinematicDurations() reverse+forward-solves realistic
+ * accel/junction-deviation-aware times over the whole file, and a final O(N) pass
+ * writes them onto each line — this can't be done in a single forward pass because a
+ * segment's duration depends on the segments both before and after it.
  *
  * initialState seeds the starting modal state instead of the machine defaults —
  * used by getModalStateAtLine() to replay forward from a checkpoint over just the
@@ -84,13 +132,16 @@ function clampRanges(axisRanges: AxisRanges): void {
  * real on-disk artefact, since a dense snapshot-per-line is unnecessary and expensive
  * at file scale (149MB for a 668k-line file) when only sparse point lookups are ever
  * needed from it.
+ * estimateDurations defaults to true; callers that only need modalStates (simulator.ts)
+ * pass false to skip building segments and the duration solve entirely.
  */
 export function analyzeGCode(
   content: string,
-  maxRapidMmPerMin = DEFAULT_MAX_RAPID_MM_PER_MIN,
+  kinematics: MachineKinematics = DEFAULT_MACHINE_KINEMATICS,
   onProgress?: (pct: number) => void,
   initialState?: GCodeModalState,
   modalCheckpointInterval = 1,
+  estimateDurations = true,
 ): AnalysisResult {
   const rawLines = content.split(/\r?\n/)
 
@@ -137,6 +188,12 @@ export function analyzeGCode(
   const modalStates: ModalStateCheckpoint[] = []
   const lastLineIdx = Math.max(1, rawLines.length - 1)
   let lastReportedPct = -1
+
+  // Kinematic duration modelling (see doc comment above). A run starts from rest
+  // (Planner.cpp:364-368), same as the very first segment of the file.
+  const kinematicSegments: KinematicSegment[] = []
+  const segmentLineIndices: number[] = []
+  let pendingHardStop = true
 
   for (let i = 0; i < rawLines.length; i++) {
     const raw = rawLines[i]!
@@ -275,6 +332,27 @@ export function analyzeGCode(
     const hasAxisWords = /[XYZ][+-]?\d/.test(clean)
     const isModalMotion = !hasExplicitMotion && !hasG28or30 && !hasG38 && !hasCannedCycle && hasAxisWords
 
+    // Planner-draining commands (CLAUDE.md Category B1/B2) force the next motion
+    // segment to start from rest — same as the very first segment of the file.
+    // G28/G30 are Category A (planner-buffered, no drain); G80 (cancel canned cycle,
+    // caught by hasCannedCycle below) is Category C (immediate, modal-only) — neither
+    // belongs here.
+    if (estimateDurations && (
+      /\bM0?[345]\b/.test(clean) ||
+      /\bM0?[789]\b/.test(clean) ||
+      hasM6 ||
+      /\bG10\b/.test(clean) ||
+      /\bG5[4-9]\b/.test(clean) ||
+      /\bG92\b/.test(clean) ||
+      /\bM0?2\b/.test(clean) || /\bM30\b/.test(clean) ||
+      /\bG0?4\b/.test(clean) ||
+      hasG38 ||
+      (hasCannedCycle && !/\bG80\b/.test(clean)) ||
+      isM0
+    )) {
+      pendingHardStop = true
+    }
+
     let type: GCodeLineType = 'modal'
     let durationMs = 0
     let vec: LineVector | null = null
@@ -282,27 +360,51 @@ export function analyzeGCode(
     if (hasExplicitG0 || (isModalMotion && state.motionMode === 'G0')) {
       const { tx, ty, tz } = resolvePos(clean, state)
       const d = dist3(state.position.x, state.position.y, state.position.z, tx, ty, tz) * toMm
-      durationMs = (d / maxRapidMmPerMin) * 60_000
       axisRanges.x.min = Math.min(axisRanges.x.min, tx); axisRanges.x.max = Math.max(axisRanges.x.max, tx)
       axisRanges.y.min = Math.min(axisRanges.y.min, ty); axisRanges.y.max = Math.max(axisRanges.y.max, ty)
       axisRanges.z.min = Math.min(axisRanges.z.min, tz); axisRanges.z.max = Math.max(axisRanges.z.max, tz)
-      if (tx !== state.position.x || ty !== state.position.y || tz !== state.position.z)
+      if (tx !== state.position.x || ty !== state.position.y || tz !== state.position.z) {
         vec = { t: 'R', x0: state.position.x, y0: state.position.y, z0: state.position.z, x1: tx, y1: ty, z1: tz, s: sIdx }
+        if (estimateDurations && d > 0) {
+          const dir = normalize3([tx - state.position.x, ty - state.position.y, tz - state.position.z])
+          kinematicSegments.push({
+            lengthMm: d,
+            nominalSpeedMmPerMin: nominalSpeedForSegment(dir, null, kinematics),
+            accelMmPerMin2: limitAccelByAxisMaximum(dir, kinematics),
+            dirIn: dir,
+            dirOut: dir,
+            hardStopBefore: pendingHardStop,
+          })
+          segmentLineIndices.push(i)
+          pendingHardStop = false
+        }
+      }
       state.position = { x: tx, y: ty, z: tz }
       type = 'rapid'
     }
     else if (hasExplicitG1 || (isModalMotion && state.motionMode === 'G1')) {
       const { tx, ty, tz } = resolvePos(clean, state)
       const feedMmPerMin = state.feedRate * toMm
-      if (feedMmPerMin > 0) {
-        const d = dist3(state.position.x, state.position.y, state.position.z, tx, ty, tz) * toMm
-        durationMs = (d / feedMmPerMin) * 60_000
-      }
+      const d = dist3(state.position.x, state.position.y, state.position.z, tx, ty, tz) * toMm
       axisRanges.x.min = Math.min(axisRanges.x.min, tx); axisRanges.x.max = Math.max(axisRanges.x.max, tx)
       axisRanges.y.min = Math.min(axisRanges.y.min, ty); axisRanges.y.max = Math.max(axisRanges.y.max, ty)
       axisRanges.z.min = Math.min(axisRanges.z.min, tz); axisRanges.z.max = Math.max(axisRanges.z.max, tz)
-      if (tx !== state.position.x || ty !== state.position.y || tz !== state.position.z)
+      if (tx !== state.position.x || ty !== state.position.y || tz !== state.position.z) {
         vec = { t: 'F', x0: state.position.x, y0: state.position.y, z0: state.position.z, x1: tx, y1: ty, z1: tz, s: sIdx }
+        if (estimateDurations && feedMmPerMin > 0 && d > 0) {
+          const dir = normalize3([tx - state.position.x, ty - state.position.y, tz - state.position.z])
+          kinematicSegments.push({
+            lengthMm: d,
+            nominalSpeedMmPerMin: nominalSpeedForSegment(dir, feedMmPerMin, kinematics),
+            accelMmPerMin2: limitAccelByAxisMaximum(dir, kinematics),
+            dirIn: dir,
+            dirOut: dir,
+            hardStopBefore: pendingHardStop,
+          })
+          segmentLineIndices.push(i)
+          pendingHardStop = false
+        }
+      }
       state.position = { x: tx, y: ty, z: tz }
       type = 'feed'
     }
@@ -335,25 +437,69 @@ export function analyzeGCode(
       // Arc length and helical component depend on which plane the arc sweeps through.
       let arcLen: number
       let helicalDelta: number
+      let tangents: { dirIn: Vec3; dirOut: Vec3 } | null = null
       if (state.plane === 'G17') {
         arcLen = arcLength(state.position.x, state.position.y, tx, ty, arcI, arcJ, undefined, cw) * toMm
         helicalDelta = (tz - state.position.z) * toMm
+        if (estimateDurations) {
+          tangents = arcTangents(
+            state.position.x + arcI, state.position.y + arcJ,
+            state.position.x, state.position.y, tx, ty,
+            cw, arcLen, helicalDelta,
+            (a, b, h) => [a, b, h],
+          )
+        }
       } else if (state.plane === 'G18') {
         // G18/G19 CW sense is inverted vs G17 in atan2 space — flip cw for arcLength
         arcLen = arcLength(state.position.x, state.position.z, tx, tz, arcI, arcK, undefined, !cw) * toMm
         helicalDelta = (ty - state.position.y) * toMm
+        if (estimateDurations) {
+          tangents = arcTangents(
+            state.position.x + arcI, state.position.z + arcK,
+            state.position.x, state.position.z, tx, tz,
+            !cw, arcLen, helicalDelta,
+            (a, b, h) => [a, h, b],
+          )
+        }
       } else {
         arcLen = arcLength(state.position.y, state.position.z, ty, tz, arcJ, arcK, undefined, !cw) * toMm
         helicalDelta = (tx - state.position.x) * toMm
+        if (estimateDurations) {
+          tangents = arcTangents(
+            state.position.y + arcJ, state.position.z + arcK,
+            state.position.y, state.position.z, ty, tz,
+            !cw, arcLen, helicalDelta,
+            (a, b, h) => [h, a, b],
+          )
+        }
       }
       const totalLen = Math.sqrt(arcLen * arcLen + helicalDelta * helicalDelta)
       const feedMmPerMin = state.feedRate * toMm
-      if (feedMmPerMin > 0) durationMs = (totalLen / feedMmPerMin) * 60_000
-      if (durationMs === 0) durationMs = 1
       axisRanges.x.min = Math.min(axisRanges.x.min, tx); axisRanges.x.max = Math.max(axisRanges.x.max, tx)
       axisRanges.y.min = Math.min(axisRanges.y.min, ty); axisRanges.y.max = Math.max(axisRanges.y.max, ty)
       axisRanges.z.min = Math.min(axisRanges.z.min, tz); axisRanges.z.max = Math.max(axisRanges.z.max, tz)
       vec = { t: 'A', x0: state.position.x, y0: state.position.y, z0: state.position.z, x1: tx, y1: ty, z1: tz, i: arcI, j: arcJ, k: arcK, cw, plane: state.plane, s: sIdx }
+      if (estimateDurations && feedMmPerMin > 0 && totalLen > 0 && tangents) {
+        // Own accel/nominal-speed use the average of the entry/exit tangents as a single
+        // representative direction — arcs are one kinematic segment, not subdivided (see
+        // kinematics.ts doc comment), so there's no single "true" direction to project against.
+        const avgDir = normalize3([
+          tangents.dirIn[0] + tangents.dirOut[0],
+          tangents.dirIn[1] + tangents.dirOut[1],
+          tangents.dirIn[2] + tangents.dirOut[2],
+        ])
+        const repDir = avgDir[0] === 0 && avgDir[1] === 0 && avgDir[2] === 0 ? tangents.dirIn : avgDir
+        kinematicSegments.push({
+          lengthMm: totalLen,
+          nominalSpeedMmPerMin: nominalSpeedForSegment(repDir, feedMmPerMin, kinematics),
+          accelMmPerMin2: limitAccelByAxisMaximum(repDir, kinematics),
+          dirIn: tangents.dirIn,
+          dirOut: tangents.dirOut,
+          hardStopBefore: pendingHardStop,
+        })
+        segmentLineIndices.push(i)
+        pendingHardStop = false
+      }
       state.position = { x: tx, y: ty, z: tz }
       type = 'arc'
     }
@@ -432,13 +578,36 @@ export function analyzeGCode(
 
   const noToolDefinitions = tools.length === 1 && tools[0]!.toolNumber === 0
 
+  // Second phase: solve realistic accel/junction-aware durations over the whole file
+  // and backfill them onto the lines the single forward pass above left as placeholders
+  // (see the function doc comment for why this can't be done in one pass).
+  let estimatedTotalMs = cumulativeMs
+  if (estimateDurations && kinematicSegments.length > 0) {
+    const segmentDurations = computeKinematicDurations(kinematicSegments, kinematics)
+    let finalCumulative = 0
+    let segIdx = 0
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li]!
+      if (segIdx < segmentLineIndices.length && segmentLineIndices[segIdx] === li) {
+        line.estimatedDurationMs = segmentDurations[segIdx]!
+        segIdx++
+      }
+      // Arcs always get at least 1ms even when un-timeable (e.g. F0) — matches the
+      // pre-existing "duration === 0 -> 1" fallback this replaces.
+      if (line.type === 'arc' && line.estimatedDurationMs === 0) line.estimatedDurationMs = 1
+      finalCumulative += line.estimatedDurationMs
+      line.cumulativeDurationMs = finalCumulative
+    }
+    estimatedTotalMs = finalCumulative
+  }
+
   return {
     lines,
     vectors,
     modalStates,
     tools,
     axisRanges,
-    estimatedTotalMs: cumulativeMs,
+    estimatedTotalMs,
     noToolDefinitions,
     generator,
     generatorInfo,
