@@ -24,7 +24,10 @@ bun run package
 ```
 
 Produces a zip under `dist/` for whichever platform you're running this on (electron-builder
-defaults to the host OS when no target is given) — plus an AppImage too, on Linux. No code signing,
+defaults to the host OS when no target is given) — plus an AppImage too, on Linux. macOS always
+builds both `x64` and `arm64` zips regardless of which Mac you're building on (electron-builder
+just downloads both prebuilt Electron variants; `@serialport/bindings-cpp`'s darwin prebuild is
+already a universal x64+arm64 binary, so no per-arch rebuild step is needed). No code signing,
 notarization, or auto-update — those are deferred to a later stage.
 
 CI (`.github/workflows/build-desktop.yaml`, `.github/workflows/release-desktop.yaml`) builds all

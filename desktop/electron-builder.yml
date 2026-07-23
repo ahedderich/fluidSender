@@ -17,7 +17,11 @@ linux:
     - AppImage
   category: Utility
 mac:
-  target: zip
+  target:
+    - target: zip
+      arch:
+        - x64
+        - arm64
   category: public.app-category.utilities
 win:
   target: zip
