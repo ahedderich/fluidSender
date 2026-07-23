@@ -58,7 +58,11 @@ describe('useSimConnection', () => {
         simSpeed: 2,
         axisCount: 3,
         travel: { x: 300, y: 200, z: 80, a: 360, b: 360, c: 360 },
+        maxRate: { x: 5000, y: 5000, z: 1000, a: 1000, b: 1000, c: 1000 },
         fluidConfig: {},
+        toolLengthOffset: 0,
+        toolNumber: 0,
+        firmwareVersion: '4.0.3',
       }),
     })
 
@@ -66,6 +70,7 @@ describe('useSimConnection', () => {
     expect(store.machineState).toBe('Run')
     expect(store.pos.x).toBe(1)
     expect(store.simSpeed).toBe(2)
+    expect(store.firmwareVersion).toBe('4.0.3')
   })
 
   it('applies the default scenario when the socket opens', () => {

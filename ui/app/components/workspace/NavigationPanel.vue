@@ -161,14 +161,14 @@
           @click="machine.sendCommand('G0 G54 X0 Y0')"
           class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          → XY
+          → XY=0
         </button>
         <button
           :disabled="!movementEnabled"
-          @click="machine.sendCommand('G0 G54 Z0')"
+          @click="gotoZ10"
           class="w-full flex-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          → Z
+          → Z=10
         </button>
         <button
           :disabled="!movementEnabled"
@@ -244,6 +244,7 @@ import { useSettingsStore } from '~/stores/settings'
 import { useSyncStore } from '~/stores/sync'
 import { useNav } from '~/composables/useNav'
 import { useModals } from '~/composables/useModals'
+import { useConfirm } from '~/composables/useConfirm'
 import { useMovementEnabled } from '~/composables/useMovementEnabled'
 import { useJog } from '~/composables/useJog'
 import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
@@ -253,6 +254,7 @@ const settings = useSettingsStore()
 const sync = useSyncStore()
 const { navMode } = useNav()
 const modals = useModals()
+const { confirm } = useConfirm()
 const movementEnabled = useMovementEnabled()
 
 const parkPosition = computed(() => settings.activeMachine?.parkPosition)
@@ -266,6 +268,17 @@ function gotoParking() {
   machine.sendCommand('G53 G0 Z0')
   machine.sendCommand(`G53 G0 X${park.x.toFixed(3)} Y${park.y.toFixed(3)}`)
   machine.sendCommand(`G53 G0 Z${park.z.toFixed(3)}`)
+}
+
+async function gotoZ10() {
+  const ok = await confirm({
+    title: 'Move to Z=10?',
+    message: 'Rapids to Z=10 in the active work coordinate system. If the machine is not correctly homed or zeroed, this move can crash the tool into the workpiece.',
+    confirmLabel: 'Move',
+    danger: true,
+  })
+  if (!ok) return
+  machine.sendCommand('G0 G54 Z10')
 }
 
 const {

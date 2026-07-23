@@ -109,7 +109,7 @@
 
     <!-- Table -->
     <div class="flex-1 overflow-auto min-h-0">
-      <table v-if="!pending && (visibleFolders.length || visibleFiles.length)" class="w-full text-xs min-w-[520px]">
+      <table v-if="!pending && (visibleFolders.length || visibleFiles.length)" class="w-full text-xs min-w-[580px]">
         <thead class="sticky top-0 z-10">
           <tr class="bg-gray-50 dark:bg-slate-900 border-b border-gray-200 dark:border-slate-700">
             <th class="text-left px-3 py-2 font-medium text-gray-500 dark:text-slate-400 cursor-pointer select-none" @click="setSort('name')">
@@ -123,6 +123,9 @@
             </th>
             <th class="text-right px-2 py-2 font-medium text-gray-500 dark:text-slate-400 cursor-pointer select-none whitespace-nowrap" @click="setSort('lastRun')">
               Last Run <span v-if="sortCol === 'lastRun'" class="ml-0.5 opacity-60">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+            </th>
+            <th class="text-right px-2 py-2 font-medium text-gray-500 dark:text-slate-400 cursor-pointer select-none whitespace-nowrap" title="Duration of the last run" @click="setSort('runtime')">
+              Runtime <span v-if="sortCol === 'runtime'" class="ml-0.5 opacity-60">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
             </th>
             <th class="text-right px-2 py-2 font-medium text-gray-500 dark:text-slate-400 cursor-pointer select-none" title="Successful runs" @click="setSort('success')">
               ✓ <span v-if="sortCol === 'success'" class="ml-0.5 opacity-60">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
@@ -150,6 +153,7 @@
                 <span class="text-gray-400 dark:text-slate-500 text-[10px] shrink-0">({{ folder.childCount }})</span>
               </div>
             </td>
+            <td class="px-2 py-2 text-right text-gray-400 dark:text-slate-500">—</td>
             <td class="px-2 py-2 text-right text-gray-400 dark:text-slate-500">—</td>
             <td class="px-2 py-2 text-right text-gray-400 dark:text-slate-500">—</td>
             <td class="px-2 py-2 text-right text-gray-400 dark:text-slate-500">—</td>
@@ -209,6 +213,11 @@
               <span v-else-if="file.isNc" class="text-gray-400 dark:text-slate-500">—</span>
               <span v-else class="text-gray-300 dark:text-slate-600">—</span>
             </td>
+            <td class="px-2 py-2 text-right text-gray-500 dark:text-slate-400 whitespace-nowrap">
+              <span v-if="file.isNc && file.lastExecution" :title="lastRunTitle(file.lastExecution)">{{ formatDuration(runtimeMs(file.lastExecution)) }}</span>
+              <span v-else-if="file.isNc" class="text-gray-400 dark:text-slate-500">—</span>
+              <span v-else class="text-gray-300 dark:text-slate-600">—</span>
+            </td>
             <td class="px-2 py-2 text-right">
               <span v-if="file.isNc" class="text-green-600 dark:text-green-400 font-medium">{{ file.totalSuccessful || '—' }}</span>
               <span v-else class="text-gray-300 dark:text-slate-600">—</span>
@@ -218,17 +227,16 @@
               <span v-else class="text-gray-300 dark:text-slate-600">—</span>
             </td>
             <td class="px-3 py-2 text-right">
-              <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div class="flex items-center justify-end gap-1">
                 <button
                   v-if="file.isNc"
+                  type="button"
                   :disabled="isViewer"
-                  class="p-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                  class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 font-medium hover:bg-green-100 dark:hover:bg-green-900/30 hover:text-green-700 dark:hover:text-green-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                   title="Load job"
                   @click="loadFile(file.path)"
                 >
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z" />
-                  </svg>
+                  Load
                 </button>
                 <a
                   class="p-1 text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors rounded cursor-pointer"
@@ -278,6 +286,7 @@ import { useConfirm } from '~/composables/useConfirm'
 interface ExecutionRecord {
   startedAt: number
   completedAt: number
+  activeDurationMs?: number
   status: 'success' | 'error' | 'aborted'
   machineId: string
   machineName?: string
@@ -303,7 +312,7 @@ interface FileEntry {
   totalFailed: number
 }
 
-type SortCol = 'name' | 'size' | 'uploadedAt' | 'lastRun' | 'success' | 'failed'
+type SortCol = 'name' | 'size' | 'uploadedAt' | 'lastRun' | 'runtime' | 'success' | 'failed'
 
 // ----- state -----
 
@@ -355,6 +364,7 @@ function sortValue(f: FileEntry): string | number {
     case 'size': return f.size
     case 'uploadedAt': return f.uploadedAt
     case 'lastRun': return f.lastExecution?.completedAt ?? 0
+    case 'runtime': return f.lastExecution ? runtimeMs(f.lastExecution) : 0
     case 'success': return f.totalSuccessful
     case 'failed': return f.totalFailed
   }
@@ -460,6 +470,20 @@ useDialogShortcuts(() => isAnalyzing.value, { onCancel: () => abortAnalysis() })
 
 // ----- formatting -----
 
+function runtimeMs(exec: ExecutionRecord): number {
+  return exec.activeDurationMs ?? Math.max(0, exec.completedAt - exec.startedAt)
+}
+
+function formatDuration(ms: number): string {
+  const totalSec = Math.round(ms / 1000)
+  if (totalSec < 60) return `${totalSec}s`
+  const totalMin = Math.floor(totalSec / 60)
+  if (totalMin < 60) return `${totalMin}m`
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  return m === 0 ? `${h}h` : `${h}h ${m}m`
+}
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
@@ -480,7 +504,7 @@ function relDate(epochMs: number): string {
 
 function lastRunTitle(exec: ExecutionRecord): string {
   const when = new Date(exec.completedAt).toLocaleString()
-  const parts = [`${exec.status.toUpperCase()} on ${when}`]
+  const parts = [`${exec.status.toUpperCase()} on ${when}`, `Runtime: ${formatDuration(runtimeMs(exec))}`]
   if (exec.machineId && exec.machineId !== 'unknown') parts.push(`Machine: ${exec.machineName ?? exec.machineId}`)
   if (exec.errorMessage) parts.push(`Error: ${exec.errorMessage}`)
   return parts.join('\n')

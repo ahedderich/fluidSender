@@ -1,4 +1,5 @@
 import type { CommandCategory } from './classifier'
+import type { GcodeGeneratorId, GeneratorExtraInfo } from './generator'
 
 export type GCodeLineType =
   | 'rapid'
@@ -45,11 +46,6 @@ export interface ToolSection {
    *   null = first section (preamble absorbed; no preceding change)
    */
   toolChangeType: 'M6' | 'T' | null
-  /** Extracted from Fusion360 header comment for this tool number. */
-  commentedName: string | null
-  commentedDiameter: number | null
-  commentedCornerRadius: number | null
-  commentedZMin: number | null
   startLine: number
   endLine: number
   lineCount: number
@@ -65,24 +61,28 @@ export type LineVector =
   | { t: 'R' | 'F'; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; s: number }
   | { t: 'A'; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; i: number; j: number; k: number; cw: boolean; plane: 'G17' | 'G18' | 'G19'; s: number }
 
-/** Persisted analysis result stored alongside the GCode file. */
+/** Persisted analysis result stored alongside the GCode file.
+ *  version 5: lines.json switched to the compact CompactGCodeLine wire format
+ *  (see lineCodec.ts) and lines-text.json was dropped — the version bump makes
+ *  loadCachedAnalysis()'s existing gate auto-invalidate any pre-existing v4
+ *  artefacts instead of misreading them under the new schema.
+ *  version 6: estimatedTotalMs is now accel/junction-deviation aware (see
+ *  kinematics.ts) and depends on the machine kinematics used to compute it —
+ *  kinematicsFingerprint lets loadCachedAnalysis() invalidate the cache when the
+ *  active machine (or its config) changes between loads of the same file. */
 export interface JobAnalysis {
-  version: 3
+  version: 6
   fileId: string
   filename: string
   analyzedAt: number
   totalLines: number
   estimatedTotalMs: number
+  kinematicsFingerprint: string
   axisRanges: AxisRanges
   tools: ToolSection[]
   noToolDefinitions: boolean
-  headerToolDefs: Array<{
-    number: number
-    diameter: number
-    cornerRadius: number
-    zMin: number
-    type: string
-  }>
+  generator: GcodeGeneratorId
+  generatorInfo: GeneratorExtraInfo
 }
 
 export interface AxisRanges {
@@ -103,6 +103,18 @@ export interface GCodeModalState {
   plane: 'G17' | 'G18' | 'G19'
   motionMode: 'G0' | 'G1' | 'G2' | 'G3'
   toolNumber: number
+}
+
+/**
+ * A modal-state snapshot after a given source line executed. analyzeGCode() emits
+ * one of these every `modalCheckpointInterval` lines (default 1 = every line, dense)
+ * rather than a plain positional array, so a sparse checkpoint file (interval > 1)
+ * and a dense one share the same shape — lookups always resolve via lineIndex,
+ * never by array position.
+ */
+export interface ModalStateCheckpoint {
+  lineIndex: number
+  state: GCodeModalState
 }
 
 export type JobStatus =
@@ -145,6 +157,10 @@ export interface JobState {
   analyzeProgress: number
   /** Tool sections extracted during analysis; null before analysis completes. */
   toolSections: ToolSection[] | null
+  /** Detected CAM generator for the loaded file; null before analysis completes. */
+  generator: GcodeGeneratorId | null
+  /** Generator-specific extra tool data extracted during analysis; null before analysis completes. */
+  generatorInfo: GeneratorExtraInfo | null
   recovery: {
     available: boolean
     checkpointPtr: number

@@ -1,18 +1,27 @@
 <template>
   <div ref="containerRef" class="relative bg-gray-100 dark:bg-slate-950 rounded-lg overflow-hidden">
-    <!-- 3D canvas — always full container, hidden only in cam-only mode.
-         absolute + inset-0 (not w-full h-full) keeps it out of normal flow entirely,
-         so its intrinsic aspect ratio (from the width/height attributes Three.js sets)
-         can never feed back into the container's own flex/grid sizing. -->
+    <!-- 3D canvas — full container except split/gcode modes, where it's actually
+         resized to the left half (not just visually covered) so the camera's
+         aspect ratio and render output match what's really visible; hidden only
+         in cam-only mode. Explicit w-full/w-1/2 + h-full (not top/right/bottom/left
+         offsets with an auto width) because <canvas> is a replaced element —
+         browsers size a replaced element from its own intrinsic width/height
+         attributes when CSS width/height are left 'auto', even with all four
+         inset offsets set to 0, so it does NOT auto-stretch to fill like a
+         normal block would. Explicit percentage width/height sidesteps that
+         entirely by resolving against the containing block instead. -->
     <canvas
       ref="canvasRef"
-      class="absolute inset-0"
-      :class="viewMode === 'cam' ? 'invisible' : ''"
+      class="absolute top-0 left-0 h-full"
+      :class="[
+        viewMode === 'cam' ? 'invisible' : '',
+        (viewMode === 'split' || viewMode === 'gcode') ? 'w-1/2' : 'w-full',
+      ]"
     />
 
     <!-- Camera overlay: full in cam mode, right half in split, quarter pip -->
     <div
-      v-if="viewMode !== '3d'"
+      v-if="viewMode !== '3d' && viewMode !== 'gcode'"
       :class="[
         viewMode === 'split' ? 'absolute top-0 right-0 bottom-0 left-1/2' : '',
         viewMode === 'cam' ? 'absolute inset-0' : '',
@@ -47,7 +56,7 @@
     <!-- Webcam/view mode switcher (top-left) -->
     <div class="absolute top-2.5 left-2.5 flex gap-1 z-10">
       <button
-        v-for="m in viewModes"
+        v-for="m in visibleViewModes"
         :key="m.key"
         @click="viewMode = m.key"
         :class="viewMode === m.key ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800/80 text-slate-300 border-slate-600/50 hover:bg-slate-700/90'"
@@ -55,8 +64,8 @@
       >{{ m.label }}</button>
     </div>
 
-    <!-- View presets (top-left, offset for mode switcher) -->
-    <div class="absolute top-10 left-2.5 flex gap-1.5 z-10">
+    <!-- View presets (top-left, offset for mode switcher) — hidden when there's no 3D-only view to orient (cam/gcode) -->
+    <div v-if="!['cam'].includes(viewMode)" class="absolute top-10 left-2.5 flex gap-1.5 z-10">
       <button
         v-for="v in viewPresets"
         :key="v.key"
@@ -65,8 +74,8 @@
       >{{ v.label }}</button>
     </div>
 
-    <!-- Layer visibility (top-right) -->
-    <div class="absolute top-2.5 right-2.5 flex flex-col gap-1 z-10">
+    <!-- Layer visibility (top-right) — hidden when there's no 3D-only view to toggle layers on (cam/gcode) -->
+    <div v-if="!['cam', 'gcode'].includes(viewMode)" class="absolute top-2.5 right-2.5 flex flex-col gap-1 z-10">
       <button
         v-for="layer in layers"
         :key="layer.key"
@@ -141,6 +150,20 @@
       </button>
     </div>
 
+    <!-- GCode text panel (right half, gcode mode only) -->
+    <div
+      v-if="viewMode === 'gcode'"
+      class="absolute top-0 right-0 bottom-14 left-1/2 z-10 flex flex-col bg-slate-800/80 backdrop-blur-sm border-l border-slate-600/50"
+    >
+      <WorkspaceGCodeLinePanel
+        :lines="gcodeLines"
+        :tool-sections="job?.toolSections ?? null"
+        :generator-info="job?.generatorInfo ?? { generator: 'generic' }"
+        :selected-index="selectedLineIndex"
+        @select="onLineSelect"
+      />
+    </div>
+
     <!-- Progress bar (bottom) -->
     <div class="absolute bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-sm border-t border-slate-700/50 px-4 py-2 z-10">
       <div class="flex items-center justify-between text-xs text-slate-400 mb-1.5">
@@ -191,19 +214,33 @@ const ready = ref(false)
 
 const webcam = computed(() => settings.activeMachine?.webcam)
 
-const viewMode = ref<CamMode>(webcam.value?.defaultMode ?? '3d')
+// GCode mode isn't a webcam view, so it's kept out of CamMode (which also types
+// WebcamConfig.defaultMode, a per-machine setting that shouldn't offer "GCode"
+// as a selectable default webcam view).
+type ViewportMode = CamMode | 'gcode'
+
+const viewMode = ref<ViewportMode>(webcam.value?.defaultMode ?? '3d')
 // Each machine has its own default view — jump back to it when switching machines,
 // rather than carrying the previous machine's cam mode over.
 watch(() => settings.activeMachineId, () => {
   viewMode.value = webcam.value?.defaultMode ?? '3d'
 })
+// Fall back out of GCode mode if the loaded job is cleared while it's active.
+watch(() => job.value?.fileId, (id) => {
+  if (!id && viewMode.value === 'gcode') viewMode.value = '3d'
+})
 
 const viewModes = [
-  { key: '3d' as CamMode, label: '3D' },
-  { key: 'split' as CamMode, label: '⬛⬛' },
-  { key: 'cam' as CamMode, label: 'CAM' },
-  { key: 'pip' as CamMode, label: 'PiP' },
+  { key: '3d' as ViewportMode, label: '3D' },
+  { key: 'split' as ViewportMode, label: '⬛⬛' },
+  { key: 'cam' as ViewportMode, label: 'CAM' },
+  { key: 'pip' as ViewportMode, label: 'PiP' },
+  { key: 'gcode' as ViewportMode, label: 'GCode' },
 ]
+
+// GCode entry only shown once a file is loaded — filtered here rather than a
+// per-button v-if, since v-if can't be mixed with v-for on the same element.
+const visibleViewModes = computed(() => viewModes.filter(m => m.key !== 'gcode' || job.value?.fileId))
 
 type ViewKey = 'iso' | 'top' | 'front' | 'right'
 
@@ -222,6 +259,21 @@ const layers = reactive([
   { key: 'origin', label: 'Origin', color: '', visible: true },
   { key: 'machineBounds', label: 'Machine', color: '#475569', visible: true },
 ])
+
+// Toolpath layer base colors — kept in sync with the swatches above (numeric
+// hex here since THREE.Color/LineMaterial want that form, not the CSS strings).
+const LAYER_BASE_COLOR = {
+  travel: 0x22c55e,
+  cutting: 0x3b82f6,
+  zmove: 0xeab308,
+} as const
+
+// How far (0–1) an already-executed segment's color is blended toward the
+// scene background — the cheap stand-in for "more transparent" discussed for
+// issue #45: LineMaterial's fat-line pipeline supports per-vertex color but
+// not per-vertex alpha, so fading toward the background reads the same
+// visually without needing a custom shader.
+const DIM_BLEND_FACTOR = 0.65
 
 const sendPct = computed(() => job.value?.totalLines ? Math.round((job.value.sendPtr / job.value.totalLines) * 100) : 0)
 const execPct = computed(() => job.value?.totalLines ? Math.round((job.value.execPtr / job.value.totalLines) * 100) : 0)
@@ -342,6 +394,33 @@ let rebuildSpatialGeometry: (b: { x: number; y: number; z: number }) => void = (
 let rebuildStock: (s: import('~/stores/machine').StockDef | null) => void = () => {}
 let loadToolpathSegments: (vectors: Array<LineVector | null>) => void = () => {}
 let clearToolpath: () => void = () => {}
+let frameLine: (lineIndex: number) => void = () => {}
+let applyExecutedDimming: (execPtr: number) => void = () => {}
+
+// Retained raw per-line data — kept around (rather than discarded after building
+// 3D geometry) so the GCode panel can look lines/vectors up by index. See
+// GCODE_VIEWER_PLAN.md §4.4.
+const lastVectors = ref<Array<LineVector | null>>([])
+// Raw line text only (not the full per-line GCodeLine analysis objects) — the
+// text panel just displays lines, and shipping/parsing the enriched JSON for
+// every line of a large file is what used to freeze the UI on load.
+const gcodeLines = ref<string[]>([])
+const selectedLineIndex = ref<number | null>(null)
+
+// Per-line offset/count into the merged toolpath geometry buffers, built by
+// buildToolpathGeometry(). Consumed by applyExecutedDimming() to recolor the
+// segments for already-executed lines (issue #45).
+const lineGeometryIndex = ref(new Map<number, { layer: 'travel' | 'cutting' | 'zmove'; vertexOffset: number; vertexCount: number }>())
+
+// Total point count per layer's merged position buffer — needed to allocate a
+// correctly-sized color array in applyExecutedDimming (points, not floats;
+// every 2 points is one rendered segment, matching lineGeometryIndex's units).
+let layerPointCounts: Record<'travel' | 'cutting' | 'zmove', number> = { travel: 0, cutting: 0, zmove: 0 }
+
+function onLineSelect(index: number) {
+  selectedLineIndex.value = index
+  frameLine(index)
+}
 
 async function initThree() {
   const canvas = canvasRef.value
@@ -354,16 +433,28 @@ async function initThree() {
   const { LineSegmentsGeometry } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineSegmentsGeometry.js')
   const { LineMaterial } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineMaterial.js')
 
-  const { width, height } = container.getBoundingClientRect()
+  // Read the canvas's own rect (not the container's) — in split-mode-by-default
+  // machines the canvas is already CSS-sized to the left half by the time this
+  // runs (post-mount), so this must match applyResize()'s later measurements.
+  const { width, height } = canvas.getBoundingClientRect()
 
   // Track all LineMaterial instances so their resolution uniform stays in sync on resize.
   // LineMaterial renders lines as triangles (not native GL lines), giving proper AA and width > 1px.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lineMats: any[] = []
 
+  // vertexColors: true is used for the toolpath layers (travel/cutting/zmove)
+  // so applyExecutedDimming() can recolor individual segments; the material's
+  // own `color` is forced to white in that case so it doesn't tint the vertex
+  // colors (LineMaterial multiplies the two).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function lineMat2(color: number, linewidth = 1.5): any {
-    const m = new LineMaterial({ color, linewidth, resolution: new THREE.Vector2(width, height) })
+  function lineMat2(color: number, linewidth = 1.5, vertexColors = false): any {
+    const m = new LineMaterial({
+      color: vertexColors ? 0xffffff : color,
+      linewidth,
+      resolution: new THREE.Vector2(width, height),
+      vertexColors,
+    })
     lineMats.push(m)
     return m
   }
@@ -384,9 +475,10 @@ async function initThree() {
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-  // updateStyle=false: canvas layout size stays CSS-driven (absolute + inset-0 of container)
-  // so it can never feed its own size back into the container's layout — only the internal
-  // drawing-buffer resolution is set here.
+  // updateStyle=false: canvas layout size stays CSS-driven (absolutely positioned
+  // within the container, full or left-half depending on viewMode) so it can
+  // never feed its own size back into the container's layout — only the
+  // internal drawing-buffer resolution is set here.
   renderer.setSize(width, height || 400, false)
 
   const controls = new OrbitControls(camera, renderer.domElement)
@@ -761,28 +853,46 @@ async function initThree() {
     const feedPts: number[] = []
     const zmovePts: number[] = []
 
-    for (const vec of vectors) {
-      if (!vec) continue
+    // Per-line record of where its geometry landed in the flat position arrays
+    // above (offsets/counts in points, i.e. groups of 3 floats — every 2 points
+    // is one rendered segment). Consumed by applyExecutedDimming() below to
+    // recolor individual lines within these merged buffers (issue #45).
+    const newLineGeometryIndex = new Map<number, { layer: 'travel' | 'cutting' | 'zmove'; vertexOffset: number; vertexCount: number }>()
+
+    vectors.forEach((vec, lineIndex) => {
+      if (!vec) return
       if (vec.t === 'A') {
         // Tessellate arc into line segments
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const pts = tessellateArc(vec.x0, vec.y0, vec.z0, vec.x1, vec.y1, vec.z1, vec.i, vec.j, (vec as any).k ?? 0, vec.cw, (vec as any).plane ?? 'G17')
+        const vertexOffset = feedPts.length / 3
         let px = vec.x0, py = vec.y0, pz = vec.z0
         for (const [nx, ny, nz] of pts) {
           feedPts.push(px, py, pz, nx, ny, nz)
           px = nx; py = ny; pz = nz
         }
+        newLineGeometryIndex.set(lineIndex, { layer: 'cutting', vertexOffset, vertexCount: pts.length * 2 })
       } else {
         const isZOnly = vec.x0 === vec.x1 && vec.y0 === vec.y1
-        const arr = vec.t === 'R' ? rapidPts : isZOnly ? zmovePts : feedPts
+        const layer = vec.t === 'R' ? 'travel' : isZOnly ? 'zmove' : 'cutting'
+        const arr = layer === 'travel' ? rapidPts : layer === 'zmove' ? zmovePts : feedPts
+        const vertexOffset = arr.length / 3
         arr.push(vec.x0, vec.y0, vec.z0, vec.x1, vec.y1, vec.z1)
+        newLineGeometryIndex.set(lineIndex, { layer, vertexOffset, vertexCount: 2 })
       }
+    })
+
+    lineGeometryIndex.value = newLineGeometryIndex
+    layerPointCounts = {
+      travel: rapidPts.length / 3,
+      cutting: feedPts.length / 3,
+      zmove: zmovePts.length / 3,
     }
 
     if (rapidPts.length > 0) {
       const geo = new LineSegmentsGeometry()
       geo.setPositions(rapidPts)
-      const obj = new LineSegments2(geo, lineMat2(0x22c55e, 1.0))
+      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.travel, 1.0, true))
       obj.visible = layers.find(l => l.key === 'travel')?.visible ?? true
       scene.add(obj)
       objectMap['travel'] = obj
@@ -791,7 +901,7 @@ async function initThree() {
     if (feedPts.length > 0) {
       const geo = new LineSegmentsGeometry()
       geo.setPositions(feedPts)
-      const obj = new LineSegments2(geo, lineMat2(0x3b82f6, 1.5))
+      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.cutting, 1.5, true))
       obj.visible = layers.find(l => l.key === 'cutting')?.visible ?? true
       scene.add(obj)
       objectMap['cutting'] = obj
@@ -800,17 +910,27 @@ async function initThree() {
     if (zmovePts.length > 0) {
       const geo = new LineSegmentsGeometry()
       geo.setPositions(zmovePts)
-      const obj = new LineSegments2(geo, lineMat2(0xeab308, 1.0))
+      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.zmove, 1.0, true))
       obj.visible = layers.find(l => l.key === 'zmove')?.visible ?? true
       scene.add(obj)
       objectMap['zmove'] = obj
     }
 
+    // Initialize per-vertex colors immediately so a job that's already
+    // partway through (e.g. reconnecting mid-run) shows correct dimming right
+    // away, rather than waiting for the next execPtr change.
+    applyExecutedDimming(job.value?.execPtr ?? 0)
+
     requestRender()
   }
 
   loadToolpathSegments = (vectors: Array<LineVector | null>) => buildToolpathGeometry(vectors)
-  clearToolpath = () => { disposeToolpathObjects(); requestRender() }
+  clearToolpath = () => {
+    disposeToolpathObjects()
+    lineGeometryIndex.value = new Map()
+    layerPointCounts = { travel: 0, cutting: 0, zmove: 0 }
+    requestRender()
+  }
 
   // Tool representation — unit CylinderGeometry (r=1, h=1), rotated so axis aligns with world Z.
   // scale.x/z = radius, scale.y = height. Tip placed at workPos.z, body extends upward.
@@ -826,6 +946,97 @@ async function initThree() {
     toolObj.position.set(wp0.x, wp0.y, wp0.z + toolH / 2)
     scene.add(toolObj)
     objectMap['tool'] = toolObj
+  }
+
+  // Selected-GCode-line highlight — positions are updated in frameLine() below;
+  // starts hidden since nothing is selected yet.
+  {
+    const highlightGeo = new LineSegmentsGeometry()
+    highlightGeo.setPositions([0, 0, 0, 0, 0, 0])
+    const highlightObj = new LineSegments2(highlightGeo, lineMat2(0xffffff, 4.0))
+    highlightObj.visible = false
+    scene.add(highlightObj)
+    objectMap['lineHighlight'] = highlightObj
+  }
+
+  // Frames the camera on the vector(s) for a selected GCode line and updates the
+  // highlight marker. No-op (clears the highlight) for lines with no geometry
+  // (comments, modal-only lines) — there's nothing to zoom to.
+  frameLine = (lineIndex: number) => {
+    const vec = lastVectors.value[lineIndex]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const obj = objectMap['lineHighlight'] as any
+    if (!vec || !threeCtx || !obj) {
+      if (obj) { obj.visible = false; requestRender() }
+      return
+    }
+    const { camera, controls } = threeCtx
+
+    let pts: number[]
+    if (vec.t === 'A') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tess = tessellateArc(vec.x0, vec.y0, vec.z0, vec.x1, vec.y1, vec.z1, vec.i, vec.j, (vec as any).k ?? 0, vec.cw, (vec as any).plane ?? 'G17')
+      pts = []
+      let px = vec.x0, py = vec.y0, pz = vec.z0
+      for (const [nx, ny, nz] of tess) {
+        pts.push(px, py, pz, nx, ny, nz)
+        px = nx; py = ny; pz = nz
+      }
+    } else {
+      pts = [vec.x0, vec.y0, vec.z0, vec.x1, vec.y1, vec.z1]
+    }
+    obj.geometry.setPositions(pts)
+    obj.visible = true
+
+    const mx = (vec.x0 + vec.x1) / 2, my = (vec.y0 + vec.y1) / 2, mz = (vec.z0 + vec.z1) / 2
+    const segLen = Math.hypot(vec.x1 - vec.x0, vec.y1 - vec.y0, vec.z1 - vec.z0)
+    const dist = Math.max(segLen * 4, 20) // floor prevents an absurd close-up on a near-zero-length move
+    const dir = new THREE.Vector3().subVectors(camera.position, controls.target).normalize()
+    controls.target.set(mx, my, mz)
+    camera.position.copy(controls.target).addScaledVector(dir, dist)
+    controls.update()
+    requestRender()
+  }
+
+  // Recolors the travel/cutting/zmove meshes so lines before execPtr fade
+  // toward the scene background (issue #45). Rebuilds each layer's full color
+  // buffer from scratch on every call rather than patching deltas — simpler,
+  // and correct even when execPtr moves backward (pause/recovery), at the
+  // cost of being O(total vertices); the caller throttles calls to at most
+  // once per animation frame to keep that affordable.
+  applyExecutedDimming = (execPtr: number) => {
+    const bg = scene.background as THREE.Color
+    const palette = {
+      travel: { base: new THREE.Color(LAYER_BASE_COLOR.travel), dimmed: new THREE.Color(LAYER_BASE_COLOR.travel).lerp(bg, DIM_BLEND_FACTOR) },
+      cutting: { base: new THREE.Color(LAYER_BASE_COLOR.cutting), dimmed: new THREE.Color(LAYER_BASE_COLOR.cutting).lerp(bg, DIM_BLEND_FACTOR) },
+      zmove: { base: new THREE.Color(LAYER_BASE_COLOR.zmove), dimmed: new THREE.Color(LAYER_BASE_COLOR.zmove).lerp(bg, DIM_BLEND_FACTOR) },
+    } as const
+
+    const colorArrays: Record<'travel' | 'cutting' | 'zmove', number[]> = { travel: [], cutting: [], zmove: [] }
+    for (const layer of ['travel', 'cutting', 'zmove'] as const) {
+      const { r, g, b } = palette[layer].base
+      const arr = colorArrays[layer]
+      for (let i = 0; i < layerPointCounts[layer]; i++) arr.push(r, g, b)
+    }
+
+    for (const [lineIndex, geomRef] of lineGeometryIndex.value) {
+      if (lineIndex >= execPtr) continue
+      const { r, g, b } = palette[geomRef.layer].dimmed
+      const arr = colorArrays[geomRef.layer]
+      const start = geomRef.vertexOffset * 3
+      for (let i = 0; i < geomRef.vertexCount; i++) {
+        arr[start + i * 3] = r
+        arr[start + i * 3 + 1] = g
+        arr[start + i * 3 + 2] = b
+      }
+    }
+
+    for (const layer of ['travel', 'cutting', 'zmove'] as const) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const obj = objectMap[layer] as any
+      if (obj) obj.geometry.setColors(colorArrays[layer])
+    }
+    requestRender()
   }
 
   threeCtx = { THREE, scene, camera, controls, renderer }
@@ -851,21 +1062,16 @@ async function initThree() {
   // Loop stops naturally when damping fully settles
   controls.addEventListener('change', requestRender)
 
-  // Re-render when switching back from cam-only mode
-  watch(viewMode, (newMode, oldMode) => {
-    if (newMode !== 'cam' && oldMode === 'cam') requestRender()
-  })
-
-  requestRender() // draw the initial frame
-
   // Resize — debounced so a continuous drag of the window/panel edge doesn't
   // recalculate camera/renderer/materials on every intermediate frame; wait
-  // for the size to settle for 300ms before applying it.
+  // for the size to settle for 300ms before applying it. Reads the canvas's
+  // own rect (not the container's) since split/gcode modes resize the canvas
+  // itself to the left half rather than the full container.
   let resizeTimeout: ReturnType<typeof setTimeout> | null = null
   const applyResize = () => {
     resizeTimeout = null
-    if (!container) return
-    const { width: w, height: h } = container.getBoundingClientRect()
+    if (!canvas) return
+    const { width: w, height: h } = canvas.getBoundingClientRect()
     if (!w || !h) return
     camera.aspect = w / h
     camera.updateProjectionMatrix()
@@ -873,15 +1079,36 @@ async function initThree() {
     for (const m of lineMats) m.resolution.set(w, h)
     requestRender()
   }
+  // The canvas's own box changes size not just on window/container resize but
+  // also whenever viewMode's CSS class toggles it between full-width and
+  // left-half — observing the canvas itself (rather than the container) picks
+  // up both cases through one path.
   const ro = new ResizeObserver(() => {
     if (resizeTimeout !== null) clearTimeout(resizeTimeout)
     resizeTimeout = setTimeout(applyResize, 300)
   })
-  ro.observe(container)
+  ro.observe(canvas)
   removeResizeListener = () => {
     ro.disconnect()
     if (resizeTimeout !== null) clearTimeout(resizeTimeout)
   }
+
+  // Re-render when switching back from cam-only mode. Also resize immediately
+  // (bypassing the debounce above) on any mode switch so the aspect ratio
+  // doesn't visibly glitch for 300ms while the debounced ResizeObserver catches up.
+  watch(viewMode, async (newMode, oldMode) => {
+    if (newMode !== 'cam' && oldMode === 'cam') requestRender()
+    if (newMode !== 'gcode' && oldMode === 'gcode') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const obj = objectMap['lineHighlight'] as any
+      if (obj) obj.visible = false
+      requestRender()
+    }
+    await nextTick()
+    applyResize()
+  })
+
+  requestRender() // draw the initial frame
 
   // Resume rendering when the browser tab returns to the foreground
   const onVisibilityChange = () => {
@@ -895,7 +1122,7 @@ async function initThree() {
 
 function setView(view: ViewKey) {
   if (!threeCtx) return
-  const { THREE, camera, controls } = threeCtx
+  const { camera, controls } = threeCtx
   const b = machineBounds.value
   const d = Math.max(b.x, b.y, 50) * 1.8  // orbit target is origin — scale so work volume stays visible; min 50 prevents camera collapse to origin
 
@@ -920,25 +1147,10 @@ function setView(view: ViewKey) {
       break
   }
 
-  // In split mode the 3D canvas is full-width but only the left half is visible.
-  // Pan the orbit target to the right so that world (0,0,0) projects to the
-  // centre of the visible left half rather than the centre of the full canvas.
-  if (viewMode.value === 'split' && containerRef.value) {
-    const { width: w, height: h } = containerRef.value.getBoundingClientRect()
-    if (w > 0 && h > 0) {
-      camera.updateProjectionMatrix()
-      const dist = camera.position.distanceTo(controls.target)
-      const aspect = w / h
-      const frustumHalfW = dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * aspect
-      // Shift the target 0.5 NDC units to the right → (0,0,0) lands at NDC x = -0.5 = pixel w/4
-      const lookDir = new THREE.Vector3()
-      camera.getWorldDirection(lookDir)
-      const camRight = new THREE.Vector3().crossVectors(lookDir, camera.up).normalize()
-      const panDist = 0.5 * frustumHalfW
-      controls.target.addScaledVector(camRight, panDist)
-      camera.position.addScaledVector(camRight, panDist)
-    }
-  }
+  // No split-mode pan needed here — the canvas is actually resized to the left
+  // half in split/gcode mode (see the resize handling in initThree()), so the
+  // camera's own aspect ratio already matches what's visible; the work volume
+  // centers normally without faking it via a target offset.
 
   controls.update()
   requestRender()
@@ -999,17 +1211,56 @@ watch(machineHomeWpos, (h) => {
   }
 }, { deep: true })
 
-// Fetch and render 3D path vectors when a job finishes loading.
-// Clear the toolpath when the job is cleared.
+// Recolor already-executed toolpath segments (issue #45) as execPtr advances.
+// The server broadcasts an execPtr update on every sender event with no
+// throttling of its own (verified in jobRunner._handleSenderEvent) — on a
+// dense job that can fire many times a second, so this coalesces to at most
+// one recolor per animation frame rather than one per WS patch.
+let dimUpdatePending = false
+let latestExecPtr = 0
+watch(() => job.value?.execPtr, (ptr) => {
+  if (ptr === undefined) return
+  latestExecPtr = ptr
+  if (dimUpdatePending) return
+  dimUpdatePending = true
+  requestAnimationFrame(() => {
+    dimUpdatePending = false
+    applyExecutedDimming(latestExecPtr)
+  })
+})
+
+// Fetch and render 3D path vectors (+ raw GCode lines for the GCode panel) when
+// a job finishes loading. Clear both when the job is cleared.
 let lastLoadedFileId: string | null = null
 
 async function fetchAndLoadVectors(fileId: string) {
   try {
+    const tFetch0 = performance.now()
     const vectors = await $fetch<Array<LineVector | null>>(`/api/jobs/vectors?fileId=${encodeURIComponent(fileId)}`)
+    const tFetch1 = performance.now()
+    lastVectors.value = vectors
     loadToolpathSegments(vectors)
+    const tBuild1 = performance.now()
+    console.debug(
+      `[perf] fetchAndLoadVectors(${fileId}): fetch+parse=${(tFetch1 - tFetch0).toFixed(0)}ms ` +
+      `buildGeometry=${(tBuild1 - tFetch1).toFixed(0)}ms vectors=${vectors.length}`,
+    )
   } catch (err) {
     console.warn('[GCodeViewport] vectors not available:', err)
     toastError('Failed to load toolpath preview')
+  }
+}
+
+async function fetchLines(fileId: string) {
+  try {
+    const tFetch0 = performance.now()
+    gcodeLines.value = await $fetch<string[]>(`/api/jobs/lines?fileId=${encodeURIComponent(fileId)}`)
+    const tFetch1 = performance.now()
+    console.debug(`[perf] fetchLines(${fileId}): fetch+parse=${(tFetch1 - tFetch0).toFixed(0)}ms lines=${gcodeLines.value.length}`)
+  } catch (err) {
+    console.warn('[GCodeViewport] lines not available:', err)
+    // Non-fatal — the GCode panel just stays empty. The 3D preview already
+    // surfaces its own toast if the vectors fetch also failed.
   }
 }
 
@@ -1022,10 +1273,15 @@ watch(
       // Skip if Three.js isn't initialised yet — onMounted will retry after initThree() resolves.
       if (!ready.value) return
       lastLoadedFileId = fileId
-      await fetchAndLoadVectors(fileId)
+      const tLoad0 = performance.now()
+      await Promise.all([fetchAndLoadVectors(fileId), fetchLines(fileId)])
+      console.debug(`[perf] job load → viewport ready(${fileId}): total=${(performance.now() - tLoad0).toFixed(0)}ms`)
     } else if (status === 'idle') {
       lastLoadedFileId = null
       clearToolpath()
+      lastVectors.value = []
+      gcodeLines.value = []
+      selectedLineIndex.value = null
     }
   },
   { immediate: true },
@@ -1037,7 +1293,7 @@ onMounted(async () => {
   const j = job.value
   if (j?.status === 'loaded' && j.fileId && j.fileId !== lastLoadedFileId) {
     lastLoadedFileId = j.fileId
-    await fetchAndLoadVectors(j.fileId)
+    await Promise.all([fetchAndLoadVectors(j.fileId), fetchLines(j.fileId)])
   }
 })
 

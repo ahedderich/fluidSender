@@ -16,6 +16,11 @@
         },
         {
           "type": "json",
+          "path": "desktop/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
           "path": "fluid-sim/sim-ui/package.json",
           "jsonpath": "$.version"
         },

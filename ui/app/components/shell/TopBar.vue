@@ -8,8 +8,10 @@
       <select
         v-if="s.hasMachines"
         :value="s.activeMachineId"
+        :disabled="machine.connected || machine.connecting"
         @change="(e) => s.selectMachine((e.target as HTMLSelectElement).value)"
-        class="bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-slate-200 border border-gray-300 dark:border-slate-600 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-44 cursor-pointer"
+        class="bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-slate-200 border border-gray-300 dark:border-slate-600 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-44 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+        :title="machine.connected ? 'Disconnect to switch machines' : undefined"
       >
         <option v-for="m in s.machines" :key="m.id" :value="m.id">{{ m.name }}</option>
       </select>
@@ -33,6 +35,11 @@
         <span class="text-xs text-gray-500 dark:text-slate-400 bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded font-mono whitespace-nowrap border border-gray-200 dark:border-slate-700">
           FluidNC {{ machine.firmwareVersion }}
         </span>
+        <span
+          v-if="firmwareUpdateAvailable"
+          class="text-xs px-2 py-1 rounded-full font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 whitespace-nowrap"
+          title="A newer FluidNC release is available — see Machine Settings › General"
+        >Update available</span>
         <button
           @click="restartFirmware"
           class="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-md transition-colors"
@@ -50,6 +57,12 @@
         class="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-600/50 px-2 py-1 rounded whitespace-nowrap font-medium"
         title="FluidNC is running in simulator mode — check your config.yaml"
       >Simulator mode</span>
+
+      <span
+        v-if="machine.configValid === false"
+        class="text-xs text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-600/50 px-2 py-1 rounded whitespace-nowrap font-medium"
+        title="FluidNC could not load config.yaml — see Machine Settings › General"
+      >Invalid FluidNC YAML config</span>
 
       <span
         v-if="!wsConnected"
@@ -334,6 +347,7 @@ import { useConfirm } from '~/composables/useConfirm'
 import { wsConnected } from '~/composables/useWsSend'
 import { useJobControl } from '~/composables/useJobControl'
 import { useCurrentUser } from '~/composables/useCurrentUser'
+import { isNewerVersion } from '~~/shared/version'
 
 const machine = useMachineStore()
 const sync = useSyncStore()
@@ -373,8 +387,31 @@ const cycleStartEnabled = computed(() =>
 async function cycleStartAction() {
   const isResume = job.value?.status === 'paused'
   const tc = s.activeMachine?.toolchange
-  // manual-basic has no TLO concept at all — tools are touched off by hand each swap.
-  const offsetCheckApplies = tc && tc.strategy !== 'manual-basic' && (tc.confirmMissingOffset ?? true)
+
+  if (tc?.magazine.enabled) {
+    const requiredTools = new Set((job.value?.toolSections ?? []).map((t) => t.toolNumber).filter((n) => n > 0))
+    const missingTools = [...requiredTools].filter((n) => !machine.magazineSlots.includes(n))
+    if (missingTools.length > 0) {
+      const plural = missingTools.length > 1
+      const ok = await confirm({
+        title: `Tool${plural ? 's' : ''} not assigned to a magazine slot`,
+        message: `This job needs tool${plural ? 's' : ''} T${missingTools.join(', T')}, which ${plural ? 'are' : 'is'} not assigned to a slot in the magazine. Any toolchange to ${plural ? 'these tools' : 'this tool'} will fall back to a manual swap instead of running automatically.`,
+        confirmLabel: isResume ? 'Resume anyway' : 'Start anyway',
+        danger: true,
+      })
+      if (!ok) return
+    }
+  }
+
+  // Only applies when a toolsetter is actually probing tool length — inherent for
+  // manual-toolsetter, opt-in via "Enable Toolsetter" for the ATC strategies. Other
+  // strategies (manual-basic, custom-macro) have no toolsetter concept at all.
+  let offsetCheckApplies = false
+  if (tc?.strategy === 'manual-toolsetter') {
+    offsetCheckApplies = tc.confirmMissingOffset ?? true
+  } else if (tc?.strategy === 'atc-passthrough' || tc?.strategy === 'atc-managed' || tc?.strategy === 'atc-rapidchange') {
+    offsetCheckApplies = !!tc.toolsetter && (tc.confirmMissingOffset ?? true)
+  }
   if (offsetCheckApplies && machine.toolLengthOffset === null) {
     const ok = await confirm({
       title: 'Tool length offset not confirmed',
@@ -394,6 +431,11 @@ onMounted(() => { isMounted.value = true })
 const sensorOpen = ref(false)
 
 const fluidncCfg = computed(() => s.activeMachine?.fluidncConfig ?? null)
+
+const firmwareUpdateAvailable = computed(() => {
+  const latest = s.activeMachine?.firmwareUpdateCheck?.latestVersion
+  return !!latest && !!machine.firmwareVersion && isNewerVersion(latest, machine.firmwareVersion)
+})
 
 const isRealPin = (pin: string | undefined): boolean => !!pin && pin !== 'NO_PIN' && pin !== ''
 

@@ -1,0 +1,23 @@
+{
+  "name": "fluidsender-desktop",
+  "version": "0.2.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "prepare:vendor": "node scripts/build-ui.mjs",
+    "build": "tsc",
+    "start": "bun run build && electron .",
+    "package": "bun run build && electron-builder"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^7.0.2"
+  }
+}

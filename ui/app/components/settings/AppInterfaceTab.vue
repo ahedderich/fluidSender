@@ -27,6 +27,45 @@
     </SettingsRow>
   </SettingsCard>
 
+  <SettingsCard v-if="s.isElectron && currentUser.isAdmin" title="Network">
+    <SettingsRow label="Expose on Network">
+      <UiToggleSwitch v-model="s.app.network.exposeOnLan" />
+    </SettingsRow>
+    <SettingsRow label="Port">
+      <input
+        v-model.number="s.app.network.port"
+        type="number"
+        min="1024"
+        max="65535"
+        class="settings-input w-28"
+      >
+    </SettingsRow>
+    <div class="px-3 pb-3 text-xs text-gray-500 dark:text-slate-400 space-y-1">
+      <p>Makes FluidSender reachable from other devices on your network, not just this computer — anyone with access can control this machine.</p>
+      <p>Takes effect after restarting FluidSender.</p>
+    </div>
+    <div class="px-3 pb-3">
+      <template v-if="networkInfo?.exposed && networkInfo.addresses.length">
+        <p class="text-xs text-gray-500 dark:text-slate-400 mb-1.5">Currently reachable at:</p>
+        <div v-for="addr in networkInfo.addresses" :key="addr" class="flex items-center gap-2 mb-1">
+          <a
+            :href="`http://${addr}:${networkInfo.port}/`"
+            target="_blank"
+            class="flex-1 min-w-0 text-xs px-2 py-1.5 rounded bg-gray-100 dark:bg-slate-900 text-blue-600 dark:text-blue-400 break-all hover:underline"
+          >http://{{ addr }}:{{ networkInfo.port }}/</a>
+          <button
+            type="button"
+            @click="copyAddress(`http://${addr}:${networkInfo.port}/`)"
+            class="shrink-0 px-2 py-1.5 text-xs rounded bg-gray-200 dark:bg-slate-700 hover:bg-gray-300 dark:hover:bg-slate-600 transition-colors"
+          >{{ copyLabel }}</button>
+        </div>
+      </template>
+      <p v-else class="text-xs text-gray-500 dark:text-slate-400">
+        Not currently reachable from your network{{ s.app.network.exposeOnLan ? ' — restart FluidSender to apply the setting above.' : '.' }}
+      </p>
+    </div>
+  </SettingsCard>
+
   <SettingsCard title="Viewport Defaults">
     <SettingsRow label="Default View">
       <select v-model="s.app.viewport.defaultView" class="settings-input w-36">
@@ -46,16 +85,70 @@
 
   <SettingsCard title="About">
     <SettingsRow label="FluidSender">
-      <span class="text-sm text-gray-600 dark:text-slate-400 font-mono">v{{ appVersion }}</span>
+      <div class="flex items-center gap-2">
+        <span class="text-sm text-gray-600 dark:text-slate-400 font-mono">v{{ appVersion }}</span>
+        <span
+          v-if="updateAvailable"
+          class="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400"
+        >Update available</span>
+      </div>
     </SettingsRow>
+    <SettingsRow label="Latest Release">
+      <span class="text-sm text-gray-600 dark:text-slate-400 font-mono">
+        {{ sync.appUpdateCheck.latestVersion ? `v${sync.appUpdateCheck.latestVersion}` : '—' }}
+      </span>
+    </SettingsRow>
+    <SettingsRow label="Last Checked">
+      <span class="text-xs text-gray-500 dark:text-slate-400">{{ lastCheckedLabel }}</span>
+    </SettingsRow>
+    <div class="px-3 pb-3">
+      <button
+        type="button"
+        @click="s.checkAppVersion(true)"
+        class="px-4 py-1.5 rounded-lg text-sm font-medium bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 transition-colors"
+      >
+        Check Now
+      </button>
+    </div>
   </SettingsCard>
 </template>
 
 <script setup lang="ts">
 import { useSettingsStore } from '~/stores/settings'
 import { useUiStore } from '~/stores/ui'
+import { useSyncStore } from '~/stores/sync'
+import { useCurrentUser } from '~/composables/useCurrentUser'
+import { isNewerVersion } from '~~/shared/version'
 
 const s = useSettingsStore()
 const ui = useUiStore()
+const sync = useSyncStore()
+const currentUser = useCurrentUser()
 const { public: { appVersion } } = useRuntimeConfig()
+
+const updateAvailable = computed(() => {
+  const latest = sync.appUpdateCheck.latestVersion
+  return !!latest && isNewerVersion(latest, appVersion as string)
+})
+
+const lastCheckedLabel = computed(() => {
+  const checkedAt = sync.appUpdateCheck.checkedAt
+  return checkedAt ? new Date(checkedAt).toLocaleString() : 'Never checked'
+})
+
+const networkInfo = ref<{ exposed: boolean; port: string; addresses: string[] } | null>(null)
+const copyLabel = ref('Copy')
+
+async function copyAddress(address: string) {
+  await navigator.clipboard?.writeText(address)
+  copyLabel.value = 'Copied!'
+  setTimeout(() => { copyLabel.value = 'Copy' }, 1500)
+}
+
+onMounted(() => {
+  s.checkAppVersion()
+  if (s.isElectron) {
+    $fetch('/api/network-info').then((data) => { networkInfo.value = data as typeof networkInfo.value })
+  }
+})
 </script>

@@ -13,6 +13,9 @@ on:
     paths:
       - 'fluid-sim/sim-ui/**'
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,7 +28,7 @@ jobs:
       run:
         working-directory: fluid-sim/sim-ui
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:

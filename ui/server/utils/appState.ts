@@ -68,6 +68,8 @@ export interface ConnectionState {
   status: string
   firmwareVersion: string
   simulatorMode: boolean
+  /** Null = unknown/not yet resolved this session (set once `$SS` parses on connect). */
+  configValid: boolean | null
   /** Null = unknown/unverified this session — never a bare 0 (see toolLengthState.ts). */
   toolLengthOffset: number | null
 }
@@ -168,21 +170,45 @@ export interface UserRecord {
   passwordHash: string
 }
 
-interface AppConfig {
+/** A bearer token for the external file-upload API (see docs/external-api.md).
+ *  Scoped to /api/external/* only — never grants session/UI access. */
+export interface ApiTokenRecord {
+  id: string
+  label: string
+  /** SHA-256 hex digest of the raw token — tokens are high-entropy secrets,
+   *  not user-chosen passwords, so a fast hash (not bcrypt) is the correct
+   *  tradeoff: verification runs on every external API call and must stay cheap. */
+  tokenHash: string
+  /** Whether this token may use `load: true` on the upload endpoint to start
+   *  a job, vs. only ever writing/listing files. Least-privilege default. */
+  allowLoad: boolean
+  createdAt: number
+  lastUsedAt: number | null
+}
+
+export interface AppConfig {
   auth?: {
     enabled?: boolean
     users?: UserRecord[]
+    apiTokens?: ApiTokenRecord[]
   }
   machines?: unknown[]
   app?: Record<string, unknown>
 }
 
-function stripAuthUsers(config: AppConfig): AppConfig {
-  if (!config.auth?.users?.length) return config
-  return { ...config, auth: { ...config.auth, users: undefined } }
+export type ClientConfig = AppConfig & { runtime: 'electron' | 'container' }
+
+/** Strips fields that must never reach a browser client, whether via GET /api/config
+ *  or the WS config broadcast (which goes to every connected client, not just admins).
+ *  Also attaches `runtime` — a per-process fact (not persisted config), needed by both
+ *  paths so the frontend can tell it's running as the Electron build. */
+function stripAuthSecrets(config: AppConfig): ClientConfig {
+  const runtime: ClientConfig['runtime'] = process.env.FLUIDSENDER_RUNTIME === 'electron' ? 'electron' : 'container'
+  if (!config.auth?.users?.length && !config.auth?.apiTokens?.length) return { ...config, runtime }
+  return { ...config, auth: { ...config.auth, users: undefined, apiTokens: undefined }, runtime }
 }
 
-export { stripAuthUsers }
+export { stripAuthSecrets }
 
 const DEFAULT_CONFIG: AppConfig = {
   auth: { enabled: false, users: [] },
@@ -191,6 +217,7 @@ const DEFAULT_CONFIG: AppConfig = {
     units: 'mm',
     macros: [],
     viewport: { defaultView: 'iso', showGrid: true, showAxes: true },
+    network: { exposeOnLan: false, port: 17173 },
     jog: {
       slow: { speed: 100, xyStep: 0.1, zStep: 0.05 },
       medium: { speed: 500, xyStep: 1.0, zStep: 0.5 },
@@ -218,6 +245,30 @@ const peers = new Set<Peer>()
 
 let cachedConfig: AppConfig = structuredClone(DEFAULT_CONFIG)
 let configLoaded = false
+
+// ─── App update check (server-authoritative, persisted in app.yaml) ───────────
+// Tracks the latest known ahedderich/fluidSender release, checked at most once a
+// day (see server/utils/githubReleaseCheck.ts). One global value — unlike FluidNC
+// firmware, there's only one running FluidSender instance to compare against.
+
+export interface AppUpdateCheck {
+  latestVersion: string | null
+  checkedAt: number | null
+}
+
+let appUpdateCheck: AppUpdateCheck = { latestVersion: null, checkedAt: null }
+
+export function getAppUpdateCheck(): AppUpdateCheck {
+  return appUpdateCheck
+}
+
+export async function setAppUpdateCheck(patch: Partial<AppUpdateCheck>): Promise<PatchOp> {
+  Object.assign(appUpdateCheck, patch)
+  const config = await getConfig()
+  config.app = { ...(config.app ?? {}), appUpdateCheck }
+  await setConfig(config)
+  return { path: 'appUpdateCheck', set: { ...appUpdateCheck } }
+}
 
 // ─── Stock definition (server-authoritative, persisted in app.yaml) ───────────
 
@@ -291,6 +342,8 @@ const job: JobState = {
   axisRanges: null,
   analyzeProgress: 0,
   toolSections: null,
+  generator: null,
+  generatorInfo: null,
   recovery: null,
   errorMessage: null,
   toolChangeRequest: null,
@@ -315,6 +368,7 @@ const connection: ConnectionState = {
   status: 'DISCONNECTED',
   firmwareVersion: '',
   simulatorMode: false,
+  configValid: null,
   toolLengthOffset: null,
 }
 
@@ -431,6 +485,11 @@ export interface ToolchangeModalProps {
   operation?: 'load' | 'unload' | 'measure'
   probedOffset?: number
   errorMessage?: string
+  /** True when this swap will be followed by an automatic toolsetter probe — drives the
+   *  step indicator and button copy client-side. Not derived from toolchange strategy
+   *  there, since a magazine-missing-slot fallback can enter this same dialog from an ATC
+   *  strategy that isn't 'manual-toolsetter'. */
+  requiresProbe?: boolean
 }
 
 export function openToolchangeModal(props: ToolchangeModalProps): { id: string; op: PatchOp } {
@@ -463,7 +522,7 @@ export async function updateMagazineSlots(machineId: string, slots: (number | nu
       await setConfig(config)
     }
   }
-  return { path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }
+  return { path: 'config', set: stripAuthSecrets(config) as unknown as Record<string, unknown> }
 }
 
 export async function setTolBaseline(machineId: string, value: number): Promise<PatchOp> {
@@ -477,7 +536,7 @@ export async function setTolBaseline(machineId: string, value: number): Promise<
       await setConfig(config)
     }
   }
-  return { path: 'config', set: stripAuthUsers(config) as unknown as Record<string, unknown> }
+  return { path: 'config', set: stripAuthSecrets(config) as unknown as Record<string, unknown> }
 }
 
 export function pushToast(toast: Toast): PatchOp {
@@ -567,6 +626,8 @@ export async function getConfig(): Promise<AppConfig> {
     }
   }
   stockDef = (cachedConfig.app?.stock as StockDef | null | undefined) ?? null
+  const savedAppUpdateCheck = cachedConfig.app?.appUpdateCheck as AppUpdateCheck | undefined
+  if (savedAppUpdateCheck) appUpdateCheck = savedAppUpdateCheck
   const savedResults = cachedConfig.app?.probingResults as { rotation?: ProbingRotationResult | null; heightmap?: HeightmapResult | null } | undefined
   if (savedResults) {
     if (savedResults.rotation !== undefined) ui.probingState.rotation = savedResults.rotation ?? null
@@ -606,7 +667,7 @@ export function setConnection(state: Partial<ConnectionState>): ConnectionState 
 // ─── Full state snapshot ──────────────────────────────────────────────────────
 
 export function getFullState() {
-  return { config: stripAuthUsers(cachedConfig), connection: getConnection() }
+  return { config: stripAuthSecrets(cachedConfig), connection: getConnection() }
 }
 
 // getMachineStatus is injected at startup to avoid a circular dependency with the poller
@@ -624,7 +685,7 @@ export function registerToolLibraryProvider(fn: (machineId: string) => { machine
 export function getSnapshot() {
   const machineId = ui.selection.activeMachineId
   return {
-    config: stripAuthUsers(cachedConfig),
+    config: stripAuthSecrets(cachedConfig),
     connection: getConnection(),
     ui,
     job: getJobState(),
@@ -633,5 +694,6 @@ export function getSnapshot() {
     toolLibrary: _getToolLibrary ? _getToolLibrary(machineId) : { machine: [], app: [] },
     macroRun: ui.macroRun,
     probingState: ui.probingState,
+    appUpdateCheck,
   }
 }

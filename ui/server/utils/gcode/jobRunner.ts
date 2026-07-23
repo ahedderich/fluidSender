@@ -2,9 +2,11 @@ import { readFile } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 import { appendExecution } from '../fileMetadata'
 import { analyzeGCode } from './analysis'
-import { getModalStateAtLine } from './simulator'
+import { getModalStateAtLine, invalidateModalStatesCache } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
-import { analyzeGCodeFile, loadCachedAnalysis, loadRawAnalysis, clearAllTransformArtefacts } from './analyzer'
+import { analyzeGCodeFile, loadCachedAnalysis, loadCachedLines, loadRawAnalysis, clearAllTransformArtefacts } from './analyzer'
+import { DEFAULT_MACHINE_KINEMATICS, resolveMachineKinematics, fingerprintKinematics } from './kinematics'
+import type { MachineKinematics } from './kinematics'
 import {
   broadcastPatch,
   setJobState,
@@ -14,6 +16,8 @@ import {
   settleProgramPauseModal,
   setLoadedTool,
   getConnection,
+  getConfig,
+  getUiState,
   pushToast,
   type PatchOp,
   type ProbingRotationResult,
@@ -25,7 +29,7 @@ import { setMode } from '../machine/machineMode'
 import { toolStore } from '../tool/toolStore'
 import { appendRuntimeSession } from '../tool/runtimeLog'
 import { applyTransforms } from './transform'
-import { ToolchangeRunner, getToolchangeConfig } from './toolchangeRunner'
+import { ToolchangeRunner } from './toolchangeRunner'
 import type { SendHandle, SenderStatusEvent } from '../machine/types'
 import type { GCodeLine, GCodeModalState, JobState, ToolSection, TransformMode } from './types'
 
@@ -92,7 +96,7 @@ class JobRunner {
     getSendHandle: () => this._sendHandle,
     setSendHandle: (h) => { this._sendHandle = h },
     setJobStatusToolChange: () => { this._setStatus('tool_change') },
-    resumeAfterToolChange: () => this.resumeAfterToolChange(),
+    resumeAfterToolChange: (skipBoundaryCommand) => this.resumeAfterToolChange(skipBoundaryCommand),
   })
 
   get status() { return this._status }
@@ -110,11 +114,29 @@ class JobRunner {
     const filename = basename(fileId).replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')
 
     try {
+      const tRead0 = performance.now()
       const rawContent = await readFile(join(UPLOADS_DIR, fileId), 'utf8')
+      const tRead1 = performance.now()
       const content = applyTransforms(rawContent, this._transformMode, this._activeRotation, this._activeHeightmap)
+      const tTransform1 = performance.now()
 
-      let analysis = await loadCachedAnalysis(fileId, this._transformMode)
-      let lines
+      const kinematics = await this._resolveActiveKinematics()
+      const kinematicsFingerprint = fingerprintKinematics(kinematics)
+
+      // A cache hit needs both analysis.json (metadata) and lines.json (the in-memory
+      // sender's line array) — if either is missing/corrupt, fall through to a full
+      // re-analysis rather than re-deriving lines from content via analyzeGCode(),
+      // which duplicates the full O(N) parse this cache exists to avoid. A kinematics
+      // fingerprint mismatch (different machine selected since the cache was written)
+      // is also treated as a miss — see loadCachedAnalysis().
+      let analysis = await loadCachedAnalysis(fileId, this._transformMode, kinematicsFingerprint)
+      let lines: GCodeLine[] | null = null
+      if (analysis) {
+        lines = await loadCachedLines(this._transformMode)
+        if (!lines) analysis = null
+      }
+      const tCache1 = performance.now()
+      const cacheHit = lines !== null
 
       if (!analysis) {
         const ctrl = new AbortController()
@@ -125,6 +147,8 @@ class JobRunner {
           filename,
           analyzeProgress: 0,
           toolSections: null,
+          generator: null,
+          generatorInfo: null,
           errorMessage: null,
           toolChangeRequest: null,
           programPause: null,
@@ -143,15 +167,22 @@ class JobRunner {
           },
           ctrl.signal,
           this._transformMode,
+          kinematics,
         )
         analysis = result.analysis
         lines = result.lines
         this.analyzeAbort = null
-      } else {
-        lines = analyzeGCode(content).lines
       }
+      const tAnalyze1 = performance.now()
 
-      this.lines = lines
+      jLog(
+        `[perf] loadJob(${fileId}): read=${(tRead1 - tRead0).toFixed(0)}ms ` +
+        `transform=${(tTransform1 - tRead1).toFixed(0)}ms cacheCheck=${(tCache1 - tTransform1).toFixed(0)}ms ` +
+        `${cacheHit ? 'cacheHit' : 'analyze+serialize'}=${(tAnalyze1 - tCache1).toFixed(0)}ms ` +
+        `total=${(tAnalyze1 - tRead0).toFixed(0)}ms lines=${lines!.length}`,
+      )
+
+      this.lines = lines!
       this.fileId = fileId
       this.filename = filename
       this.sendPtr = 0
@@ -188,6 +219,8 @@ class JobRunner {
         axisRanges: analysis.axisRanges,
         analyzeProgress: 100,
         toolSections: analysis.tools,
+        generator: analysis.generator,
+        generatorInfo: analysis.generatorInfo,
         recovery: null,
         errorMessage: null,
         toolChangeRequest: null,
@@ -218,6 +251,8 @@ class JobRunner {
           filename: null,
           analyzeProgress: 0,
           toolSections: null,
+          generator: null,
+          generatorInfo: null,
           errorMessage: null,
           toolChangeRequest: null,
           programPause: null,
@@ -252,7 +287,7 @@ class JobRunner {
     this._execStartedAt = Date.now()
     this._setStatus('running', { execPtr: this._execPtr })
     this._startRuntimeSession(this._toolSections[0] ?? null)
-    this._startMainSend().catch(console.error)
+    this._startMainSend()
   }
 
   /** Pause — sends feed hold, waits for Hold:0, resets machine. Fires 'suspended' event when done. */
@@ -316,7 +351,7 @@ class JobRunner {
         jLog(`resume() fallback: no modal, no suspendedChunk → fresh send from execPtr=${resumePtr}`)
         this.sendPtr = resumePtr
         this._setStatus('running')
-        this._startMainSend().catch(console.error)
+        this._startMainSend()
       }
     } catch (err) {
       jLog(`resume() ERROR: ${(err as Error).message}`)
@@ -324,10 +359,17 @@ class JobRunner {
     }
   }
 
-  /** Resume after a tool change — continue from the next section. */
-  resumeAfterToolChange(): void {
+  /** Resume after a tool change — continue from the next section. skipBoundaryCommand
+   *  drops the section's own T{n}/M6 line instead of sending it — used by the ATC
+   *  magazine-missing-slot fallback, where that line must never reach real ATC hardware
+   *  with an unassigned tool number (see ToolchangeRunnerDeps.resumeAfterToolChange). */
+  resumeAfterToolChange(skipBoundaryCommand = false): void {
     if (this._status !== 'tool_change') return
     setToolChangeModeActive(false)
+    if (skipBoundaryCommand) {
+      const section = this._toolSections[this._currentSectionIndex]
+      if (section) this.sendPtr = Math.max(this.sendPtr, section.startLine + 1)
+    }
     this._startRuntimeSession(this._toolSections[this._currentSectionIndex] ?? null)
     this._sendSection(this._currentSectionIndex)
     this._setStatus('running', { toolChangeRequest: null })
@@ -455,6 +497,8 @@ class JobRunner {
       axisRanges: null,
       analyzeProgress: 0,
       toolSections: null,
+      generator: null,
+      generatorInfo: null,
       recovery: null,
       errorMessage: null,
       toolChangeRequest: null,
@@ -463,6 +507,7 @@ class JobRunner {
       ambiguousTools: [],
       transformMode: 'none',
     })
+    invalidateModalStatesCache()
     clearAllJobData().catch(() => {})
   }
 
@@ -476,10 +521,15 @@ class JobRunner {
     if (!analysis) return 'empty'
 
     try {
-      const filePath = join(UPLOADS_DIR, analysis.fileId)
-      const rawContent = await readFile(filePath, 'utf8')
-      const content = applyTransforms(rawContent, mode, this._activeRotation, this._activeHeightmap)
-      this.lines = analyzeGCode(content).lines
+      const cachedLines = await loadCachedLines(mode)
+      if (cachedLines) {
+        this.lines = cachedLines
+      } else {
+        const filePath = join(UPLOADS_DIR, analysis.fileId)
+        const rawContent = await readFile(filePath, 'utf8')
+        const content = applyTransforms(rawContent, mode, this._activeRotation, this._activeHeightmap)
+        this.lines = analyzeGCode(content).lines
+      }
       this.fileId = analysis.fileId
       this.filename = analysis.filename
       this._toolSections = analysis.tools ?? []
@@ -497,6 +547,8 @@ class JobRunner {
         axisRanges: analysis.axisRanges,
         analyzeProgress: 100,
         toolSections: analysis.tools,
+        generator: analysis.generator,
+        generatorInfo: analysis.generatorInfo,
         errorMessage: null,
         toolChangeRequest: null,
         programPause: null,
@@ -551,9 +603,14 @@ class JobRunner {
       const filename = checkpoint.filename
 
       if (!this.lines.length || this.fileId !== checkpoint.fileId) {
-        const rawContent = await readFile(join(UPLOADS_DIR, checkpoint.fileId), 'utf8')
-        const content = applyTransforms(rawContent, this._transformMode, this._activeRotation, this._activeHeightmap)
-        this.lines = analyzeGCode(content).lines
+        const cachedLines = await loadCachedLines(this._transformMode)
+        if (cachedLines) {
+          this.lines = cachedLines
+        } else {
+          const rawContent = await readFile(join(UPLOADS_DIR, checkpoint.fileId), 'utf8')
+          const content = applyTransforms(rawContent, this._transformMode, this._activeRotation, this._activeHeightmap)
+          this.lines = analyzeGCode(content).lines
+        }
       }
       this.fileId = checkpoint.fileId
       this.filename = filename
@@ -668,13 +725,12 @@ class JobRunner {
 
   // ─── Private ─────────────────────────────────────────────────────────────────
 
-  /** Start sending from current sendPtr as a flat chunk (single section or recovery). */
-  private async _startMainSend(): Promise<void> {
-    const tc = await getToolchangeConfig()
-    if (tc.strategy === 'atc-passthrough') {
-      this._startFlatSend()
-      return
-    }
+  /** Start sending from current sendPtr as a flat chunk (single section), or section-by-
+   *  section otherwise. Every strategy now sends section-by-section once there's more
+   *  than one tool section — including atc-passthrough, which used to flat-send the whole
+   *  file — so translateToolNumberToSlot and the magazine-missing-slot fallback can
+   *  intercept each T{n}/M6 boundary before it reaches the machine. */
+  private _startMainSend(): void {
     if (this._toolSections.length <= 1) {
       this._startFlatSend()
       return
@@ -850,7 +906,7 @@ class JobRunner {
           // The resumed chunk fires its own events via its existing onEvent callback.
         } else {
           this._setStatus('running')
-          this._startMainSend().catch(console.error)
+          this._startMainSend()
         }
         break
       case 'error':
@@ -922,6 +978,25 @@ class JobRunner {
 
   private async _getActiveMachineId(): Promise<string | null> {
     return getConnection().machineId
+  }
+
+  /**
+   * Kinematics (per-axis accel/max-rate + junction deviation) used for the accel/
+   * cornering-aware time estimate. Uses the currently-selected machine — persisted
+   * across reconnects/restarts via persistLastMachineId (see ws.ts `ui:selection`),
+   * so this is "currently connected or last connected", not just currently connected
+   * (unlike _getActiveMachineId()/getConnection().machineId, which is null whenever
+   * disconnected and would skip the "last connected" tier the user asked for).
+   * Falls back to DEFAULT_MACHINE_KINEMATICS when no machine is selected or it has
+   * no fetched firmware config yet.
+   */
+  private async _resolveActiveKinematics(): Promise<MachineKinematics> {
+    const machineId = getUiState().selection.activeMachineId
+    if (!machineId) return DEFAULT_MACHINE_KINEMATICS
+    const config = await getConfig()
+    const machines = (config.machines ?? []) as Array<{ id?: string; fluidncConfig?: Record<string, unknown> }>
+    const machine = machines.find((m) => m.id === machineId)
+    return resolveMachineKinematics(machine?.fluidncConfig)
   }
 
   async resumeToolsetterProbe(isJobContext: boolean): Promise<void> {

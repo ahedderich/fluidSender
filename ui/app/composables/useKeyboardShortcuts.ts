@@ -5,6 +5,7 @@ import { useSyncStore } from '~/stores/sync'
 import { useJobControl } from './useJobControl'
 import { useJog } from './useJog'
 import { useShortcutMatch, isInputFocused } from './useShortcutMatch'
+import { useGcodeViewerFocus } from './useGcodeViewerFocus'
 
 export function useKeyboardShortcuts() {
   const settings = useSettingsStore()
@@ -13,6 +14,7 @@ export function useKeyboardShortcuts() {
   const jog = useJog()
   const { job, pauseJob, startJob, resumeJob } = useJobControl()
   const { fires } = useShortcutMatch()
+  const { gcodeViewerFocused } = useGcodeViewerFocus()
 
   let activeJogKey: ShortcutActionId | null = null
 
@@ -36,6 +38,7 @@ export function useKeyboardShortcuts() {
     // would also fire cycleStart underneath the dialog.
     if (sync.modals.length > 0) return
     if (isInputFocused()) return
+    if (gcodeViewerFocused.value) return
     if (e.repeat) {
       // Suppress scroll/default for held jog keys without re-triggering startJog
       if (activeJogKey) e.preventDefault()

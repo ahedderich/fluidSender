@@ -13,6 +13,10 @@ pub const AXIS_COUNT: usize = 6;
 pub const AXIS_NAMES: [&str; AXIS_COUNT] = ["x", "y", "z", "a", "b", "c"];
 /// Number of planner buffer slots, matching FluidNC firmware default.
 pub const MAX_PLANNER_SLOTS: i32 = 15;
+/// Default reported firmware version (mirrors FluidNC's own current release numbering).
+pub const DEFAULT_FIRMWARE_VERSION: &str = "4.0.3";
+pub const SIM_MACHINE_NAME: &str = "CNC Router (Simulator)";
+pub const SIM_BOARD_NAME: &str = "BlackBox X32";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -200,6 +204,19 @@ pub struct MachineState {
     /// keeps every participating axis at or below its max — F words are ignored.
     #[serde(skip)]
     pub max_rate: [f64; AXIS_COUNT],
+    /// Per-axis acceleration and steps/mm as declared in config.yaml. Not read by any
+    /// motion logic (FluidNC's real firmware needs them for step generation, which this
+    /// sim doesn't model) — reported purely so `$Config`/`$LocalFS/Show` reflect the
+    /// same numbers a real controller would, instead of disconnected placeholder values.
+    #[serde(skip)]
+    pub acceleration: [f64; AXIS_COUNT],
+    #[serde(skip)]
+    pub steps_per_mm: [f64; AXIS_COUNT],
+    /// Version string reported in the greeting/`$I`/`$SS` banners, e.g. "4.0.3".
+    /// Settable at runtime via the control API so the sim-ui can exercise FluidSender's
+    /// update-check flow against arbitrary versions without restarting the sim.
+    #[serde(rename = "firmwareVersion")]
+    pub firmware_version: String,
     #[serde(rename = "fluidConfig")]
     pub fluid_config: HashMap<String, String>,
     /// Stock definition used for probe collision detection; set via the control API.
@@ -244,6 +261,14 @@ pub struct MachineState {
     /// manual/toolsetter toolchange strategies — FluidSender intercepts it client-side).
     #[serde(rename = "toolLength")]
     pub tool_length: f64,
+    /// Selected tool number (GCode `T` word), mirroring FluidNC's `gc_state.tool`.
+    /// Updated as soon as a `T` word is parsed, regardless of `M6` — matches real
+    /// firmware, where `T` alone only preselects (Category C) and `M6` is what
+    /// performs the swap. Only meaningful for the `atc-passthrough` strategy, where
+    /// FluidSender sends `T`/`M6` straight to the firmware instead of intercepting
+    /// them client-side. Persists across soft_reset, same as tool_length above.
+    #[serde(rename = "toolNumber")]
+    pub tool_number: u32,
     /// Tool-setter trigger geometry. Persists across soft_reset (the physical switch
     /// doesn't move when an alarm is cleared).
     pub toolsetter: ToolsetterConfig,
@@ -257,21 +282,13 @@ impl MachineState {
         sim_speed: u8,
     ) -> Self {
         let mut fluid_config = HashMap::new();
-        fluid_config.insert("board".into(), "BlackBox X32".into());
-        fluid_config.insert("name".into(), "CNC Router (Simulator)".into());
+        fluid_config.insert("board".into(), SIM_BOARD_NAME.into());
+        fluid_config.insert("name".into(), SIM_MACHINE_NAME.into());
         fluid_config.insert("stepping/engine".into(), "RMT".into());
-        fluid_config.insert("axes/x/steps_per_mm".into(), "80.000".into());
-        fluid_config.insert("axes/y/steps_per_mm".into(), "80.000".into());
-        fluid_config.insert("axes/z/steps_per_mm".into(), "400.000".into());
-        fluid_config.insert("axes/x/max_travel_mm".into(), format!("{:.3}", travel[0]));
-        fluid_config.insert("axes/y/max_travel_mm".into(), format!("{:.3}", travel[1]));
-        fluid_config.insert("axes/z/max_travel_mm".into(), format!("{:.3}", travel[2]));
-        fluid_config.insert("axes/x/max_rate_mm_per_min".into(), "5000".into());
-        fluid_config.insert("axes/y/max_rate_mm_per_min".into(), "5000".into());
-        fluid_config.insert("axes/z/max_rate_mm_per_min".into(), "1000".into());
-        fluid_config.insert("axes/x/acceleration".into(), "200".into());
-        fluid_config.insert("axes/y/acceleration".into(), "200".into());
-        fluid_config.insert("axes/z/acceleration".into(), "100".into());
+        // Per-axis steps_per_mm/max_rate_mm_per_min/acceleration/max_travel_mm are
+        // deliberately absent here — effective_fluid_config() computes them live from
+        // travel/max_rate/acceleration/steps_per_mm so they can never go stale relative
+        // to those fields.
         fluid_config.insert("axes/x/homing/cycle".into(), "2".into());
         fluid_config.insert("axes/y/homing/cycle".into(), "2".into());
         fluid_config.insert("axes/z/homing/cycle".into(), "1".into());
@@ -317,6 +334,9 @@ impl MachineState {
             axis_count,
             travel,
             max_rate: [5000.0, 5000.0, 1000.0, 1000.0, 1000.0, 1000.0],
+            acceleration: [200.0, 200.0, 100.0, 100.0, 100.0, 100.0],
+            steps_per_mm: [80.0, 80.0, 400.0, 80.0, 80.0, 80.0],
+            firmware_version: DEFAULT_FIRMWARE_VERSION.to_string(),
             fluid_config,
             stock: None,
             modal: ModalState::default(),
@@ -329,6 +349,7 @@ impl MachineState {
             reset_epoch: 0,
             tool_length_offset: [0.0; AXIS_COUNT],
             tool_length: 0.0,
+            tool_number: 0,
             toolsetter: ToolsetterConfig::default(),
         }
     }
@@ -339,6 +360,33 @@ impl MachineState {
             *wi = self.pos[i] - self.wco[i] - self.tool_length_offset[i];
         }
         w
+    }
+
+    /// `fluid_config` merged with the live per-axis values (x/y/z only, matching the
+    /// scope of the reported `config.yaml`) so callers never read stale numbers that
+    /// diverge from `travel`/`max_rate`/`acceleration`/`steps_per_mm` after a runtime
+    /// change via the control API.
+    pub fn effective_fluid_config(&self) -> HashMap<String, String> {
+        let mut m = self.fluid_config.clone();
+        for (i, name) in ["x", "y", "z"].iter().enumerate() {
+            m.insert(
+                format!("axes/{name}/steps_per_mm"),
+                format!("{:.3}", self.steps_per_mm[i]),
+            );
+            m.insert(
+                format!("axes/{name}/max_rate_mm_per_min"),
+                format!("{:.0}", self.max_rate[i]),
+            );
+            m.insert(
+                format!("axes/{name}/acceleration"),
+                format!("{:.0}", self.acceleration[i]),
+            );
+            m.insert(
+                format!("axes/{name}/max_travel_mm"),
+                format!("{:.3}", self.travel[i]),
+            );
+        }
+        m
     }
 
     /// Ephemeral collision volume for the tool-setter, reusing the stock contact-test

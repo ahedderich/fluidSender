@@ -2,11 +2,14 @@ import { defineStore } from 'pinia'
 import type { Macro, MacroTrigger, MacroVariable } from '~/types/macro'
 import { wsSend } from '~/composables/useWsSend'
 import type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig } from '~/../../shared/toolchange'
+import { DEFAULT_TOOLCHANGE_CONFIG } from '#shared/toolchange'
 import type { WebcamConfig } from '~/types/webcam'
+import type { FluidNCBootInfo } from '~~/server/utils/machine/bootInfoParser'
 
 export type { Macro, MacroTrigger, MacroVariable }
 export type { ToolchangeConfig, MagazineConfig, ToolsetterConfig, ToolchangeSpatialConfig }
 export type { WebcamConfig }
+export type { FluidNCBootInfo }
 
 export type ConnectionType = 'usb' | 'tcp'
 export type MachineType = 'router' | 'laser' | 'plasma'
@@ -19,7 +22,7 @@ export type UserRole = 'viewer' | 'operator' | 'admin'
 export interface FluidNCAxisConfig {
   steps_per_mm?: number
   max_rate_mm_per_min?: number
-  acceleration?: number
+  acceleration_mm_per_sec2?: number
   max_travel_mm?: number
   soft_limits?: boolean
   homing?: {
@@ -88,6 +91,11 @@ export interface ParkPosition {
   z: number
 }
 
+export interface FirmwareUpdateCheck {
+  latestVersion: string | null
+  checkedAt: number | null
+}
+
 export interface MachineProfile {
   id: string
   name: string
@@ -105,6 +113,13 @@ export interface MachineProfile {
   parkPosition?: ParkPosition
   /** Webcam view config; undefined until configured in the Webcam settings tab */
   webcam?: WebcamConfig
+  /** Last version reported by $I on any connect — a display cache, never treated as live truth while disconnected */
+  lastKnownFirmwareVersion?: string | null
+  /** Latest bdring/FluidNC release known as of the last check for this machine */
+  firmwareUpdateCheck?: FirmwareUpdateCheck
+  /** Config-validity/network/HTTP status parsed from $SS on the last connect — a display
+   *  cache ("latest boot information"), never treated as live truth while disconnected. */
+  bootInfo?: FluidNCBootInfo | null
 }
 
 // ─── App-level settings types ─────────────────────────────────────────────────
@@ -157,7 +172,10 @@ interface PersistedConfig {
     viewport?: { defaultView?: ViewKey; showGrid?: boolean; showAxes?: boolean }
     jog?: Partial<JogSettings>
     shortcuts?: Partial<KeyboardShortcuts>
+    network?: { exposeOnLan?: boolean; port?: number }
   }
+  /** Server-reported, read-only — which deployment this build is running as. */
+  runtime?: 'electron' | 'container'
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -165,6 +183,8 @@ interface PersistedConfig {
 export const useSettingsStore = defineStore('settings', () => {
   const initialized = ref(false)
   const saving = ref(false)
+  const runtime = ref<'electron' | 'container'>('container')
+  const isElectron = computed(() => runtime.value === 'electron')
 
   const machines = ref<MachineProfile[]>([])
   const activeMachineId = ref('')
@@ -189,7 +209,11 @@ export const useSettingsStore = defineStore('settings', () => {
       type: 'router',
       connection: { type: 'tcp', serialPort: '', baudRate: 115200, tcpHost: '', tcpPort: 23 },
       macros: [],
-      toolchange: { strategy: 'manual-basic' },
+      toolchange: {
+        ...DEFAULT_TOOLCHANGE_CONFIG,
+        magazine: { ...DEFAULT_TOOLCHANGE_CONFIG.magazine },
+        magazineSlots: [],
+      },
       fluidncConfig: null,
     })
     activeMachineId.value = id
@@ -221,6 +245,10 @@ export const useSettingsStore = defineStore('settings', () => {
       medium: { speed: 500, xyStep: 1.0, zStep: 0.5 },
       fast: { speed: 2000, xyStep: 5.0, zStep: 2.0 },
     } as JogSettings,
+    network: {
+      exposeOnLan: false,
+      port: 17173,
+    },
     shortcuts: {
       safetyKey: 'none' as SafetyKeyOption,
       requiresSafetyKey: {
@@ -298,12 +326,40 @@ export const useSettingsStore = defineStore('settings', () => {
         delete (m as Record<string, unknown>).probe
         delete (m as Record<string, unknown>).magazine
       }
+      const toolchange = m.toolchange ?? { strategy: 'manual-basic' as const }
+      const magazine = toolchange.magazine ?? { ...DEFAULT_TOOLCHANGE_CONFIG.magazine }
+      // Backfill: `approach` was added to moving-magazine automation after some configs
+      // may already have been saved without it.
+      if (magazine.automation?.type === 'moving' && !magazine.automation.approach) {
+        magazine.automation.approach = { axis: 'x', direction: 1, distance: 50 }
+      }
+      // Backfill: `safeZ` (fixed only) and `seatFeedMmPerMin` (both) were added after some
+      // magazine automation configs may already have been saved without them.
+      if (magazine.automation?.type === 'fixed' && magazine.automation.safeZ === undefined) {
+        magazine.automation.safeZ = 0
+      }
+      if (magazine.automation && magazine.automation.seatFeedMmPerMin === undefined) {
+        magazine.automation.seatFeedMmPerMin = 100
+      }
+      // Backfill: `translateToolNumberToSlot` was added after some atc-passthrough/
+      // atc-managed/atc-rapidchange configs may already have been saved without it.
+      if (
+        (toolchange.strategy === 'atc-passthrough' || toolchange.strategy === 'atc-managed' || toolchange.strategy === 'atc-rapidchange')
+        && toolchange.translateToolNumberToSlot === undefined
+      ) {
+        toolchange.translateToolNumberToSlot = false
+      }
       return {
         ...m,
-        toolchange: m.toolchange ?? { strategy: 'manual-basic' as const },
+        toolchange: {
+          ...toolchange,
+          magazine,
+          magazineSlots: toolchange.magazineSlots ?? [],
+        } as ToolchangeConfig,
         macros: _migrateMacros(m.macros ?? []),
       }
     })
+    if (data.runtime) runtime.value = data.runtime
     if (data.auth) {
       app.auth.enabled = data.auth.enabled ?? false
     }
@@ -311,6 +367,7 @@ export const useSettingsStore = defineStore('settings', () => {
       if (data.app.units) app.units = data.app.units
       if (data.app.macros) app.macros = _migrateMacros(data.app.macros as unknown[])
       if (data.app.viewport) Object.assign(app.viewport, data.app.viewport)
+      if (data.app.network) Object.assign(app.network, data.app.network)
       if (data.app.jog) {
         const migrated = _migrateJog(data.app.jog)
         Object.assign(app.jog.slow, migrated.slow)
@@ -349,6 +406,7 @@ export const useSettingsStore = defineStore('settings', () => {
             viewport: app.viewport,
             jog: app.jog,
             shortcuts: app.shortcuts,
+            network: app.network,
           },
         },
       })
@@ -389,9 +447,14 @@ export const useSettingsStore = defineStore('settings', () => {
     wsSend({ t: 'macro:run', payload: { macroId, formValues } })
   }
 
+  function checkAppVersion(force = false) {
+    wsSend({ t: 'app:checkVersion', payload: { force } })
+  }
+
   return {
     initialized,
     saving,
+    isElectron,
     machines,
     activeMachineId,
     activeMachine,
@@ -410,6 +473,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateMachineMacro,
     removeMachineMacro,
     runMacro,
+    checkAppVersion,
     app,
   }
 })

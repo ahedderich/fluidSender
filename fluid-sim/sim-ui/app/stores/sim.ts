@@ -64,6 +64,13 @@ export const useSimStore = defineStore('sim', () => {
   // Machine travel envelope (mm for linear, ° for rotary)
   const travel = reactive<Record<AxisKey, number>>({ x: 300, y: 200, z: 80, a: 360, b: 360, c: 360 })
 
+  // Per-axis max rate (mm/min or °/min), reported in the sim's config.yaml/$Config output
+  const maxRate = reactive<Record<AxisKey, number>>({ x: 5000, y: 5000, z: 1000, a: 1000, b: 1000, c: 1000 })
+
+  // Firmware version reported in the greeting/$I/$SS banners — settable to exercise
+  // FluidSender's update-check flow against an arbitrary version.
+  const firmwareVersion = ref('4.0.3')
+
   // Stock definition in signed machine coords, matching the sim's collision math:
   // ox/oy is the stock CENTRE, oz its top surface. The work area is in the negative
   // XY quadrant and Z descends negative from home, so all three are normally negative.
@@ -125,6 +132,12 @@ export const useSimStore = defineStore('sim', () => {
   // Read-only: the TLO the sim last received via G43.1 (Z axis). Display-only feedback
   // that FluidSender's probe sequence actually reached the firmware and took effect.
   const toolLengthOffset = ref(0)
+
+  // Read-only: the tool number the sim firmware last received via T/M6. Display-only
+  // feedback that FluidSender's atc-passthrough strategy actually sent the right T
+  // value and the firmware applied it (unlike loadedToolNumber above, which is set
+  // from the sim-ui as an operator stand-in for the manual/toolsetter strategies).
+  const toolNumber = ref(0)
 
   // Limit switches + door sensor
   const limits = reactive<Record<LimitKey, boolean>>({
@@ -244,6 +257,24 @@ export const useSimStore = defineStore('sim', () => {
     await $fetch('/api/sim/machine/config', {
       method: 'POST',
       body: { travel: axes },
+    }).catch(() => {})
+  }
+
+  async function setMaxRate(axes: Partial<Record<AxisKey, number>>) {
+    for (const [k, v] of Object.entries(axes)) {
+      maxRate[k as AxisKey] = v as number
+    }
+    await $fetch('/api/sim/machine/config', {
+      method: 'POST',
+      body: { maxRate: axes },
+    }).catch(() => {})
+  }
+
+  async function setFirmwareVersion(version: string) {
+    firmwareVersion.value = version
+    await $fetch('/api/sim/machine/version', {
+      method: 'POST',
+      body: { version },
     }).catch(() => {})
   }
 
@@ -426,13 +457,13 @@ export const useSimStore = defineStore('sim', () => {
 
   return {
     connected, machineState, axisCount, simSpeed,
-    pos, wco, wpos, travel,
+    pos, wco, wpos, travel, maxRate, firmwareVersion,
     stock, probe, limits, fluidConfig,
     consoleLog, pushConsoleLine, clearConsole,
     triggerProbe, triggerLimit, softReset, triggerAlarm,
-    setSimSpeed, setPosition, setWco, setTravel, pushProbeConfig, pushStockToSim,
+    setSimSpeed, setPosition, setWco, setTravel, setMaxRate, setFirmwareVersion, pushProbeConfig, pushStockToSim,
     applyScenario, scenarios, defaultScenarioId, applyDefaultScenario,
-    tools, loadedToolNumber, toolsetter, toolLengthOffset,
+    tools, loadedToolNumber, toolsetter, toolLengthOffset, toolNumber,
     persistTools, addTool, removeTool, setLoadedTool, importTools,
     pushToolsetterToSim, pushLoadedToolToSim, persistToolsetter, loadPersistedConfig,
   }

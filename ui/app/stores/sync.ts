@@ -25,6 +25,11 @@ export interface SyncConsoleEntry {
   ts: number
 }
 
+export interface AppUpdateCheck {
+  latestVersion: string | null
+  checkedAt: number | null
+}
+
 export interface UiSnapshot {
   nav: {
     probingTab: string
@@ -77,6 +82,7 @@ export const useSyncStore = defineStore('sync', () => {
     rotation: null, heightmap: null, errorMessage: null,
     edgeHistoryX: [null, null], edgeHistoryY: [null, null],
   })
+  const appUpdateCheck = reactive<AppUpdateCheck>({ latestVersion: null, checkedAt: null })
 
   // Always mutate the array refs in place (never reassign), so references held by
   // useModals()/useToast() stay valid across snapshots and patches.
@@ -139,6 +145,9 @@ export const useSyncStore = defineStore('sync', () => {
       case 'probingState':
         if ('set' in op) Object.assign(probingState, op.set)
         break
+      case 'appUpdateCheck':
+        if ('set' in op) Object.assign(appUpdateCheck, op.set)
+        break
       case 'session':
         if ('set' in op) session.value = (op.set as { session: typeof session.value }).session
         break
@@ -149,5 +158,5 @@ export const useSyncStore = defineStore('sync', () => {
     job.value = { ...state }
   }
 
-  return { nav, selection, jogActive, calibrationActive, modals, toasts, consoleLog, job, macroRun, probingState, session, applySnapshot, applyOp, applyJobState }
+  return { nav, selection, jogActive, calibrationActive, modals, toasts, consoleLog, job, macroRun, probingState, appUpdateCheck, session, applySnapshot, applyOp, applyJobState }
 })

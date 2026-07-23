@@ -3,6 +3,9 @@
   "version": "0.2.0",
   "license": "Apache-2.0",
   "private": true,
+  "overrides": {
+    "esbuild": ">=0.28.1"
+  },
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
@@ -15,8 +18,12 @@
   },
   "dependencies": {
     "@pinia/nuxt": "^0.11.3",
+    "brace-expansion": "^5.0.8",
     "nuxt": "^4.4.8",
-    "pinia": "^3.0.4"
+    "pinia": "^3.0.4",
+    "shell-quote": "^1.10.0",
+    "svgo": "^4.0.2",
+    "tar": "^7.5.21"
   },
   "devDependencies": {
     "@nuxt/eslint": "^1.16.0",

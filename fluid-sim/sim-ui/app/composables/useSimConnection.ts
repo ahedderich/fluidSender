@@ -23,8 +23,11 @@ interface SimStateMsg {
   simSpeed: number
   axisCount: number
   travel: Record<AxisKey, number>
+  maxRate: Record<AxisKey, number>
   fluidConfig: Record<string, string>
   toolLengthOffset: number
+  toolNumber: number
+  firmwareVersion: string
 }
 
 export function useSimConnection() {
@@ -54,10 +57,13 @@ export function useSimConnection() {
     store.limits.zMax = msg.limits.zMax
     store.limits.door = msg.door
     store.toolLengthOffset = msg.toolLengthOffset ?? 0
+    store.toolNumber = msg.toolNumber ?? 0
+    if (msg.firmwareVersion) store.firmwareVersion = msg.firmwareVersion
     for (const a of AXES) {
       store.pos[a] = msg.pos[a] ?? store.pos[a]
       store.wco[a] = msg.wco[a] ?? store.wco[a]
       store.travel[a] = msg.travel[a] ?? store.travel[a]
+      store.maxRate[a] = msg.maxRate[a] ?? store.maxRate[a]
     }
     // Merge fluidConfig without losing keys not in the snapshot
     if (msg.fluidConfig) {
