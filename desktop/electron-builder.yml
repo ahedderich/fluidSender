@@ -3,6 +3,7 @@ productName: FluidSender
 directories:
   output: dist
 artifactName: '${productName}-${version}-${os}-${arch}.${ext}'
+afterPack: scripts/sign-mac-adhoc.cjs
 files:
   - src/**/*.js
   - package.json

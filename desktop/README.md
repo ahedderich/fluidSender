@@ -27,8 +27,14 @@ Produces a zip under `dist/` for whichever platform you're running this on (elec
 defaults to the host OS when no target is given) — plus an AppImage too, on Linux. macOS always
 builds both `x64` and `arm64` zips regardless of which Mac you're building on (electron-builder
 just downloads both prebuilt Electron variants; `@serialport/bindings-cpp`'s darwin prebuild is
-already a universal x64+arm64 binary, so no per-arch rebuild step is needed). No code signing,
-notarization, or auto-update — those are deferred to a later stage.
+already a universal x64+arm64 binary, so no per-arch rebuild step is needed).
+
+macOS builds get a free, local **ad-hoc** signature (`scripts/sign-mac-adhoc.cjs`, an electron-builder
+`afterPack` hook) — without it, the arm64 build fails to launch at all ("...is damaged and can't be
+opened"), since Apple Silicon's kernel refuses to run any unsigned code, unlike x64/Rosetta which only
+shows a bypassable warning. Ad-hoc signing only clears that hard block; it isn't real notarization, so
+the "unidentified developer" prompt (right-click → Open once) is still expected on every platform. Full
+notarization (needs a paid Apple Developer account) is deferred to a later stage, same as auto-update.
 
 CI (`.github/workflows/build-desktop.yaml`, `.github/workflows/release-desktop.yaml`) builds all
 three platforms natively on GitHub-hosted `ubuntu-latest`/`windows-latest`/`macos-latest` runners —
