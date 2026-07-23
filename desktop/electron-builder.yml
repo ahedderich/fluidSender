@@ -1,0 +1,23 @@
+appId: com.fluidsender.desktop
+productName: FluidSender
+directories:
+  output: dist
+artifactName: '${productName}-${version}-${os}-${arch}.${ext}'
+files:
+  - src/**/*.js
+  - package.json
+extraResources:
+  - from: vendor/ui-output
+    to: ui-output
+asarUnpack:
+  - resources/ui-output/server/node_modules/@serialport/bindings-cpp/**
+linux:
+  target:
+    - zip
+    - AppImage
+  category: Utility
+mac:
+  target: zip
+  category: public.app-category.utilities
+win:
+  target: zip

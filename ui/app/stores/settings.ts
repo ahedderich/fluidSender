@@ -172,7 +172,10 @@ interface PersistedConfig {
     viewport?: { defaultView?: ViewKey; showGrid?: boolean; showAxes?: boolean }
     jog?: Partial<JogSettings>
     shortcuts?: Partial<KeyboardShortcuts>
+    network?: { exposeOnLan?: boolean; port?: number }
   }
+  /** Server-reported, read-only — which deployment this build is running as. */
+  runtime?: 'electron' | 'container'
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -180,6 +183,8 @@ interface PersistedConfig {
 export const useSettingsStore = defineStore('settings', () => {
   const initialized = ref(false)
   const saving = ref(false)
+  const runtime = ref<'electron' | 'container'>('container')
+  const isElectron = computed(() => runtime.value === 'electron')
 
   const machines = ref<MachineProfile[]>([])
   const activeMachineId = ref('')
@@ -240,6 +245,10 @@ export const useSettingsStore = defineStore('settings', () => {
       medium: { speed: 500, xyStep: 1.0, zStep: 0.5 },
       fast: { speed: 2000, xyStep: 5.0, zStep: 2.0 },
     } as JogSettings,
+    network: {
+      exposeOnLan: false,
+      port: 17173,
+    },
     shortcuts: {
       safetyKey: 'none' as SafetyKeyOption,
       requiresSafetyKey: {
@@ -350,6 +359,7 @@ export const useSettingsStore = defineStore('settings', () => {
         macros: _migrateMacros(m.macros ?? []),
       }
     })
+    if (data.runtime) runtime.value = data.runtime
     if (data.auth) {
       app.auth.enabled = data.auth.enabled ?? false
     }
@@ -357,6 +367,7 @@ export const useSettingsStore = defineStore('settings', () => {
       if (data.app.units) app.units = data.app.units
       if (data.app.macros) app.macros = _migrateMacros(data.app.macros as unknown[])
       if (data.app.viewport) Object.assign(app.viewport, data.app.viewport)
+      if (data.app.network) Object.assign(app.network, data.app.network)
       if (data.app.jog) {
         const migrated = _migrateJog(data.app.jog)
         Object.assign(app.jog.slow, migrated.slow)
@@ -395,6 +406,7 @@ export const useSettingsStore = defineStore('settings', () => {
             viewport: app.viewport,
             jog: app.jog,
             shortcuts: app.shortcuts,
+            network: app.network,
           },
         },
       })
@@ -442,6 +454,7 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     initialized,
     saving,
+    isElectron,
     machines,
     activeMachineId,
     activeMachine,

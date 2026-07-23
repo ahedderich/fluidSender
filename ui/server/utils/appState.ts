@@ -196,11 +196,16 @@ export interface AppConfig {
   app?: Record<string, unknown>
 }
 
+export type ClientConfig = AppConfig & { runtime: 'electron' | 'container' }
+
 /** Strips fields that must never reach a browser client, whether via GET /api/config
- *  or the WS config broadcast (which goes to every connected client, not just admins). */
-function stripAuthSecrets(config: AppConfig): AppConfig {
-  if (!config.auth?.users?.length && !config.auth?.apiTokens?.length) return config
-  return { ...config, auth: { ...config.auth, users: undefined, apiTokens: undefined } }
+ *  or the WS config broadcast (which goes to every connected client, not just admins).
+ *  Also attaches `runtime` — a per-process fact (not persisted config), needed by both
+ *  paths so the frontend can tell it's running as the Electron build. */
+function stripAuthSecrets(config: AppConfig): ClientConfig {
+  const runtime: ClientConfig['runtime'] = process.env.FLUIDSENDER_RUNTIME === 'electron' ? 'electron' : 'container'
+  if (!config.auth?.users?.length && !config.auth?.apiTokens?.length) return { ...config, runtime }
+  return { ...config, auth: { ...config.auth, users: undefined, apiTokens: undefined }, runtime }
 }
 
 export { stripAuthSecrets }
@@ -212,6 +217,7 @@ const DEFAULT_CONFIG: AppConfig = {
     units: 'mm',
     macros: [],
     viewport: { defaultView: 'iso', showGrid: true, showAxes: true },
+    network: { exposeOnLan: false, port: 17173 },
     jog: {
       slow: { speed: 100, xyStep: 0.1, zStep: 0.05 },
       medium: { speed: 500, xyStep: 1.0, zStep: 0.5 },
