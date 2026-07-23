@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.3.0](https://github.com/ahedderich/fluidSender/compare/v0.2.0...v0.3.0) (2026-07-23)
+
+
+### Features
+
+* **api:** add external file upload API for third-party tools ([8982bc7](https://github.com/ahedderich/fluidSender/commit/8982bc7701e72956f8052ee0b17b9c8a1697922d))
+* **api:** add external file upload API for third-party tools ([d9dfd4f](https://github.com/ahedderich/fluidSender/commit/d9dfd4fa8ca0236c15e9890c8631e379294ef2af)), closes [#63](https://github.com/ahedderich/fluidSender/issues/63)
+* **desktop:** add Electron desktop app with network settings and CI … ([d537e16](https://github.com/ahedderich/fluidSender/commit/d537e167fd0ef95b6f7ff3a45ce9131684f7f2c9))
+* **desktop:** add Electron desktop app with network settings and CI builds ([8348ac0](https://github.com/ahedderich/fluidSender/commit/8348ac0eac8a516867b5f5d946a4074364534d31))
+* **gcode:** detect CAM generator and extract per-generator tool info ([729ab0e](https://github.com/ahedderich/fluidSender/commit/729ab0e070941321cc9af0fe3d2180a06f9f3650)), closes [#64](https://github.com/ahedderich/fluidSender/issues/64)
+* **gcode:** model acceleration and cornering deceleration in time estimates ([5aecf8c](https://github.com/ahedderich/fluidSender/commit/5aecf8ca28087eb8536a6b89afe44e5accfc5bfd)), closes [#46](https://github.com/ahedderich/fluidSender/issues/46)
+* **sim:** report live config.yaml and make firmware version testable ([9325cb1](https://github.com/ahedderich/fluidSender/commit/9325cb110ebec6c9835bac8d8b0bd40a980e2ebb))
+* **sim:** track and report tool number for atc-passthrough testing ([436466a](https://github.com/ahedderich/fluidSender/commit/436466a5549618c438690000c0b57a0b4c4862d2)), closes [#43](https://github.com/ahedderich/fluidSender/issues/43)
+* **ui:** add GCode text viewer to 3D viewport ([16b1760](https://github.com/ahedderich/fluidSender/commit/16b17603f50afe7bdf3e9cb23bdc19980dac91c7))
+* **ui:** add GCode text viewer to 3D viewport ([4813c09](https://github.com/ahedderich/fluidSender/commit/4813c098e38c6746976cb065e5bffecb92fb8d65)), closes [#62](https://github.com/ahedderich/fluidSender/issues/62)
+* **ui:** add Load Probe button to job panel tool list ([57a9723](https://github.com/ahedderich/fluidSender/commit/57a972372a17361eab63ce026dc73b0ecb2ba468))
+* **ui:** add magazine-slot safety checks and RapidChange ATC strategy ([eb1ebd3](https://github.com/ahedderich/fluidSender/commit/eb1ebd3e6318fef0f0bff2b2ad0da28d6b9f74be))
+* **ui:** build atc-managed engine and fix ATC toolchange gaps ([3d89ff7](https://github.com/ahedderich/fluidSender/commit/3d89ff7efc0dfb58797ca30f81a0c42aaba390a1))
+* **ui:** build atc-managed engine and fix ATC toolchange gaps ([55fbc25](https://github.com/ahedderich/fluidSender/commit/55fbc25370f152008e45941b2924db336472bbfa)), closes [#43](https://github.com/ahedderich/fluidSender/issues/43)
+* **ui:** check FluidNC and FluidSender versions against GitHub releases ([ce7956e](https://github.com/ahedderich/fluidSender/commit/ce7956ec5cfaac0758ff3f0f904e25e3e645acf2)), closes [#51](https://github.com/ahedderich/fluidSender/issues/51)
+* **ui:** detect FluidNC config validity and boot network/HTTP status ([d8203d1](https://github.com/ahedderich/fluidSender/commit/d8203d177a25384e9bac9666edd6f3226da02c68))
+* **ui:** dim already-executed toolpath segments in 3D viewport ([582c9de](https://github.com/ahedderich/fluidSender/commit/582c9de2c9aea9bf7d4abaaa7ac1ddbf205c3eeb))
+* **ui:** dim already-executed toolpath segments in 3D viewport ([0ee0944](https://github.com/ahedderich/fluidSender/commit/0ee0944244ec5d44a8dc4972c6a1e185b9df4d52)), closes [#45](https://github.com/ahedderich/fluidSender/issues/45)
+* **ui:** overhaul ATC magazine automation config in toolchange settings ([d99c83e](https://github.com/ahedderich/fluidSender/commit/d99c83e0abc277f19418ec856c76666debbf92d3)), closes [#43](https://github.com/ahedderich/fluidSender/issues/43)
+* **ui:** replace override sliders with step buttons ([56b4d12](https://github.com/ahedderich/fluidSender/commit/56b4d1231006f2935c04080ebd685c268ecfd900))
+* **ui:** show last measured runtime in file browser table ([c76a2ae](https://github.com/ahedderich/fluidSender/commit/c76a2aea0216593b2fc8e477454675ec1cda6d58))
+
+
+### Bug Fixes
+
+* **ci:** add explicit GITHUB_TOKEN permissions to workflows ([67cf585](https://github.com/ahedderich/fluidSender/commit/67cf5854886a417574f93e1587ac66c56b6366b2))
+* **ci:** add explicit GITHUB_TOKEN permissions to workflows ([eb80b94](https://github.com/ahedderich/fluidSender/commit/eb80b94061f5defa5962254b39676aef06ff7d5a))
+* **deps:** upgrade esbuild to 0.28.1 to resolve Windows vulnerability ([b2a42b1](https://github.com/ahedderich/fluidSender/commit/b2a42b1f911a03bdc99b0f4e967a4381940ae23d))
+* **deps:** upgrade esbuild to 0.28.1 to resolve Windows vulnerability ([4fdcde2](https://github.com/ahedderich/fluidSender/commit/4fdcde23cb51ae17e0d68ec2b6275a41a922b704))
+* **desktop:** ad-hoc sign macOS builds to fix arm64 launch failure ([70c404d](https://github.com/ahedderich/fluidSender/commit/70c404df5b6dc55823bd962357c8a79410aec240))
+* **desktop:** ad-hoc sign macOS builds to fix arm64 launch failure ([82a6031](https://github.com/ahedderich/fluidSender/commit/82a60311827742290084daeb4640fc15ad6c0956))
+* **desktop:** build both x64 and arm64 zips for macOS ([b3a6339](https://github.com/ahedderich/fluidSender/commit/b3a63397579ccd706544f20ab0247cc131a89729))
+* **docs:** use GitHub private vulnerability reporting in SECURITY.md ([0485154](https://github.com/ahedderich/fluidSender/commit/048515469daf192c61f25cadf7ebcdad21aeb6fe))
+* **docs:** use GitHub private vulnerability reporting in SECURITY.md ([e95477a](https://github.com/ahedderich/fluidSender/commit/e95477ad566e8c7622d5639bdf6324c95f0695b9))
+* **probing:** add probe height parameter to rotation wizard ([21235fb](https://github.com/ahedderich/fluidSender/commit/21235fbd771248d3caa2d520c5bd8ac11af8e635))
+* **probing:** add probe height parameter to rotation wizard ([31f89be](https://github.com/ahedderich/fluidSender/commit/31f89bebd9306bee68f252bc30607a17c91363ae))
+* **sim-ui:** resolve CRITICAL/HIGH CVEs in transitive deps ([64037b9](https://github.com/ahedderich/fluidSender/commit/64037b98a3751a45a5288090fc6bf01d0d69a49f))
+* **sim-ui:** resolve CRITICAL/HIGH CVEs in transitive deps ([b131f94](https://github.com/ahedderich/fluidSender/commit/b131f947abfdb372d4360b762b84e3e7ea655ac8))
+* **ui:** always show file browser row action buttons ([08ccf38](https://github.com/ahedderich/fluidSender/commit/08ccf38d8741d57b95929e244e9dcd97f21b0935))
+* **ui:** bundle three.js locally instead of loading from CDN ([1fa3960](https://github.com/ahedderich/fluidSender/commit/1fa3960c2cc53813d9c66cbbb67578acfdfef845))
+* **ui:** bundle three.js locally instead of loading from CDN ([47b6795](https://github.com/ahedderich/fluidSender/commit/47b679594ee2407df1b48c0291e16e7cead37396))
+* **ui:** cap upper section height so tool list scrolls internally ([e9698df](https://github.com/ahedderich/fluidSender/commit/e9698df9cb80cb604a8e5ff7483fa501e376540e))
+* **ui:** let mousewheel scroll the page over the console unless focused ([52c7256](https://github.com/ahedderich/fluidSender/commit/52c725628d15399e482357bd38b1772171beec79))
+* **ui:** relabel goto XY/Z buttons and confirm the Z=10 move ([b0497da](https://github.com/ahedderich/fluidSender/commit/b0497daae15e0ec6910bcc50c3391bbfa472ba07))
+* **ui:** resolve CRITICAL/HIGH CVEs in transitive deps ([a3a0a97](https://github.com/ahedderich/fluidSender/commit/a3a0a9777e027bb6003a13c1410ec5c5a0be47e7))
+* **ui:** show connected machine name in tab title ([ec42e48](https://github.com/ahedderich/fluidSender/commit/ec42e4893eaa4ace79f5e97eb4907d56788340ac))
+* **ui:** use text pill load button instead of play icon in file browser ([8cc3c16](https://github.com/ahedderich/fluidSender/commit/8cc3c16f493ea1294bfbcd05dcac2569c92a634c))
+* **ui:** virtualize GCode text viewer for large files ([f9d7516](https://github.com/ahedderich/fluidSender/commit/f9d7516f48c2209de44142e16e52e590ede7d3a7))
+* **ui:** virtualize GCode text viewer for large files ([c09bd20](https://github.com/ahedderich/fluidSender/commit/c09bd206698aeae48e293e5b61cfbddd1a7dfedb)), closes [#62](https://github.com/ahedderich/fluidSender/issues/62)
+
+
+### Performance Improvements
+
+* **gcode:** cut job-load time and on-disk artefact size for large files ([786800c](https://github.com/ahedderich/fluidSender/commit/786800c24d5c5613d95832a9384f5e3d46894a69))
+
 ## [0.2.0](https://github.com/ahedderich/fluidSender/compare/v0.1.3...v0.2.0) (2026-07-11)
 
 
