@@ -1,0 +1,52 @@
+name: Build — Desktop
+
+on:
+  push:
+    branches: [test]
+    paths:
+      - 'ui/**'
+      - 'desktop/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact-name: linux
+          - os: windows-latest
+            artifact-name: windows
+          - os: macos-latest
+            artifact-name: mac
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install desktop dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build ui/ and vendor its output
+        run: bun run prepare:vendor
+
+      - name: Package
+        run: bun run package
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluidsender-desktop-${{ matrix.artifact-name }}
+          path: |
+            desktop/dist/*.zip
+            desktop/dist/*.AppImage
+          if-no-files-found: error

@@ -88,7 +88,7 @@ Browser
 
 - USB is the primary and recommended connection method.
 - TCP/WiFi is an optional alternative; the UI must display a clear warning when the TCP mode is active.
-- The serial/TCP bridge is implemented entirely within Nuxt server routes using Bun's native serial and net APIs; no separate service is needed.
+- The serial/TCP bridge is implemented entirely within Nuxt server routes, using Node's `net` module for TCP and the native-addon `serialport` npm package for USB (not Bun's runtime — see the dev runtime caveat below); no separate service is needed.
 
 ### State Authority Model
 
@@ -130,7 +130,7 @@ The browser ↔ server sync runs over a single WebSocket at `/ws` (`ui/server/ro
 - Avoid circular imports between `stores/sync.ts` and `composables/useModals.ts` — the store must not import the composable (it crashes SSR). `ModalEntry` lives in the store; the plugin (not the store) calls `settleModal`.
 - Generate one console entry / modal / toast at a **single** authority (the acting client or the server), never inside `applyServerStatus`-style code that runs on every client.
 
-> **Dev runtime caveat:** Nitro/crossws WebSocket upgrades **do not work when `nuxt dev` runs under Bun's runtime** ([nitro#2721](https://github.com/nitrojs/nitro/issues/2721)) — the handshake hangs (client stuck CONNECTING) even though the server `open()` fires. The dev image (`ui/Dockerfile`) therefore runs the dev server on **Node** (`npm run dev`) while keeping Bun for `bun install`. Production (`Dockerfile.prd`) stays on Bun, where WS works after `nuxt build`.
+> **Dev runtime caveat:** Nitro/crossws WebSocket upgrades **do not work when `nuxt dev` runs under Bun's runtime** ([nitro#2721](https://github.com/nitrojs/nitro/issues/2721)) — the handshake hangs (client stuck CONNECTING) even though the server `open()` fires. The dev image (`ui/Dockerfile`) therefore runs the dev server on **Node** (`npm run dev`) while keeping Bun for `bun install`. Production (`Dockerfile.prd`) also runs on **Node** at runtime — Nitro has no configured preset and defaults to `node-server`, and the distroless runner stage's entrypoint is `node`; Bun is used only in the builder stage for `bun install`/`bun run build`. WS works fine under Node either way.
 
 ### Volumes (Docker)
 
