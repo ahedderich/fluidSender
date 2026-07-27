@@ -1,6 +1,6 @@
 import { machineConnection } from './connection'
 import { getMode } from './machineMode'
-import { parseStatusLine, resetWco } from './statusParser'
+import { parseStatusLine, resetWco, resetOverrides } from './statusParser'
 import { broadcastPatch, pushToast } from '../appState'
 import type { MachineStatus } from './types'
 
@@ -72,6 +72,7 @@ export function stopPoller() {
   lastStatus = null
   _bufferSeen = false
   resetWco()
+  resetOverrides()
 }
 
 function _checkBufferWatchdog(): void {

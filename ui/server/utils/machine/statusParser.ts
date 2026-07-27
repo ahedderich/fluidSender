@@ -7,6 +7,15 @@ export function resetWco() {
   cachedWco = { x: 0, y: 0, z: 0, a: 0 }
 }
 
+// Ov: is likewise only included periodically (every ~20 status reports while running,
+// ~10 while idle — see FluidNC's report_ovr_counter/REPORT_OVR_REFRESH_*_COUNT). Reports
+// without it must keep the last known percentages, not silently reset to 100.
+let cachedOverrides = { feed: 100, rapid: 100, spindle: 100 }
+
+export function resetOverrides() {
+  cachedOverrides = { feed: 100, rapid: 100, spindle: 100 }
+}
+
 /**
  * Parse one FluidNC status line `<State|MPos:x,y,z|WCO:x,y,z|FS:f,s|Buf:p,r|Ov:f,r,s|Pn:...|A:...>`
  * into a MachineStatus. Returns null for non-status lines.
@@ -33,9 +42,7 @@ export function parseStatusLine(line: string): MachineStatus | null {
   let bufPlanner = 0
   let bufRx = 0
   let bufferReported = false
-  let ovFeed = 100
-  let ovRapid = 100
-  let ovSpindle = 100
+  let newOverrides: { feed: number; rapid: number; spindle: number } | null = null
   let pnStr = ''
   let accStr = ''
 
@@ -71,9 +78,7 @@ export function parseStatusLine(line: string): MachineStatus | null {
       bufferReported = true
     } else if (p.startsWith('Ov:')) {
       const ov = p.slice(3).split(',').map(Number)
-      ovFeed = ov[0] ?? 100
-      ovRapid = ov[1] ?? 100
-      ovSpindle = ov[2] ?? 100
+      newOverrides = { feed: ov[0] ?? 100, rapid: ov[1] ?? 100, spindle: ov[2] ?? 100 }
     } else if (p.startsWith('Pn:')) {
       pnStr = p.slice(3)
     } else if (p.startsWith('A:')) {
@@ -82,6 +87,7 @@ export function parseStatusLine(line: string): MachineStatus | null {
   }
 
   if (newWco) cachedWco = newWco
+  if (newOverrides) cachedOverrides = newOverrides
 
   const wco = { ...cachedWco }
   const wpos = {
@@ -119,7 +125,7 @@ export function parseStatusLine(line: string): MachineStatus | null {
     spindleSpeed,
     buffer: { planner: bufPlanner, rx: bufRx },
     bufferReported,
-    overrides: { feed: ovFeed, rapid: ovRapid, spindle: ovSpindle },
+    overrides: { ...cachedOverrides },
     limitSwitches,
     probe,
     toolsetter,

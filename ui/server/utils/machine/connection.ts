@@ -68,6 +68,10 @@ class MachineConnection extends EventEmitter {
     // FLUIDSENDER_TCP_HOST overrides configured host for Docker Compose environments
     const tcpHost = process.env.FLUIDSENDER_TCP_HOST || connection.tcpHost
     const sock = new net.Socket()
+    // Realtime override/jog/reset bytes are single-byte, latency-sensitive writes sent
+    // interleaved with buffered G-code during a running job — Nagle's algorithm would
+    // otherwise coalesce/delay them behind other small writes.
+    sock.setNoDelay(true)
     this.socket = sock
 
     sock.on('connect', () => {
