@@ -296,6 +296,12 @@
           <p class="text-2xl font-bold font-mono text-gray-900 dark:text-slate-100 tabular-nums">
             {{ ps.rotation.rotationDeg.toFixed(3) }}°
           </p>
+          <p class="text-xs text-blue-600 dark:text-blue-400 mt-0.5">
+            {{ rotationCorrectionHint(ps.rotation.rotationDeg) }}
+          </p>
+          <p class="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+            ≈ {{ rotationDeviationAtReference(ps.rotation.rotationDeg).toFixed(2) }} mm over {{ ROTATION_DEVIATION_REFERENCE_MM }} mm
+          </p>
           <p class="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
             Bow: {{ ps.rotation.bowMm.toFixed(3) }} mm
           </p>
@@ -509,6 +515,8 @@
             </template>
             <template v-if="ps.rotation">
               <p class="text-xs text-emerald-700 dark:text-emerald-400">Rotation: {{ ps.rotation.rotationDeg.toFixed(3) }}°</p>
+              <p class="text-xs text-emerald-700 dark:text-emerald-400">{{ rotationCorrectionHint(ps.rotation.rotationDeg) }}</p>
+              <p class="text-xs text-emerald-700 dark:text-emerald-400">≈ {{ rotationDeviationAtReference(ps.rotation.rotationDeg).toFixed(2) }} mm over {{ ROTATION_DEVIATION_REFERENCE_MM }} mm</p>
               <p class="text-xs text-emerald-700 dark:text-emerald-400">Bow: {{ ps.rotation.bowMm.toFixed(3) }} mm</p>
             </template>
             <template v-if="ps.wizardKey === 'heightmap' && ps.heightmap">
@@ -568,6 +576,7 @@ import { wsSend } from '~/composables/useWsSend'
 import { useMovementEnabled } from '~/composables/useMovementEnabled'
 import { useNav } from '~/composables/useNav'
 import { useDialogShortcuts } from '~/composables/useDialogShortcuts'
+import { ROTATION_DEVIATION_REFERENCE_MM, rotationDeviationAtReference, rotationCorrectionHint } from '~/utils/rotationProbing'
 
 const machine = useMachineStore()
 const syncStore = useSyncStore()
