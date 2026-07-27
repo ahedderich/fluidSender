@@ -301,6 +301,37 @@ export async function runCorner(
 
 // ── Rotation probing ──────────────────────────────────────────────────────────
 
+/** Computes rotation angle (CCW-positive, both edge axes agree) and edge bow from
+ *  three probed points. p1/pc/p3 are nominal (commanded) positions along the edge;
+ *  p1Wpos/pcWpos/p3Wpos are the measured positions along probeAxis. */
+export function computeRotationResult(
+  probeAxis: 'X' | 'Y',
+  p1: { x: number; y: number },
+  pc: { x: number; y: number },
+  p3: { x: number; y: number },
+  p1Wpos: number,
+  pcWpos: number,
+  p3Wpos: number,
+): { rotationDeg: number; bowMm: number } {
+  if (probeAxis === 'Y') {
+    const dxTotal = p3.x - p1.x
+    const dyTotal = p3Wpos - p1Wpos
+    const rotationDeg = Math.atan2(dyTotal, dxTotal) * (180 / Math.PI)
+    const lineLen = Math.sqrt(dxTotal * dxTotal + dyTotal * dyTotal)
+    const cross = dxTotal * (pcWpos - p1Wpos) - dyTotal * (pc.x - p1.x)
+    return { rotationDeg, bowMm: lineLen > 0 ? cross / lineLen : 0 }
+  }
+  const dyTotal = p3.y - p1.y
+  const dxTotal = p3Wpos - p1Wpos
+  // Left/right edges run along Y (nominal), so rotation is measured against the +Y axis
+  // rather than +X — negate dxTotal so a CCW stock rotation reads positive here too,
+  // matching the top/bottom branch above (previously this branch returned the opposite sign).
+  const rotationDeg = Math.atan2(-dxTotal, dyTotal) * (180 / Math.PI)
+  const lineLen = Math.sqrt(dyTotal * dyTotal + dxTotal * dxTotal)
+  const cross = dyTotal * (pcWpos - p1Wpos) - dxTotal * (pc.y - p1.y)
+  return { rotationDeg, bowMm: lineLen > 0 ? cross / lineLen : 0 }
+}
+
 export async function runRotation(
   ctx: WizardRunContext,
   config: WizardConfig,
@@ -377,24 +408,7 @@ export async function runRotation(
   const p3Wpos = (await probeEdge(probeAxis, approachDir, 2 * buf, probeConfig, compensation, wco, ctx.isAborted)).edgeWpos
   await _flush(['G91', `G0 ${probeAxis}${retractSign}${buf}`, 'G90', `G0 Z${safeH.toFixed(4)}`])
 
-  let rotationDeg: number
-  let bowMm: number
-
-  if (probeAxis === 'Y') {
-    const dxTotal = p3.x - p1.x
-    const dyTotal = p3Wpos - p1Wpos
-    rotationDeg = Math.atan2(dyTotal, dxTotal) * (180 / Math.PI)
-    const lineLen = Math.sqrt(dxTotal * dxTotal + dyTotal * dyTotal)
-    const cross = dxTotal * (pcWpos - p1Wpos) - dyTotal * (pc.x - p1.x)
-    bowMm = lineLen > 0 ? cross / lineLen : 0
-  } else {
-    const dyTotal = p3.y - p1.y
-    const dxTotal = p3Wpos - p1Wpos
-    rotationDeg = Math.atan2(dxTotal, dyTotal) * (180 / Math.PI)
-    const lineLen = Math.sqrt(dyTotal * dyTotal + dxTotal * dxTotal)
-    const cross = dyTotal * (pcWpos - p1Wpos) - dxTotal * (pc.y - p1.y)
-    bowMm = lineLen > 0 ? cross / lineLen : 0
-  }
+  const { rotationDeg, bowMm } = computeRotationResult(probeAxis, p1, pc, p3, p1Wpos, pcWpos, p3Wpos)
 
   broadcastPatch([setProbingState({
     phase: 'completed',
