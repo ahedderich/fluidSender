@@ -27,6 +27,11 @@ export interface SenderStatusEvent {
    *   null      = not in a machine-initiated hold
    */
   holdReason: 'feed_hold' | 'program' | null
+  /** Tool length offset that was confirmed live at the moment this chunk was suspended —
+   *  only set on the 'suspended' status event. Captured before the soft reset (which
+   *  zeroes G43.1 in firmware) so the resume recovery sequence can restore the same
+   *  value instead of relying on a stale/tool-table lookup. */
+  pausedToolLengthOffset?: number | null
 }
 
 export interface SendHandle {

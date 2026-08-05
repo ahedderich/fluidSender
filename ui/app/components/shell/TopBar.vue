@@ -412,6 +412,12 @@ async function cycleStartAction() {
   } else if (tc?.strategy === 'atc-passthrough' || tc?.strategy === 'atc-managed' || tc?.strategy === 'atc-rapidchange') {
     offsetCheckApplies = !!tc.toolsetter && (tc.confirmMissingOffset ?? true)
   }
+  // Re-confirm against firmware right before the gate below — TLO is RAM-only in
+  // FluidNC and a mid-session soft reset could have silently cleared it since the
+  // cached value was last confirmed.
+  if (offsetCheckApplies) {
+    await machine.refreshToolLengthOffset()
+  }
   if (offsetCheckApplies && machine.toolLengthOffset === null) {
     const ok = await confirm({
       title: 'Tool length offset not confirmed',
