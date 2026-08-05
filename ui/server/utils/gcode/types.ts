@@ -69,15 +69,20 @@ export type LineVector =
  *  version 6: estimatedTotalMs is now accel/junction-deviation aware (see
  *  kinematics.ts) and depends on the machine kinematics used to compute it —
  *  kinematicsFingerprint lets loadCachedAnalysis() invalidate the cache when the
- *  active machine (or its config) changes between loads of the same file. */
+ *  active machine (or its config) changes between loads of the same file.
+ *  version 7: sourceFingerprint (source file size + mtime) lets loadCachedAnalysis()
+ *  invalidate the cache when a file on disk is replaced (e.g. re-uploaded) without
+ *  its path/fileId changing — previously a same-path overwrite would silently keep
+ *  serving the previous version's cached analysis/lines. */
 export interface JobAnalysis {
-  version: 6
+  version: 7
   fileId: string
   filename: string
   analyzedAt: number
   totalLines: number
   estimatedTotalMs: number
   kinematicsFingerprint: string
+  sourceFingerprint: string
   axisRanges: AxisRanges
   tools: ToolSection[]
   noToolDefinitions: boolean
@@ -147,6 +152,11 @@ export interface JobState {
   /** Max planner slots, captured from machine idle state on connect. */
   maxPlannerSlots: number
   estimatedTotalMs: number
+  /** analyzedAt of the current analysis (see JobAnalysis) — changes whenever the file is
+   *  re-analyzed, even if fileId is unchanged (e.g. same-name re-upload). Clients that cache
+   *  fetched artefacts (vectors/lines) by fileId must key on this too, or a same-name reload
+   *  with fresh content will silently keep showing the stale cached artefacts. */
+  analyzedAt: number | null
   /** Wall-clock epoch ms when the current running segment started; null whenever status !== 'running'. */
   startWallClock: number | null
   /** Active runtime accumulated across the job so far, excluding paused/tool-change/program-pause

@@ -337,6 +337,7 @@ const job: JobState = {
   inPlanner: 0,
   maxPlannerSlots: 0,
   estimatedTotalMs: 0,
+  analyzedAt: null,
   startWallClock: null,
   accumulatedRunMs: 0,
   axisRanges: null,
