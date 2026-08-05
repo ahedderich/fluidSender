@@ -1231,7 +1231,13 @@ watch(() => job.value?.execPtr, (ptr) => {
 
 // Fetch and render 3D path vectors (+ raw GCode lines for the GCode panel) when
 // a job finishes loading. Clear both when the job is cleared.
-let lastLoadedFileId: string | null = null
+// Keyed on fileId+analyzedAt, not fileId alone — a same-name re-upload/reload
+// keeps fileId unchanged but produces a fresh analyzedAt, and must still trigger
+// a refetch or the viewport would keep showing the previous file's content.
+let lastLoadedKey: string | null = null
+function loadedKey(fileId: string | null | undefined, analyzedAt: number | null | undefined): string | null {
+  return fileId ? `${fileId}:${analyzedAt ?? ''}` : null
+}
 
 async function fetchAndLoadVectors(fileId: string) {
   try {
@@ -1269,15 +1275,16 @@ watch(
   async (status) => {
     if (status === 'loaded') {
       const fileId = job.value?.fileId
-      if (!fileId || fileId === lastLoadedFileId) return
+      const key = loadedKey(fileId, job.value?.analyzedAt)
+      if (!fileId || !key || key === lastLoadedKey) return
       // Skip if Three.js isn't initialised yet — onMounted will retry after initThree() resolves.
       if (!ready.value) return
-      lastLoadedFileId = fileId
+      lastLoadedKey = key
       const tLoad0 = performance.now()
       await Promise.all([fetchAndLoadVectors(fileId), fetchLines(fileId)])
       console.debug(`[perf] job load → viewport ready(${fileId}): total=${(performance.now() - tLoad0).toFixed(0)}ms`)
     } else if (status === 'idle') {
-      lastLoadedFileId = null
+      lastLoadedKey = null
       clearToolpath()
       lastVectors.value = []
       gcodeLines.value = []
@@ -1291,8 +1298,9 @@ onMounted(async () => {
   await initThree()
   // If a job was already in 'loaded' state while Three.js was initialising, load its vectors now.
   const j = job.value
-  if (j?.status === 'loaded' && j.fileId && j.fileId !== lastLoadedFileId) {
-    lastLoadedFileId = j.fileId
+  const key = loadedKey(j?.fileId, j?.analyzedAt)
+  if (j?.status === 'loaded' && j.fileId && key && key !== lastLoadedKey) {
+    lastLoadedKey = key
     await Promise.all([fetchAndLoadVectors(j.fileId), fetchLines(j.fileId)])
   }
 })

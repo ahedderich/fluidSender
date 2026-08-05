@@ -420,6 +420,24 @@ async function onFilesSelected(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
   if (!files.length) return
+
+  const existingNames = new Set((data.value?.files ?? []).map((f) => f.name))
+  const conflicts = files.filter((f) => existingNames.has(f.name))
+  if (conflicts.length) {
+    const ok = await confirm({
+      title: conflicts.length === 1 ? `Replace "${conflicts[0]!.name}"?` : `Replace ${conflicts.length} existing files?`,
+      message: conflicts.length === 1
+        ? 'A file with this name already exists and will be overwritten. Its execution history will be reset.'
+        : `These files already exist and will be overwritten: ${conflicts.map((f) => f.name).join(', ')}. Their execution history will be reset.`,
+      confirmLabel: 'Replace',
+      danger: true,
+    })
+    if (!ok) {
+      input.value = ''
+      return
+    }
+  }
+
   uploading.value = true
   try {
     const form = new FormData()

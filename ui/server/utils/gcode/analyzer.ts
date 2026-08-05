@@ -10,7 +10,7 @@ import { subdirForMode } from './types'
 
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
 const BASE_JOB_DIR = join(DATA_DIR, 'current_job')
-const ANALYSIS_VERSION = 6
+const ANALYSIS_VERSION = 7
 
 function getJobDir(mode: TransformMode): string {
   const sub = subdirForMode(mode)
@@ -31,7 +31,7 @@ function jobPaths(mode: TransformMode) {
   }
 }
 
-export async function loadCachedAnalysis(fileId: string, mode: TransformMode = 'none', kinematicsFingerprint?: string): Promise<JobAnalysis | null> {
+export async function loadCachedAnalysis(fileId: string, mode: TransformMode = 'none', kinematicsFingerprint?: string, sourceFingerprint?: string): Promise<JobAnalysis | null> {
   try {
     const raw = await readFile(jobPaths(mode).analysis, 'utf8')
     const a = JSON.parse(raw) as JobAnalysis
@@ -39,6 +39,9 @@ export async function loadCachedAnalysis(fileId: string, mode: TransformMode = '
     // A fingerprint mismatch means the estimate was computed for a different
     // machine's kinematics (or before any machine kinematics existed) — stale.
     if (kinematicsFingerprint !== undefined && a.kinematicsFingerprint !== kinematicsFingerprint) return null
+    // A source fingerprint mismatch means the file on disk was replaced (e.g. a
+    // same-name re-upload) since this analysis was cached — stale.
+    if (sourceFingerprint !== undefined && a.sourceFingerprint !== sourceFingerprint) return null
     return a
   } catch {
     return null
@@ -117,6 +120,7 @@ export async function analyzeGCodeFile(
   signal: AbortSignal,
   mode: TransformMode = 'none',
   kinematics: MachineKinematics = DEFAULT_MACHINE_KINEMATICS,
+  sourceFingerprint: string,
 ): Promise<{ analysis: JobAnalysis; lines: GCodeLine[] }> {
   onProgress(0)
 
@@ -150,6 +154,7 @@ export async function analyzeGCodeFile(
     totalLines: lines.length,
     estimatedTotalMs,
     kinematicsFingerprint: fingerprintKinematics(kinematics),
+    sourceFingerprint,
     axisRanges,
     tools,
     noToolDefinitions,

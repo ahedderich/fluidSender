@@ -1,8 +1,17 @@
 import { resolve, join } from 'node:path'
+import { stat } from 'node:fs/promises'
 import { createError } from 'h3'
 
 export const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
 export const UPLOADS_DIR = join(DATA_DIR, 'uploads')
+
+/** Lightweight content fingerprint (size + mtime) for a file under UPLOADS_DIR — cheap
+ *  enough to check on every load, and sufficient to detect a same-path overwrite (e.g.
+ *  a same-name re-upload) without hashing the whole file. */
+export async function computeUploadFingerprint(relPath: string): Promise<string> {
+  const s = await stat(join(UPLOADS_DIR, relPath))
+  return `${s.size}:${s.mtimeMs}`
+}
 
 /** Resolves a user-supplied relative path against UPLOADS_DIR and rejects traversal
  *  outside of it (e.g. `../../etc`). Throws a 400 h3 error on an invalid path. */

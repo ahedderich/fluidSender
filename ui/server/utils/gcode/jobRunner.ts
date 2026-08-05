@@ -5,6 +5,7 @@ import { analyzeGCode } from './analysis'
 import { getModalStateAtLine, invalidateModalStatesCache } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
 import { analyzeGCodeFile, loadCachedAnalysis, loadCachedLines, loadRawAnalysis, clearAllTransformArtefacts } from './analyzer'
+import { computeUploadFingerprint } from '../uploadPaths'
 import { DEFAULT_MACHINE_KINEMATICS, resolveMachineKinematics, fingerprintKinematics } from './kinematics'
 import type { MachineKinematics } from './kinematics'
 import {
@@ -130,14 +131,17 @@ class JobRunner {
 
       const kinematics = await this._resolveActiveKinematics()
       const kinematicsFingerprint = fingerprintKinematics(kinematics)
+      const sourceFingerprint = await computeUploadFingerprint(fileId)
 
       // A cache hit needs both analysis.json (metadata) and lines.json (the in-memory
       // sender's line array) — if either is missing/corrupt, fall through to a full
       // re-analysis rather than re-deriving lines from content via analyzeGCode(),
       // which duplicates the full O(N) parse this cache exists to avoid. A kinematics
       // fingerprint mismatch (different machine selected since the cache was written)
-      // is also treated as a miss — see loadCachedAnalysis().
-      let analysis = await loadCachedAnalysis(fileId, this._transformMode, kinematicsFingerprint)
+      // is also treated as a miss, as is a source fingerprint mismatch (the file on
+      // disk was replaced since the cache was written, e.g. a same-name re-upload) —
+      // see loadCachedAnalysis().
+      let analysis = await loadCachedAnalysis(fileId, this._transformMode, kinematicsFingerprint, sourceFingerprint)
       let lines: GCodeLine[] | null = null
       if (analysis) {
         lines = await loadCachedLines(this._transformMode)
@@ -176,6 +180,7 @@ class JobRunner {
           ctrl.signal,
           this._transformMode,
           kinematics,
+          sourceFingerprint,
         )
         analysis = result.analysis
         lines = result.lines
@@ -226,6 +231,7 @@ class JobRunner {
         estimatedTotalMs: analysis.estimatedTotalMs,
         axisRanges: analysis.axisRanges,
         analyzeProgress: 100,
+        analyzedAt: analysis.analyzedAt,
         toolSections: analysis.tools,
         generator: analysis.generator,
         generatorInfo: analysis.generatorInfo,
@@ -258,6 +264,7 @@ class JobRunner {
           fileId: null,
           filename: null,
           analyzeProgress: 0,
+          analyzedAt: null,
           toolSections: null,
           generator: null,
           generatorInfo: null,
@@ -506,6 +513,7 @@ class JobRunner {
       estimatedTotalMs: 0,
       axisRanges: null,
       analyzeProgress: 0,
+      analyzedAt: null,
       toolSections: null,
       generator: null,
       generatorInfo: null,
@@ -529,6 +537,13 @@ class JobRunner {
 
     const analysis = await loadRawAnalysis(mode)
     if (!analysis) return 'empty'
+
+    // The source file may have been replaced (e.g. re-uploaded under the same name)
+    // between this analysis being cached and this restart — a missing/mismatched
+    // fingerprint means the cache no longer describes the file on disk, so don't
+    // restore it as if it did; the user reloads it fresh instead.
+    const currentFingerprint = await computeUploadFingerprint(analysis.fileId).catch(() => null)
+    if (currentFingerprint === null || currentFingerprint !== analysis.sourceFingerprint) return 'empty'
 
     try {
       const cachedLines = await loadCachedLines(mode)
@@ -556,6 +571,7 @@ class JobRunner {
         estimatedTotalMs: analysis.estimatedTotalMs,
         axisRanges: analysis.axisRanges,
         analyzeProgress: 100,
+        analyzedAt: analysis.analyzedAt,
         toolSections: analysis.tools,
         generator: analysis.generator,
         generatorInfo: analysis.generatorInfo,
