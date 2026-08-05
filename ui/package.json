@@ -4,7 +4,8 @@
   "license": "Apache-2.0",
   "private": true,
   "overrides": {
-    "esbuild": ">=0.28.1"
+    "esbuild": ">=0.28.1",
+    "brace-expansion": ">=5.0.9"
   },
   "scripts": {
     "dev": "nuxt dev",
