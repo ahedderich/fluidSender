@@ -1,8 +1,9 @@
 import { machineConnection } from './connection'
 import { getMode, setMode } from './machineMode'
 import { hasBufferReporting } from './poller'
-import { broadcastPatch, pushConsole } from '../appState'
+import { broadcastPatch, pushConsole, setConnection } from '../appState'
 import { classifyLine, getActiveFirmwareVersion } from '../gcode/classifier'
+import { getToolLengthOffset, resetToolLengthSession } from './toolLengthState'
 import type { MachineStatus, SenderStatusEvent, SendHandle, SendableLine, SenderCompletedMode } from './types'
 
 function isCommentOrEmpty(raw: string): boolean {
@@ -21,6 +22,16 @@ let _maxPlannerSlots = 0
 let _inPlanner = 0
 let _completionConfirmCount = 0
 let _restoreProbing = false
+
+/** Send the soft-reset byte (0x18) and invalidate any cached TLO — FluidNC's gc_init()
+ *  zeroes the G43.1 tool length offset on every soft reset, so the cached value can no
+ *  longer be trusted the instant this byte goes out. */
+function sendSoftReset(): void {
+  machineConnection.sendByte(0x18)
+  resetToolLengthSession()
+  const next = setConnection({ toolLengthOffset: getToolLengthOffset() })
+  broadcastPatch([{ path: 'connection', set: { ...next } }])
+}
 
 function _getPlannerTarget(): number {
   return _maxPlannerSlots > 0
@@ -237,7 +248,10 @@ export function onBufUpdate(
   if (machineState === 'Hold' && chunk.internalState === 'suspending') {
     const resolvedPhase = holdPhase ?? 0
     if (resolvedPhase === 0) {
-      machineConnection.sendByte(0x18)
+      // Capture before sendSoftReset() invalidates it — the resume recovery sequence
+      // needs this to restore G43.1 once the chunk continues.
+      const pausedToolLengthOffset = getToolLengthOffset()
+      sendSoftReset()
       chunk.internalState = 'suspended'
       // 0x18 clears the planner — all queued-but-not-executing lines are gone.
       // executedPtr stays at its current value: it counts fully-completed commands.
@@ -251,7 +265,7 @@ export function onBufUpdate(
       _inPlanner = 0
       _completionConfirmCount = 0
       setMode('idle')
-      _emit(chunk, { status: 'suspended' })
+      _emit(chunk, { status: 'suspended', pausedToolLengthOffset })
     }
     return
   }
@@ -260,7 +274,7 @@ export function onBufUpdate(
   if (machineState === 'Hold' && chunk.internalState === 'stopping') {
     const resolvedPhase = holdPhase ?? 0
     if (resolvedPhase === 0) {
-      machineConnection.sendByte(0x18)
+      sendSoftReset()
       _finalize(chunk, 'stopped')
     }
     return
@@ -469,7 +483,7 @@ export function senderHardStop(chunkId?: string): void {
   // Only send 0x18 if this is the active chunk (machine is still running).
   // Suspended chunks have already received 0x18 during the suspend sequence.
   if (_activeChunkId === targetId) {
-    machineConnection.sendByte(0x18)
+    sendSoftReset()
   }
   _finalize(chunk, 'hard')
 }
