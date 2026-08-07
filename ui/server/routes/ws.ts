@@ -294,8 +294,13 @@ async function _onFetchOk() {
       if (!isJobActive()) broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
       return
     }
-    // FluidNC reports TLO as a single scalar: [TLO:0.000]
-    const tloZ = Number(tloLine.slice(5, -1))
+    // FluidNC reports TLO the same way as every other NGC coordinate in $# — one
+    // value per configured axis (e.g. "[TLO:0.000,0.000,-11.336]"), never a bare
+    // scalar. This app only ever writes it via G43.1 Z, so only the Z (3rd) axis
+    // value is meaningful; a single-value line (e.g. the simulator pre-parity fix,
+    // or a 1-axis config) is treated as that lone value.
+    const axisValues = tloLine.slice(5, -1).split(',').map(Number)
+    const tloZ = (axisValues.length > 1 ? axisValues[2] : axisValues[0]) ?? NaN
     // A bare 0 is indistinguishable from FluidNC's post-boot default — treat as unknown.
     setToolLengthOffset(Number.isFinite(tloZ) && tloZ !== 0 ? tloZ : null)
     const next = setConnection({ toolLengthOffset: getToolLengthOffset() })
