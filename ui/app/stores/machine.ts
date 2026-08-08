@@ -182,6 +182,37 @@ export const useMachineStore = defineStore('machine', () => {
     wsSend({ t: 'machine:firmware:reload', payload: {} })
   }
 
+  // Pending resolvers for an in-flight TLO refresh round trip — settled by
+  // resolveTloRefresh() when the server's response arrives (or by the local
+  // timeout below, whichever comes first).
+  let _tloRefreshResolvers: ((v: number | null) => void)[] = []
+
+  function resolveTloRefresh(value: number | null) {
+    toolLengthOffset.value = value
+    const resolvers = _tloRefreshResolvers
+    _tloRefreshResolvers = []
+    resolvers.forEach((r) => r(value))
+  }
+
+  /** Ask the server to re-query FluidNC for the current tool length offset via `$#`
+   *  and wait for the fresh value — used as the last checkpoint before cycle start/
+   *  resume so a stale cached offset can never sail through. Fails safe: if the round
+   *  trip doesn't come back in time, resolves to the current (possibly null) cached
+   *  value rather than silently keeping whatever was last displayed. */
+  function refreshToolLengthOffset(): Promise<number | null> {
+    return new Promise((resolve) => {
+      let settled = false
+      const settle = (v: number | null) => {
+        if (settled) return
+        settled = true
+        resolve(v)
+      }
+      _tloRefreshResolvers.push(settle)
+      wsSend({ t: 'machine:tlo:refresh', payload: {} })
+      setTimeout(() => settle(toolLengthOffset.value), 4000)
+    })
+  }
+
   function checkFirmwareUpdate(machineId: string) {
     wsSend({ t: 'machine:checkFirmwareUpdate', payload: { machineId } })
   }
@@ -230,5 +261,7 @@ export const useMachineStore = defineStore('machine', () => {
     setToolLibrary,
     reloadFirmwareConfig,
     checkFirmwareUpdate,
+    resolveTloRefresh,
+    refreshToolLengthOffset,
   }
 })

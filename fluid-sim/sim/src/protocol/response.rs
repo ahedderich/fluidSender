@@ -393,7 +393,13 @@ pub fn gcode_params(state: &MachineState) -> String {
     out.push_str(&format!("[G28:{}]\r\n", zero));
     out.push_str(&format!("[G30:{}]\r\n", zero));
     out.push_str(&format!("[G92:{}]\r\n", g92));
-    out.push_str(&format!("[TLO:{:.3}]\r\n", state.tool_length_offset[2]));
+    // Real FluidNC reports TLO like every other NGC coordinate — one value per
+    // configured axis, never a bare scalar (report_ngc_coord() in Report.cpp uses
+    // the same report_util_axis_values() path for every CoordIndex, TLO included).
+    out.push_str(&format!(
+        "[TLO:{}]\r\n",
+        format_axes(&state.tool_length_offset, n)
+    ));
     out.push_str("[PRB:0.000,0.000,0.000:0]\r\n");
     out.push_str(&ok());
     out
@@ -479,7 +485,7 @@ mod tests {
         let mut state = test_state();
         state.tool_length_offset[2] = -3.75;
         let out = gcode_params(&state);
-        assert!(out.contains("[TLO:-3.750]"), "out: {}", out);
+        assert!(out.contains("[TLO:0.000,0.000,-3.750]"), "out: {}", out);
     }
 
     #[test]

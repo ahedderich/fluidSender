@@ -79,6 +79,14 @@ import { load as loadYaml } from 'js-yaml'
 
 const peerSessions = new Map<string, SessionPayload>()
 
+// Set when a homing command ($H or single-axis $HX/$HY/$HZ/$HA/$HB/$HC) is sent.
+// $H is Category B2 (extended-blocking) — its `ok` only arrives once all homing
+// cycles finish — so the next 'ok' event after this flag is set IS homing-complete.
+// Homing doesn't itself touch FluidNC's gc_state/TLO, but this is a cheap defensive
+// checkpoint in case that ever changes or an alarm-recovery step around it does.
+let _pendingHomingAck = false
+const HOMING_COMMAND_RE = /^\$H[XYZABC]?$/i
+
 function requireRole(peer: Peer, minRole: 'operator' | 'admin'): boolean {
   const session = peerSessions.get(peer.id)
   if (!session) return false
@@ -117,6 +125,7 @@ interface ConfigFetchState {
   configFilename?: string
   machineIp?: string
   manual?: boolean
+  resolve?: (v: number | null) => void
 }
 
 let _fetch: ConfigFetchState | null = null
@@ -124,6 +133,7 @@ let _fetch: ConfigFetchState | null = null
 function _startConfigFetch(manual = false) {
   if (_fetch) {
     clearTimeout(_fetch.timer)
+    _fetch.resolve?.(getToolLengthOffset())
     _fetch = null
   }
   _fetch = {
@@ -136,6 +146,36 @@ function _startConfigFetch(manual = false) {
     manual,
   }
   machineConnection.sendRaw('$I')
+}
+
+/** Re-query FluidNC for the current tool length offset via `$#`, without the full
+ *  $I -> $SS -> $LocalFS/Show handshake. G43.1 is RAM-only in FluidNC and can silently
+ *  diverge from the cached value the UI displays (e.g. a mid-session soft reset) — this
+ *  is the checkpoint called right after homing completes and right before cycle start/
+ *  resume, so a stale "confirmed" offset never survives past those points. */
+function refreshToolLengthOffset(): Promise<number | null> {
+  if (!machineConnection.isConnected) return Promise.resolve(getToolLengthOffset())
+  if (_fetch) {
+    // Already mid-fetch (connect handshake or manual reload) — its own 'tlo' phase
+    // will update the cached value; piggyback on that instead of colliding with it.
+    return new Promise((resolve) => {
+      const prior = _fetch!.resolve
+      _fetch!.resolve = (v) => { prior?.(v); resolve(v) }
+    })
+  }
+  if (isJobActive()) return Promise.resolve(getToolLengthOffset())
+  return new Promise((resolve) => {
+    _fetch = {
+      phase: 'tlo',
+      lines: [],
+      timer: setTimeout(() => {
+        _fetch = null
+        resolve(getToolLengthOffset())
+      }, 3000),
+      resolve,
+    }
+    machineConnection.sendRaw('$#')
+  })
 }
 
 function _onFetchLine(line: string) {
@@ -254,14 +294,21 @@ async function _onFetchOk() {
       if (!isJobActive()) broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
       return
     }
-    // FluidNC reports TLO as a single scalar: [TLO:0.000]
-    const tloZ = Number(tloLine.slice(5, -1))
+    // FluidNC reports TLO the same way as every other NGC coordinate in $# — one
+    // value per configured axis (e.g. "[TLO:0.000,0.000,-11.336]"), never a bare
+    // scalar. This app only ever writes it via G43.1 Z, so only the Z (3rd) axis
+    // value is meaningful; a single-value line (e.g. the simulator pre-parity fix,
+    // or a 1-axis config) is treated as that lone value.
+    const axisValues = tloLine.slice(5, -1).split(',').map(Number)
+    const tloZ = (axisValues.length > 1 ? axisValues[2] : axisValues[0]) ?? NaN
     // A bare 0 is indistinguishable from FluidNC's post-boot default — treat as unknown.
     setToolLengthOffset(Number.isFinite(tloZ) && tloZ !== 0 ? tloZ : null)
     const next = setConnection({ toolLengthOffset: getToolLengthOffset() })
     broadcastPatch([{ path: 'connection', set: { ...next } }])
     clearTimeout(_fetch.timer)
+    const resolve = _fetch.resolve
     _fetch = null
+    resolve?.(getToolLengthOffset())
   }
 }
 
@@ -387,7 +434,9 @@ machineConnection.on('event', (ev) => {
           // config file (e.g. firmware rejects $# with error:8 when not Idle/Alarm) —
           // don't report it as a config load failure.
           const wasTloPhase = _fetch.phase === 'tlo'
+          const resolve = _fetch.resolve
           _fetch = null
+          resolve?.(getToolLengthOffset())
           if (!wasTloPhase) {
             broadcastPatch([pushToast({ id: `fw-cfg-err-${Date.now()}`, type: 'warning', message: 'Failed to read firmware configuration file', timeout: 4000 })])
           }
@@ -399,6 +448,7 @@ machineConnection.on('event', (ev) => {
       if (ev.line.startsWith('error:')) {
         onOk()
         onJogOk()
+        _pendingHomingAck = false
       }
       const ver = parseGreetingVersion(ev.line)
       if (ver) {
@@ -434,6 +484,10 @@ machineConnection.on('event', (ev) => {
       onJogOk()
       if (!isJobActive()) {
         broadcastPatch([pushConsole({ type: 'recv', text: 'ok', ts: Date.now() })])
+      }
+      if (_pendingHomingAck) {
+        _pendingHomingAck = false
+        refreshToolLengthOffset().catch((err: unknown) => console.error('[ws] post-homing TLO refresh error:', err))
       }
       break
     case 'probeLine':
@@ -573,8 +627,21 @@ export default defineWebSocketHandler({
           broadcastPatch([pushConsole({ type: 'error', text: 'Not connected', ts: Date.now() })])
           break
         }
+        if (HOMING_COMMAND_RE.test(cmd.trim())) _pendingHomingAck = true
         machineConnection.sendRaw(cmd)
         broadcastPatch([pushConsole({ type: 'sent', text: cmd.trim(), ts: Date.now() })])
+        break
+      }
+
+      // ── Tool length offset ────────────────────────────────────────────────
+      case 'machine:tlo:refresh': {
+        if (!requireRole(peer, 'operator')) break
+        refreshToolLengthOffset()
+          .then((value) => peer.send(JSON.stringify({ t: 'machine:tlo:refresh:result', payload: { value } })))
+          .catch((err: unknown) => {
+            console.error('[ws] machine:tlo:refresh error:', err)
+            peer.send(JSON.stringify({ t: 'machine:tlo:refresh:result', payload: { value: getToolLengthOffset() } }))
+          })
         break
       }
 

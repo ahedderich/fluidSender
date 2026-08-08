@@ -5,6 +5,8 @@
     <!-- ── 1. Connect area (left-bound, natural width) ───────────────────── -->
     <!-- Contains: machine select, connect button, firmware version, restart -->
     <div class="shrink-0 flex items-center gap-2 pr-3">
+      <!-- Desktop connect-area content — unchanged from before, just wrapped so it can be hidden on mobile -->
+      <div class="hidden md:flex items-center gap-2">
       <select
         v-if="s.hasMachines"
         :value="s.activeMachineId"
@@ -81,14 +83,60 @@
         class="text-xs text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-700/50 px-2 py-1 rounded whitespace-nowrap"
         title="Probe calibration in progress — jogging is disabled"
       >Calibrating probe</span>
+      </div>
+
+      <!-- Mobile connect-area content: disconnected → machine select + Connect;
+           connected → icon-only Disconnect only. No firmware badge, restart,
+           or status badges — those stay desktop-only per the mobile scope. -->
+      <div class="flex md:hidden items-center gap-2">
+        <template v-if="!machine.connected">
+          <select
+            v-if="s.hasMachines"
+            :value="s.activeMachineId"
+            :disabled="machine.connecting"
+            @change="(e) => s.selectMachine((e.target as HTMLSelectElement).value)"
+            class="bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-slate-200 border border-gray-300 dark:border-slate-600 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-32 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <option v-for="m in s.machines" :key="m.id" :value="m.id">{{ m.name }}</option>
+          </select>
+          <span
+            v-else
+            class="text-xs text-gray-400 dark:text-slate-500 bg-gray-100 dark:bg-slate-800 px-2 py-1.5 rounded-md border border-gray-200 dark:border-slate-700"
+          >No machine</span>
+          <button
+            @click="machine.connect()"
+            :disabled="!s.hasMachines || machine.connecting || currentUser.isViewer"
+            :class="connectBtnClass"
+            class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
+          >
+            <span v-if="isMounted && machine.connecting" class="inline-block w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+            {{ isMounted && machine.connecting ? 'Connecting…' : 'Connect' }}
+          </button>
+        </template>
+        <button
+          v-else
+          @click="machine.disconnect()"
+          class="p-1.5 text-slate-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-md transition-colors"
+          title="Disconnect"
+        >
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M18.36 6.64a9 9 0 11-12.73 0M12 3v9" />
+          </svg>
+        </button>
+      </div>
     </div>
 
     <!-- ── 2. Cycle area (65% of remaining space, content centered) ────────── -->
     <!-- Contains: machine state badge, unlock, job hints, cycle start, pause, stop -->
-    <div class="flex-[75] flex items-center justify-center gap-2 min-w-0">
+    <!-- On mobile, disconnected shows only the machine dropdown + Connect button (section 1) —
+         nothing else, per the original spec. Desktop always shows this section regardless. -->
+    <div
+      class="flex-[75] flex items-center justify-center gap-1 md:gap-2 min-w-0"
+      :class="!machine.connected ? 'max-md:hidden' : ''"
+    >
       <div
         :class="statusClass"
-        class="px-3 py-1 rounded-md text-sm font-bold tracking-widest select-none"
+        class="max-md:min-w-0 max-md:text-[10px] max-md:tracking-normal max-md:px-1.5 px-2 md:px-3 py-1 rounded-md text-sm font-bold tracking-widest select-none whitespace-nowrap"
       >
         {{ machine.machineState }}
       </div>
@@ -96,7 +144,7 @@
       <button
         v-if="machine.machineState === 'Alarm'"
         @click="machine.sendCommand('$X')"
-        class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-sm font-medium transition-colors"
+        class="px-2 md:px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-sm font-medium transition-colors"
       >
         Unlock
       </button>
@@ -122,59 +170,64 @@
       <button
         :disabled="!machine.connected || !cycleStartEnabled"
         @click="cycleStartAction"
-        class="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-md text-sm font-medium transition-colors"
+        class="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-green-600 text-white rounded-md text-sm font-medium transition-colors"
         :class="machine.connected && cycleStartEnabled ? 'hover:bg-green-500' : 'opacity-40 cursor-not-allowed'"
         :title="job?.status === 'paused' ? 'Resume — machine will safely return to pause position' : 'Cycle Start'"
       >
-        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-        {{ job?.status === 'paused' ? 'Resume' : 'Cycle Start' }}
+        <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+        <span class="max-md:hidden">{{ job?.status === 'paused' ? 'Resume' : 'Cycle Start' }}</span>
       </button>
 
       <button
         :disabled="!job || job.status !== 'running'"
         @click="pauseJob"
-        class="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-md text-sm font-medium transition-colors"
+        class="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-amber-500 text-white rounded-md text-sm font-medium transition-colors"
         :class="job?.status === 'running' ? 'hover:bg-amber-400' : 'opacity-40 cursor-not-allowed'"
         title="Pause — feed hold, machine decelerates and holds position"
       >
-        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>
-        Pause
+        <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>
+        <span class="max-md:hidden">Pause</span>
       </button>
 
       <button
         :disabled="!['running', 'pausing', 'paused', 'stopping', 'recovering'].includes(job?.status ?? '')"
         @click="stopJob"
-        class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border transition-colors"
+        class="flex items-center gap-1.5 px-2 md:px-3 py-1.5 text-sm font-medium rounded-md border transition-colors"
         :class="['running', 'pausing', 'paused', 'stopping', 'recovering'].includes(job?.status ?? '')
           ? 'border-red-400 dark:border-red-500 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20'
           : 'border-gray-200 dark:border-slate-600 text-gray-300 dark:text-slate-600 cursor-not-allowed'"
         title="Stop — feed hold then reset, machine returns to Idle"
       >
-        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z" /></svg>
-        Stop
+        <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z" /></svg>
+        <span class="max-md:hidden">Stop</span>
       </button>
     </div>
 
     <!-- ── 3. Emergency area (35% of remaining space, content centered) ───── -->
     <!-- Contains: E-Stop button only -->
-    <div class="flex-[25] flex items-center justify-center">
+    <!-- Same mobile-disconnected hiding as section 2, for the same reason. -->
+    <div
+      class="flex-[25] flex items-center justify-center"
+      :class="!machine.connected ? 'max-md:hidden' : ''"
+    >
       <button
         :disabled="!machine.connected"
         @click="emergencyStop"
-        class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-md text-sm font-bold transition-colors"
+        class="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-red-600 text-white rounded-md text-sm font-bold transition-colors"
         :class="machine.connected ? 'hover:bg-red-500' : 'opacity-40 cursor-not-allowed'"
         title="Emergency Stop — immediate halt, no deceleration, machine may alarm"
       >
-        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 24 24">
           <path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2zm-1 14V8h2v8h-2z" />
         </svg>
-        E-Stop
+        <span class="max-md:hidden">E-Stop</span>
       </button>
     </div>
 
     <!-- ── 4. Menu area (right-bound, natural width) ──────────────────────── -->
     <!-- Contains: sensors panel, dark/light toggle, user icon, settings -->
-    <div class="shrink-0 flex items-center gap-1 pl-3">
+    <!-- Desktop-only on mobile: sensors/dark-mode/user/tools/settings are all hidden below md, per mobile scope -->
+    <div class="hidden md:flex items-center gap-1 pl-3">
       <!-- Sensors panel -->
       <div v-if="machine.connected" class="relative">
         <button
@@ -411,6 +464,12 @@ async function cycleStartAction() {
     offsetCheckApplies = tc.confirmMissingOffset ?? true
   } else if (tc?.strategy === 'atc-passthrough' || tc?.strategy === 'atc-managed' || tc?.strategy === 'atc-rapidchange') {
     offsetCheckApplies = !!tc.toolsetter && (tc.confirmMissingOffset ?? true)
+  }
+  // Re-confirm against firmware right before the gate below — TLO is RAM-only in
+  // FluidNC and a mid-session soft reset could have silently cleared it since the
+  // cached value was last confirmed.
+  if (offsetCheckApplies) {
+    await machine.refreshToolLengthOffset()
   }
   if (offsetCheckApplies && machine.toolLengthOffset === null) {
     const ok = await confirm({
