@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import { mockNuxtImport } from '@nuxt/test-utils/runtime'
 import { useSimStore, type Scenario } from '../../app/stores/sim'
+
+// $fetch is a Nuxt auto-import bound at module-transform time under the Vite
+// Module Runner (@nuxt/test-utils v4.1+) — vi.stubGlobal('$fetch', ...) no
+// longer intercepts it since the store's reference isn't read off globalThis
+// at call time. mockNuxtImport hooks the auto-import itself instead.
+const fetchMock = vi.hoisted(() => vi.fn())
+mockNuxtImport('$fetch', () => fetchMock)
 
 const scenario: Scenario = {
   id: 'test-scenario',
@@ -22,12 +30,9 @@ const scenario: Scenario = {
 }
 
 describe('useSimStore', () => {
-  let fetchMock: ReturnType<typeof vi.fn>
-
   beforeEach(() => {
     setActivePinia(createPinia())
-    fetchMock = vi.fn().mockResolvedValue({})
-    vi.stubGlobal('$fetch', fetchMock)
+    fetchMock.mockReset().mockResolvedValue({})
   })
 
   it('applyScenario applies local state and pushes position/wco/stock to the sim', async () => {
