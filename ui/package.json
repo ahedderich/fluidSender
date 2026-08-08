@@ -5,7 +5,9 @@
   "private": true,
   "overrides": {
     "esbuild": ">=0.28.1",
-    "brace-expansion": ">=5.0.9"
+    "brace-expansion": ">=5.0.9",
+    "@nuxt/devtools": ">=3.3.1",
+    "nanoid": ">=3.3.17 <4.0.0"
   },
   "scripts": {
     "dev": "nuxt dev",
@@ -29,7 +31,7 @@
     "hls.js": "^1.6.16",
     "jose": "^6.2.3",
     "js-yaml": "^5.2.2",
-    "nuxt": "^4.4.8",
+    "nuxt": "^4.5.2",
     "postcss": "^8.5.23",
     "serialport": "^12.0.0",
     "three": "^0.184.0"
