@@ -246,12 +246,18 @@ const LAYER_BASE_COLOR = {
   zmove: 0xeab308,
 } as const
 
-// How far (0–1) an already-executed segment's color is blended toward the
-// scene background — the cheap stand-in for "more transparent" discussed for
-// issue #45: LineMaterial's fat-line pipeline supports per-vertex color but
-// not per-vertex alpha, so fading toward the background reads the same
-// visually without needing a custom shader.
-const DIM_BLEND_FACTOR = 0.65
+const TOOLPATH_KEYS = ['travel', 'cutting', 'zmove'] as const
+
+// Executed segments render as their own alpha-blended mesh per layer instead
+// of a solid dimmed color (issue #105) — LineMaterial's fat-line pipeline has
+// no per-vertex alpha (instanceColorStart/End are vec3 RGB only; opacity is a
+// single per-material uniform), so real transparency needs two draw calls per
+// layer (opaque "pending" + transparent "executed") rather than one
+// vertex-colored mesh. This also fixes a real occlusion bug on dense/
+// crosshatched paths: an opaque dimmed segment drawn later in line order
+// could fully cover a still-pending (bright) segment sharing the same
+// pixels; with alpha blending the pending segment shows through instead.
+const EXECUTED_OPACITY = 0.3
 
 const toolchangeStrategy = computed(() => settings.activeMachine?.toolchange?.strategy ?? 'manual-basic')
 
@@ -328,7 +334,6 @@ let rebuildStock: (s: import('~/stores/machine').StockDef | null) => void = () =
 let loadToolpathSegments: (vectors: Array<LineVector | null>) => void = () => {}
 let clearToolpath: () => void = () => {}
 let frameLine: (lineIndex: number) => void = () => {}
-let applyExecutedDimming: (execPtr: number) => void = () => {}
 
 // Retained raw per-line data — kept around (rather than discarded after building
 // 3D geometry) so the GCode panel can look lines/vectors up by index. See
@@ -341,14 +346,11 @@ const gcodeLines = ref<string[]>([])
 const selectedLineIndex = ref<number | null>(null)
 
 // Per-line offset/count into the merged toolpath geometry buffers, built by
-// buildToolpathGeometry(). Consumed by applyExecutedDimming() to recolor the
-// segments for already-executed lines (issue #45).
+// buildToolpathGeometry(). Consumed by applyExecPtrSplit() to split already-
+// executed lines out into their own transparent mesh per layer (issue #105).
 const lineGeometryIndex = ref(new Map<number, { layer: 'travel' | 'cutting' | 'zmove'; vertexOffset: number; vertexCount: number }>())
 
-// Total point count per layer's merged position buffer — needed to allocate a
-// correctly-sized color array in applyExecutedDimming (points, not floats;
-// every 2 points is one rendered segment, matching lineGeometryIndex's units).
-let layerPointCounts: Record<'travel' | 'cutting' | 'zmove', number> = { travel: 0, cutting: 0, zmove: 0 }
+let applyExecPtrSplit: (execPtr: number) => void = () => {}
 
 function onLineSelect(index: number) {
   selectedLineIndex.value = index
@@ -376,17 +378,18 @@ async function initThree() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lineMats: any[] = []
 
-  // vertexColors: true is used for the toolpath layers (travel/cutting/zmove)
-  // so applyExecutedDimming() can recolor individual segments; the material's
-  // own `color` is forced to white in that case so it doesn't tint the vertex
-  // colors (LineMaterial multiplies the two).
+  // opts is used by the toolpath "executed" meshes (issue #105) to get real
+  // alpha blending — transparent + depthWrite:false so the still-opaque
+  // "pending" mesh drawn in the same layer always wins the depth test.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function lineMat2(color: number, linewidth = 1.5, vertexColors = false): any {
+  function lineMat2(color: number, linewidth = 1.5, opts?: { transparent?: boolean; opacity?: number; depthWrite?: boolean }): any {
     const m = new LineMaterial({
-      color: vertexColors ? 0xffffff : color,
+      color,
       linewidth,
       resolution: new THREE.Vector2(width, height),
-      vertexColors,
+      transparent: opts?.transparent ?? false,
+      opacity: opts?.opacity ?? 1,
+      depthWrite: opts?.depthWrite ?? true,
     })
     lineMats.push(m)
     return m
@@ -694,27 +697,37 @@ async function initThree() {
   buildStockMesh(machine.stock)
   rebuildStock = buildStockMesh
 
-  // Toolpath rendering — keyed in objectMap under 'travel', 'cutting', 'zmove' so
-  // the existing layer toggle logic works automatically.
-  const TOOLPATH_KEYS = ['travel', 'cutting', 'zmove'] as const
+  // Toolpath rendering — each layer is two meshes, keyed in objectMap under
+  // '<key>Pending' (opaque, not-yet-executed) and '<key>Executed' (alpha-
+  // blended) so the existing layer-toggle logic (toggleLayer(), driven by
+  // TOOLPATH_KEYS at module scope) can address both.
+  const TOOLPATH_VARIANTS = ['Pending', 'Executed'] as const
+
+  // Raw per-layer point buffers built once by buildToolpathGeometry() and
+  // retained so applyExecPtrSplit() can re-partition them into pending/
+  // executed on every execPtr change without re-tessellating arcs.
+  let layerPointsAll: Record<'travel' | 'cutting' | 'zmove', number[]> = { travel: [], cutting: [], zmove: [] }
 
   function disposeToolpathObjects() {
     for (const key of TOOLPATH_KEYS) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const old = objectMap[key] as any
-      if (!old) continue
-      scene.remove(old)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      old.traverse((child: any) => {
-        child.geometry?.dispose()
-        if (child.material) {
-          const idx = lineMats.indexOf(child.material)
-          if (idx !== -1) lineMats.splice(idx, 1)
-          child.material.dispose()
-        }
-      })
-      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete objectMap[key]
+      for (const variant of TOOLPATH_VARIANTS) {
+        const mapKey = `${key}${variant}`
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const old = objectMap[mapKey] as any
+        if (!old) continue
+        scene.remove(old)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        old.traverse((child: any) => {
+          child.geometry?.dispose()
+          if (child.material) {
+            const idx = lineMats.indexOf(child.material)
+            if (idx !== -1) lineMats.splice(idx, 1)
+            child.material.dispose()
+          }
+        })
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete objectMap[mapKey]
+      }
     }
   }
 
@@ -788,8 +801,9 @@ async function initThree() {
 
     // Per-line record of where its geometry landed in the flat position arrays
     // above (offsets/counts in points, i.e. groups of 3 floats — every 2 points
-    // is one rendered segment). Consumed by applyExecutedDimming() below to
-    // recolor individual lines within these merged buffers (issue #45).
+    // is one rendered segment). Consumed by applyExecPtrSplit() below to split
+    // individual lines out of these merged buffers into the executed mesh
+    // (issue #105).
     const newLineGeometryIndex = new Map<number, { layer: 'travel' | 'cutting' | 'zmove'; vertexOffset: number; vertexCount: number }>()
 
     vectors.forEach((vec, lineIndex) => {
@@ -816,43 +830,39 @@ async function initThree() {
     })
 
     lineGeometryIndex.value = newLineGeometryIndex
-    layerPointCounts = {
-      travel: rapidPts.length / 3,
-      cutting: feedPts.length / 3,
-      zmove: zmovePts.length / 3,
+    layerPointsAll = { travel: rapidPts, cutting: feedPts, zmove: zmovePts }
+
+    // Each layer gets two meshes — opaque "pending" and alpha-blended
+    // "executed" — both start with a degenerate placeholder; the
+    // applyExecPtrSplit() call below immediately fills in real positions and
+    // visibility for whichever of the two actually has points for this file.
+    function addToolpathLayer(key: (typeof TOOLPATH_KEYS)[number], linewidth: number) {
+      const pendingGeo = new LineSegmentsGeometry()
+      pendingGeo.setPositions([0, 0, 0, 0, 0, 0])
+      const pendingObj = new LineSegments2(pendingGeo, lineMat2(LAYER_BASE_COLOR[key], linewidth))
+      pendingObj.visible = false
+      scene.add(pendingObj)
+      objectMap[`${key}Pending`] = pendingObj
+
+      const executedGeo = new LineSegmentsGeometry()
+      executedGeo.setPositions([0, 0, 0, 0, 0, 0])
+      const executedObj = new LineSegments2(
+        executedGeo,
+        lineMat2(LAYER_BASE_COLOR[key], linewidth, { transparent: true, opacity: EXECUTED_OPACITY, depthWrite: false }),
+      )
+      executedObj.visible = false
+      scene.add(executedObj)
+      objectMap[`${key}Executed`] = executedObj
     }
 
-    if (rapidPts.length > 0) {
-      const geo = new LineSegmentsGeometry()
-      geo.setPositions(rapidPts)
-      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.travel, 1.0, true))
-      obj.visible = layers.find(l => l.key === 'travel')?.visible ?? true
-      scene.add(obj)
-      objectMap['travel'] = obj
-    }
+    if (rapidPts.length > 0) addToolpathLayer('travel', 1.0)
+    if (feedPts.length > 0) addToolpathLayer('cutting', 1.5)
+    if (zmovePts.length > 0) addToolpathLayer('zmove', 1.0)
 
-    if (feedPts.length > 0) {
-      const geo = new LineSegmentsGeometry()
-      geo.setPositions(feedPts)
-      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.cutting, 1.5, true))
-      obj.visible = layers.find(l => l.key === 'cutting')?.visible ?? true
-      scene.add(obj)
-      objectMap['cutting'] = obj
-    }
-
-    if (zmovePts.length > 0) {
-      const geo = new LineSegmentsGeometry()
-      geo.setPositions(zmovePts)
-      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.zmove, 1.0, true))
-      obj.visible = layers.find(l => l.key === 'zmove')?.visible ?? true
-      scene.add(obj)
-      objectMap['zmove'] = obj
-    }
-
-    // Initialize per-vertex colors immediately so a job that's already
-    // partway through (e.g. reconnecting mid-run) shows correct dimming right
-    // away, rather than waiting for the next execPtr change.
-    applyExecutedDimming(job.value?.execPtr ?? 0)
+    // Initialize the pending/executed split immediately so a job that's
+    // already partway through (e.g. reconnecting mid-run) shows correctly
+    // right away, rather than waiting for the next execPtr change.
+    applyExecPtrSplit(job.value?.execPtr ?? 0)
 
     requestRender()
   }
@@ -861,7 +871,7 @@ async function initThree() {
   clearToolpath = () => {
     disposeToolpathObjects()
     lineGeometryIndex.value = new Map()
-    layerPointCounts = { travel: 0, cutting: 0, zmove: 0 }
+    layerPointsAll = { travel: [], cutting: [], zmove: [] }
     requestRender()
   }
 
@@ -931,43 +941,41 @@ async function initThree() {
     requestRender()
   }
 
-  // Recolors the travel/cutting/zmove meshes so lines before execPtr fade
-  // toward the scene background (issue #45). Rebuilds each layer's full color
-  // buffer from scratch on every call rather than patching deltas — simpler,
-  // and correct even when execPtr moves backward (pause/recovery), at the
-  // cost of being O(total vertices); the caller throttles calls to at most
-  // once per animation frame to keep that affordable.
-  applyExecutedDimming = (execPtr: number) => {
-    const bg = scene.background as THREE.Color
-    const palette = {
-      travel: { base: new THREE.Color(LAYER_BASE_COLOR.travel), dimmed: new THREE.Color(LAYER_BASE_COLOR.travel).lerp(bg, DIM_BLEND_FACTOR) },
-      cutting: { base: new THREE.Color(LAYER_BASE_COLOR.cutting), dimmed: new THREE.Color(LAYER_BASE_COLOR.cutting).lerp(bg, DIM_BLEND_FACTOR) },
-      zmove: { base: new THREE.Color(LAYER_BASE_COLOR.zmove), dimmed: new THREE.Color(LAYER_BASE_COLOR.zmove).lerp(bg, DIM_BLEND_FACTOR) },
-    } as const
-
-    const colorArrays: Record<'travel' | 'cutting' | 'zmove', number[]> = { travel: [], cutting: [], zmove: [] }
-    for (const layer of ['travel', 'cutting', 'zmove'] as const) {
-      const { r, g, b } = palette[layer].base
-      const arr = colorArrays[layer]
-      for (let i = 0; i < layerPointCounts[layer]; i++) arr.push(r, g, b)
-    }
+  // Splits each layer's points into a "pending" bucket (lines >= execPtr,
+  // opaque) and an "executed" bucket (lines < execPtr, alpha-blended) and
+  // pushes both into their respective mesh (issue #105). Rebuilds both
+  // buckets from scratch on every call rather than patching deltas —
+  // simpler, and correct even when execPtr moves backward (pause/recovery),
+  // at the cost of being O(total vertices); the caller throttles calls to at
+  // most once per animation frame to keep that affordable.
+  applyExecPtrSplit = (execPtr: number) => {
+    const pendingPts: Record<'travel' | 'cutting' | 'zmove', number[]> = { travel: [], cutting: [], zmove: [] }
+    const executedPts: Record<'travel' | 'cutting' | 'zmove', number[]> = { travel: [], cutting: [], zmove: [] }
 
     for (const [lineIndex, geomRef] of lineGeometryIndex.value) {
-      if (lineIndex >= execPtr) continue
-      const { r, g, b } = palette[geomRef.layer].dimmed
-      const arr = colorArrays[geomRef.layer]
+      const src = layerPointsAll[geomRef.layer]
       const start = geomRef.vertexOffset * 3
-      for (let i = 0; i < geomRef.vertexCount; i++) {
-        arr[start + i * 3] = r
-        arr[start + i * 3 + 1] = g
-        arr[start + i * 3 + 2] = b
-      }
+      const end = start + geomRef.vertexCount * 3
+      const bucket = lineIndex < execPtr ? executedPts[geomRef.layer] : pendingPts[geomRef.layer]
+      for (let i = start; i < end; i++) bucket.push(src[i]!)
     }
 
-    for (const layer of ['travel', 'cutting', 'zmove'] as const) {
+    for (const layer of TOOLPATH_KEYS) {
+      const layerVisible = layers.find(l => l.key === layer)?.visible ?? true
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const obj = objectMap[layer] as any
-      if (obj) obj.geometry.setColors(colorArrays[layer])
+      const pendingObj = objectMap[`${layer}Pending`] as any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const executedObj = objectMap[`${layer}Executed`] as any
+      if (pendingObj) {
+        const pts = pendingPts[layer]
+        pendingObj.visible = layerVisible && pts.length > 0
+        if (pts.length > 0) pendingObj.geometry.setPositions(pts)
+      }
+      if (executedObj) {
+        const pts = executedPts[layer]
+        executedObj.visible = layerVisible && pts.length > 0
+        if (pts.length > 0) executedObj.geometry.setPositions(pts)
+      }
     }
     requestRender()
   }
@@ -1091,8 +1099,15 @@ function setView(view: ViewKey) {
 
 function toggleLayer(layer: (typeof layers)[number]) {
   layer.visible = !layer.visible
-  const obj = objectMap[layer.key]
-  if (obj) (obj as { visible: boolean }).visible = layer.visible
+  if ((TOOLPATH_KEYS as readonly string[]).includes(layer.key)) {
+    // Toolpath layers are split into pending/executed meshes whose individual
+    // visibility also depends on whether each currently has any points — so
+    // visibility can't just be toggled directly; re-run the split.
+    applyExecPtrSplit(job.value?.execPtr ?? 0)
+  } else {
+    const obj = objectMap[layer.key]
+    if (obj) (obj as { visible: boolean }).visible = layer.visible
+  }
   requestRender()
 }
 
@@ -1144,11 +1159,12 @@ watch(machineHomeWpos, (h) => {
   }
 }, { deep: true })
 
-// Recolor already-executed toolpath segments (issue #45) as execPtr advances.
-// The server broadcasts an execPtr update on every sender event with no
-// throttling of its own (verified in jobRunner._handleSenderEvent) — on a
-// dense job that can fire many times a second, so this coalesces to at most
-// one recolor per animation frame rather than one per WS patch.
+// Re-split already-executed toolpath segments into their transparent mesh
+// (issue #105) as execPtr advances. The server broadcasts an execPtr update
+// on every sender event with no throttling of its own (verified in
+// jobRunner._handleSenderEvent) — on a dense job that can fire many times a
+// second, so this coalesces to at most one split per animation frame rather
+// than one per WS patch.
 let dimUpdatePending = false
 let latestExecPtr = 0
 watch(() => job.value?.execPtr, (ptr) => {
@@ -1158,7 +1174,7 @@ watch(() => job.value?.execPtr, (ptr) => {
   dimUpdatePending = true
   requestAnimationFrame(() => {
     dimUpdatePending = false
-    applyExecutedDimming(latestExecPtr)
+    applyExecPtrSplit(latestExecPtr)
   })
 })
 
