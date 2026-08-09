@@ -360,11 +360,11 @@ async function initThree() {
   const container = containerRef.value
   if (!canvas || !container) return
 
-  const THREE = await import(/* @vite-ignore */ 'three')
-  const { OrbitControls } = await import(/* @vite-ignore */ 'three/examples/jsm/controls/OrbitControls.js')
-  const { LineSegments2 } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineSegments2.js')
-  const { LineSegmentsGeometry } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineSegmentsGeometry.js')
-  const { LineMaterial } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineMaterial.js')
+  const THREE = await import('three')
+  const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
+  const { LineSegments2 } = await import('three/examples/jsm/lines/LineSegments2.js')
+  const { LineSegmentsGeometry } = await import('three/examples/jsm/lines/LineSegmentsGeometry.js')
+  const { LineMaterial } = await import('three/examples/jsm/lines/LineMaterial.js')
 
   // Read the canvas's own rect (not the container's) — in split-mode-by-default
   // machines the canvas is already CSS-sized to the left half by the time this
