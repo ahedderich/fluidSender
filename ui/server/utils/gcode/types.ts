@@ -73,9 +73,13 @@ export type LineVector =
  *  version 7: sourceFingerprint (source file size + mtime) lets loadCachedAnalysis()
  *  invalidate the cache when a file on disk is replaced (e.g. re-uploaded) without
  *  its path/fileId changing — previously a same-path overwrite would silently keep
- *  serving the previous version's cached analysis/lines. */
+ *  serving the previous version's cached analysis/lines.
+ *  version 8: applyRotation() (transform.ts) fixed — it was dropping the rotated value
+ *  of whichever axis word wasn't already on the source line, and rotating the wrong
+ *  direction. Neither bug changes fileId/kinematics/sourceFingerprint, so without this
+ *  bump a cache written by the old code would keep being served as a "hit" forever. */
 export interface JobAnalysis {
-  version: 7
+  version: 8
   fileId: string
   filename: string
   analyzedAt: number

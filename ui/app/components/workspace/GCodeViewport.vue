@@ -1204,8 +1204,12 @@ async function fetchLines(fileId: string) {
 }
 
 watch(
-  () => job.value?.status,
-  async (status) => {
+  // Keyed on the same identity as loadedKey() below (fileId+analyzedAt), not status
+  // alone — a transform-mode toggle (rotation/heightmap) re-loads the job with a new
+  // analyzedAt but can leave status at 'loaded' the whole time (cache hit skips the
+  // 'analyzing' transition), so watching status alone would silently miss it.
+  () => [job.value?.status, job.value?.fileId, job.value?.analyzedAt] as const,
+  async ([status]) => {
     if (status === 'loaded') {
       const fileId = job.value?.fileId
       const key = loadedKey(fileId, job.value?.analyzedAt)

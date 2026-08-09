@@ -10,14 +10,18 @@ import { subdirForMode } from './types'
 
 const DATA_DIR = process.env.DATA_DIR ?? '/app/data'
 const BASE_JOB_DIR = join(DATA_DIR, 'current_job')
-const ANALYSIS_VERSION = 7
+// Bump whenever analyzeGCode()/applyTransforms() output changes shape or values for the
+// same input — this is the only thing that invalidates a cached analysis/vectors/lines
+// artefact, since the cache key (fileId + kinematics + source fingerprint) doesn't change
+// when the transform algorithm itself does.
+const ANALYSIS_VERSION = 8
 
-function getJobDir(mode: TransformMode): string {
+export function getJobDir(mode: TransformMode): string {
   const sub = subdirForMode(mode)
   return sub ? join(BASE_JOB_DIR, sub) : BASE_JOB_DIR
 }
 
-function jobPaths(mode: TransformMode) {
+export function jobPaths(mode: TransformMode) {
   const dir = getJobDir(mode)
   return {
     analysis: join(dir, 'analysis.json'),
