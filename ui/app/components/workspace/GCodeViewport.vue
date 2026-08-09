@@ -257,7 +257,15 @@ const TOOLPATH_KEYS = ['travel', 'cutting', 'zmove'] as const
 // crosshatched paths: an opaque dimmed segment drawn later in line order
 // could fully cover a still-pending (bright) segment sharing the same
 // pixels; with alpha blending the pending segment shows through instead.
-const EXECUTED_OPACITY = 0.3
+//
+// Kept fairly high (not the ~0.3 "barely there" a first-glance dimming value
+// suggests) because these are thin 1–1.5px fat-lines, not filled areas — a
+// single sparse line at low alpha with AA-softened edges reads as invisible
+// against the dark scene background, not just "faded". At 0.55 an isolated
+// executed line stays clearly legible on its own, while two overlapping
+// segments (the actual dense-path problem this issue is about) still
+// visibly blend rather than one flatly occluding the other.
+const EXECUTED_OPACITY = 0.55
 
 const toolchangeStrategy = computed(() => settings.activeMachine?.toolchange?.strategy ?? 'manual-basic')
 
