@@ -410,10 +410,12 @@ export async function runRotation(
 
   const { rotationDeg, bowMm } = computeRotationResult(probeAxis, p1, pc, p3, p1Wpos, pcWpos, p3Wpos)
 
-  broadcastPatch([setProbingState({
+  const patches = [setProbingState({
     phase: 'completed',
     rotation: { rotationDeg, bowMm, edge },
-  })])
+  })]
+  if (stock) patches.push(await setStock({ ...stock, rotation: rotationDeg }))
+  broadcastPatch(patches)
   void saveProbingResults()
 }
 

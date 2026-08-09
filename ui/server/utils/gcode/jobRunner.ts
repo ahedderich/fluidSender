@@ -109,6 +109,8 @@ class JobRunner {
   })
 
   get status() { return this._status }
+  get activeFileId() { return this.fileId }
+  get transformMode() { return this._transformMode }
 
   async loadJob(fileId: string): Promise<void> {
     if (this._status === 'running' || this._status === 'pausing' || this._status === 'stopping') {
