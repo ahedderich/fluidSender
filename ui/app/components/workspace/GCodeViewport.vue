@@ -1191,6 +1191,14 @@ watch(() => job.value?.execPtr, (ptr) => {
 // Keyed on fileId+analyzedAt, not fileId alone — a same-name re-upload/reload
 // keeps fileId unchanged but produces a fresh analyzedAt, and must still trigger
 // a refetch or the viewport would keep showing the previous file's content.
+//
+// Any status other than idle/analyzing means a file is loaded with valid
+// analysis data (that pair is exactly when clearToolpath() below runs) —
+// not just 'loaded' specifically. A page reload's initial WS snapshot can
+// hand this component a job that's already 'running'/'paused'/'complete'/etc.
+// (the transition into 'loaded' happened in a now-gone previous session), so
+// gating on 'loaded' alone silently left the reconnecting client with no
+// toolpath geometry at all until the job finished and got reloaded fresh.
 let lastLoadedKey: string | null = null
 function loadedKey(fileId: string | null | undefined, analyzedAt: number | null | undefined): string | null {
   return fileId ? `${fileId}:${analyzedAt ?? ''}` : null
@@ -1234,7 +1242,7 @@ watch(
   // 'analyzing' transition), so watching status alone would silently miss it.
   () => [job.value?.status, job.value?.fileId, job.value?.analyzedAt] as const,
   async ([status]) => {
-    if (status === 'loaded') {
+    if (status && status !== 'idle' && status !== 'analyzing') {
       const fileId = job.value?.fileId
       const key = loadedKey(fileId, job.value?.analyzedAt)
       if (!fileId || !key || key === lastLoadedKey) return
@@ -1257,10 +1265,11 @@ watch(
 
 onMounted(async () => {
   await initThree()
-  // If a job was already in 'loaded' state while Three.js was initialising, load its vectors now.
+  // If a job was already loaded (any status other than idle/analyzing — see the
+  // watch() above) while Three.js was initialising, load its vectors now.
   const j = job.value
   const key = loadedKey(j?.fileId, j?.analyzedAt)
-  if (j?.status === 'loaded' && j.fileId && key && key !== lastLoadedKey) {
+  if (j?.status && j.status !== 'idle' && j.status !== 'analyzing' && j.fileId && key && key !== lastLoadedKey) {
     lastLoadedKey = key
     await Promise.all([fetchAndLoadVectors(j.fileId), fetchLines(j.fileId)])
   }
