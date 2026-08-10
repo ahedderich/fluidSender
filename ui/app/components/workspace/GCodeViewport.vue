@@ -265,7 +265,7 @@ const TOOLPATH_KEYS = ['travel', 'cutting', 'zmove'] as const
 // executed line stays clearly legible on its own, while two overlapping
 // segments (the actual dense-path problem this issue is about) still
 // visibly blend rather than one flatly occluding the other.
-const EXECUTED_OPACITY = 0.55
+const EXECUTED_OPACITY = 0.15
 
 const toolchangeStrategy = computed(() => settings.activeMachine?.toolchange?.strategy ?? 'manual-basic')
 
