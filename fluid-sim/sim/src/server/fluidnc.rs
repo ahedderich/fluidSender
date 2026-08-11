@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{error, info, warn};
 
 use crate::machine::gcode::{interpret, interpret_jog, InterpretResult};
@@ -262,6 +262,13 @@ async fn handle_connection(
             // in_pause is set after M0's drain dwell completes; the loop then waits
             // for ~ (cycle-start) before sending ok and breaking.
             let mut in_pause = false;
+            // Only polled once in_pause is set (see the state_rx.recv() arm below) —
+            // detects cycle-start (~) exiting Hold directly, rather than relying on
+            // process_pending_line() to notice it on the next line the client sends.
+            // The client (correctly) won't send that next line until this M0's own
+            // `ok` arrives, which is exactly what this arm unblocks — without it,
+            // resuming from M0 deadlocks forever (issue #105 follow-up).
+            let mut state_rx = broadcast.subscribe();
             loop {
                 // Service any command already fully buffered from a previous read
                 // before touching the socket again (see the outer loop's comment).
@@ -333,6 +340,31 @@ async fn handle_connection(
                     Some(alarm_msg) = alarm_rx.recv() => {
                         writer.write_all(alarm_msg.as_bytes()).await?;
                         log_console(&console, "tx", &peer, alarm_msg.trim_end());
+                    }
+                    // M0 resume: a lone `~` byte is handled above as a real-time byte,
+                    // which flips status out of Hold but has no line of its own to
+                    // trigger process_pending_line()'s check. Watch the state-change
+                    // broadcast directly instead so resume doesn't depend on the client
+                    // sending another line first.
+                    result = state_rx.recv(), if in_pause => {
+                        let should_check = match result {
+                            Ok(()) => true,
+                            Err(broadcast::error::RecvError::Lagged(_)) => true,
+                            Err(broadcast::error::RecvError::Closed) => false,
+                        };
+                        if should_check {
+                            let state = shared.read().await;
+                            let hold_exited = !matches!(state.status, MachineStatus::Hold);
+                            drop(state);
+                            if hold_exited {
+                                let resp = response::ok();
+                                writer.write_all(resp.as_bytes()).await?;
+                                log_console(&console, "tx", &peer, resp.trim_end());
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
                     }
                 }
             }

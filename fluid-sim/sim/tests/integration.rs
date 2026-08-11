@@ -255,6 +255,55 @@ async fn gcode_g0_move_updates_position() {
     );
 }
 
+#[tokio::test]
+async fn program_pause_m0_resumes_on_cycle_start() {
+    let port = start_sim().await;
+    let (mut reader, mut writer) = connect(port).await;
+    read_until(&mut reader, "ok").await; // consume greeting
+
+    // M0 is B2 — ok is withheld until cycle-start (~) resumes the machine, so
+    // this must not resolve the moment it's sent.
+    writer.write_all(b"M0\n").await.unwrap();
+
+    // Poll status until Hold is reported, confirming the pause was entered
+    // and no ok has arrived for the M0 line yet.
+    let mut saw_hold = false;
+    for _ in 0..50 {
+        writer.write_all(b"?\n").await.unwrap();
+        let status = read_line(&mut reader).await;
+        if status.contains("Hold") {
+            saw_hold = true;
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    assert!(saw_hold, "machine never entered Hold after M0");
+
+    // Resume — a lone `~` byte with no line framing, exactly how a real sender
+    // transmits cycle-start. Regression test for a deadlock where the
+    // pending-wait loop only checked whether Hold had been exited when the
+    // *next* line arrived — but the client never sends a next line until this
+    // M0's own ok arrives, which is exactly what that check was gating.
+    writer.write_all(b"~").await.unwrap();
+
+    // Poll until Idle is reported, tolerating (not asserting on) the exact
+    // interleaving of "ok" vs status lines — a real sender ignores unsolicited
+    // "ok"s the same way, so this only cares that the pause actually clears.
+    // Each read_line has its own 5s timeout, so a true regression (deadlock)
+    // fails the test instead of hanging the suite.
+    let mut saw_idle = false;
+    for _ in 0..50 {
+        writer.write_all(b"?\n").await.unwrap();
+        let status = read_line(&mut reader).await;
+        if status.contains("Idle") {
+            saw_idle = true;
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    assert!(saw_idle, "M0 never resumed back to Idle after cycle-start");
+}
+
 // 100×80 rect stock centred at (-150, -100) (the sim's initial XY position),
 // top z = -10, depth 20 → XY footprint [-200,-100] × [-140,-60].
 const STOCK_JSON: &str = r#"{"shape":{"type":"rect","width":100.0,"height":80.0,"rotation":0.0},"depth":20.0,"ox":-150.0,"oy":-100.0,"oz":-10.0}"#;
