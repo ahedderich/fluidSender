@@ -265,7 +265,7 @@ const TOOLPATH_KEYS = ['travel', 'cutting', 'zmove'] as const
 // executed line stays clearly legible on its own, while two overlapping
 // segments (the actual dense-path problem this issue is about) still
 // visibly blend rather than one flatly occluding the other.
-const EXECUTED_OPACITY = 0.15
+const EXECUTED_OPACITY = 0.25
 
 const toolchangeStrategy = computed(() => settings.activeMachine?.toolchange?.strategy ?? 'manual-basic')
 
@@ -390,7 +390,7 @@ async function initThree() {
   // alpha blending — transparent + depthWrite:false so the still-opaque
   // "pending" mesh drawn in the same layer always wins the depth test.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function lineMat2(color: number, linewidth = 1.5, opts?: { transparent?: boolean; opacity?: number; depthWrite?: boolean }): any {
+  function lineMat2(color: number, linewidth = 1.5, opts?: { transparent?: boolean; opacity?: number; depthWrite?: boolean; depthTest?: boolean }): any {
     const m = new LineMaterial({
       color,
       linewidth,
@@ -398,6 +398,7 @@ async function initThree() {
       transparent: opts?.transparent ?? false,
       opacity: opts?.opacity ?? 1,
       depthWrite: opts?.depthWrite ?? true,
+      depthTest: opts?.depthTest ?? true,
     })
     lineMats.push(m)
     return m
@@ -854,9 +855,14 @@ async function initThree() {
 
       const executedGeo = new LineSegmentsGeometry()
       executedGeo.setPositions([0, 0, 0, 0, 0, 0])
+      // depthTest: false — on dense/overlapping paths (e.g. adaptive clearing)
+      // an executed segment often sits behind or coincident with a still-
+      // pending segment from the camera's POV; with depth testing on, it
+      // silently fails the test against the opaque pending mesh's depth
+      // buffer and never draws a pixel, rather than just rendering faint.
       const executedObj = new LineSegments2(
         executedGeo,
-        lineMat2(LAYER_BASE_COLOR[key], linewidth, { transparent: true, opacity: EXECUTED_OPACITY, depthWrite: false }),
+        lineMat2(LAYER_BASE_COLOR[key], linewidth, { transparent: true, opacity: EXECUTED_OPACITY, depthWrite: false, depthTest: false }),
       )
       executedObj.visible = false
       scene.add(executedObj)
