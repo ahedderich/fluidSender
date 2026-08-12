@@ -158,7 +158,7 @@ describe.skipIf(!SIM_HOST)('probe deviation round-trip (sim)', () => {
       else if (ev.type === 'statusLine') {
         onStatusLine(ev.line)
         const s = getLastMachineStatus()
-        if (s) onBufUpdate(s.buffer.planner, s.state, s.holdPhase)
+        if (s) onBufUpdate(s.buffer.planner, s.buffer.rx, s.state, s.holdPhase)
       } else if (ev.type === 'responseLine' && ev.line.startsWith('error:')) {
         onOk()
       }
