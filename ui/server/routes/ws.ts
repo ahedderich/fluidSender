@@ -417,7 +417,7 @@ machineConnection.on('event', (ev) => {
       onStatusLine(ev.line)
       const lastStatus = getLastMachineStatus()
       if (lastStatus) {
-        onBufUpdate(lastStatus.buffer.planner, lastStatus.state, lastStatus.holdPhase)
+        onBufUpdate(lastStatus.buffer.planner, lastStatus.buffer.rx, lastStatus.state, lastStatus.holdPhase)
         onJogStatusUpdate(lastStatus.state)
       }
       break

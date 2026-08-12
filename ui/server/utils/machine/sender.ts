@@ -3,6 +3,7 @@ import { getMode, setMode } from './machineMode'
 import { hasBufferReporting } from './poller'
 import { broadcastPatch, pushConsole, setConnection } from '../appState'
 import { classifyLine, getActiveFirmwareVersion } from '../gcode/classifier'
+import type { CommandCategory } from '../gcode/classifier'
 import { getToolLengthOffset, resetToolLengthSession } from './toolLengthState'
 import type { MachineStatus, SenderStatusEvent, SendHandle, SendableLine, SenderCompletedMode } from './types'
 
@@ -11,14 +12,25 @@ function isCommentOrEmpty(raw: string): boolean {
   return t === '' || t.startsWith(';') || t.startsWith('(')
 }
 
-const PLANNER_SAFETY_MARGIN = 2
-const PLANNER_TARGET_FALLBACK = 3
+// Bytes a line will occupy on the wire once sendRaw() appends its newline.
+function lineBytes(raw: string): number {
+  return raw.length + (raw.endsWith('\n') ? 0 : 1)
+}
+
 const DEFAULT_MAX_PLANNER_SLOTS = 15
 const COMPLETION_CONFIRM_COUNT = 2
 const CHUNK_HISTORY_LIMIT = 100
 
+// Character-counting dispatch budget (Category A/C only — see ActiveChunk.outstanding).
+// FluidNC reports rxFree up to 256 (Channel.h); start conservative and self-calibrate
+// upward from the first Idle status report, the same way _maxPlannerSlots does below.
+const DEFAULT_RX_BUDGET_BYTES = 200
+const RX_BUDGET_MARGIN = 32
+
 // Connection-level state — resets on disconnect
 let _maxPlannerSlots = 0
+let _rxBudgetBytes = DEFAULT_RX_BUDGET_BYTES
+let _rxBudgetCalibrated = false
 let _inPlanner = 0
 let _completionConfirmCount = 0
 let _restoreProbing = false
@@ -33,18 +45,23 @@ function sendSoftReset(): void {
   broadcastPatch([{ path: 'connection', set: { ...next } }])
 }
 
-function _getPlannerTarget(): number {
-  return _maxPlannerSlots > 0
-    ? Math.max(PLANNER_TARGET_FALLBACK, _maxPlannerSlots - PLANNER_SAFETY_MARGIN)
-    : PLANNER_TARGET_FALLBACK
-}
-
 type ChunkInternalState =
   | 'running'       // dispatching normally
   | 'suspending'    // feed hold sent, waiting for Hold:0, then 0x18 → suspended
   | 'suspended'     // halted; not _activeChunkId; dispatchPtr reset to executedPtr
   | 'soft_stopping' // draining remaining lines then finalizing as 'soft'
   | 'stopping'      // feed hold sent, waiting for Hold:0, then 0x18 → finalize 'stopped'
+
+// One dispatched-but-not-yet-drained line. Comments are pushed pre-resolved (they never
+// touch the wire and get no ok); real lines resolve when their ok/error arrives. The
+// queue is always drained front-to-back (see _drain), so index 0 — if present — is
+// always the oldest unresolved real line, i.e. the one the next ok belongs to.
+interface OutstandingEntry {
+  idx: number
+  bytes: number
+  category: CommandCategory
+  resolved: boolean
+}
 
 interface ActiveChunk {
   chunkId: string
@@ -53,7 +70,9 @@ interface ActiveChunk {
   sentPtr: number      // count of acked/skipped lines
   executedPtr: number  // count of confirmed-executed lines
   lineOffset: number   // job-global offset; added to sentPtr/executedPtr in emitted events
-  pendingAck: boolean  // true while one real line has been sent but ok not yet received
+  outstanding: OutstandingEntry[]  // sent-but-unresolved lines, FIFO, oldest first
+  outstandingBytes: number         // sum of .bytes for unresolved entries — the char-count budget
+  blockedOnB1B2: boolean           // true while an isolated B1/B2 line awaits its own ok
   internalState: ChunkInternalState
   onEvent: ((e: SenderStatusEvent) => void) | undefined
 }
@@ -116,12 +135,32 @@ function _finalize(chunk: ActiveChunk, completedMode: SenderCompletedMode, error
   _storeHistory(event)
 }
 
-// Walk backward from dispatchPtr to find the last non-comment line (the one just acked).
-function _findLastRealLine(chunk: ActiveChunk): number | null {
-  for (let i = chunk.dispatchPtr - 1; i >= 0; i--) {
-    if (!isCommentOrEmpty(chunk.lines[i]!.raw)) return i
+// Pop resolved entries off the front of the outstanding queue, advancing sentPtr (and,
+// for comments/B1/B2, executedPtr) in strict file order. Category A/C executedPtr
+// advancement is NOT done here — that stays entirely driven by the Bf: drain walk in
+// onBufUpdate, unchanged from before this rework.
+function _drain(chunk: ActiveChunk): void {
+  let advanced = false
+  while (chunk.outstanding.length > 0 && chunk.outstanding[0]!.resolved) {
+    const entry = chunk.outstanding.shift()!
+    chunk.sentPtr++
+    advanced = true
+    if (entry.category !== 'comment') chunk.outstandingBytes -= entry.bytes
+    if (entry.category === 'comment') {
+      chunk.executedPtr++
+    } else if (entry.category === 'B1' || entry.category === 'B2') {
+      // Planner guaranteed drained before firmware sent this ok — all acked lines done.
+      chunk.executedPtr = chunk.sentPtr
+      chunk.blockedOnB1B2 = false
+    }
   }
-  return null
+  if (advanced) _emit(chunk)
+}
+
+function _sendLine(chunk: ActiveChunk, line: SendableLine): void {
+  machineConnection.sendRaw(line.raw)
+  const trimmed = line.raw.trim()
+  if (trimmed) broadcastPatch([pushConsole({ type: 'sent', text: trimmed, ts: Date.now() })])
 }
 
 function _tryDispatch(chunk: ActiveChunk): void {
@@ -130,33 +169,41 @@ function _tryDispatch(chunk: ActiveChunk): void {
   while (chunk.dispatchPtr < chunk.lines.length) {
     if (chunk.internalState === 'soft_stopping') break
     if (chunk.internalState !== 'running') break
-    if (chunk.pendingAck) break
+    if (chunk.blockedOnB1B2) break
 
     const line = chunk.lines[chunk.dispatchPtr]!
 
     if (isCommentOrEmpty(line.raw)) {
-      chunk.sentPtr++
-      chunk.executedPtr++
+      chunk.outstanding.push({ idx: chunk.dispatchPtr, bytes: 0, category: line.category, resolved: true })
       chunk.dispatchPtr++
-      _emit(chunk)
+      _drain(chunk)
       continue
     }
 
-    if (line.isMotion) {
-      const motionInFlight = chunk.lines
-        .slice(chunk.executedPtr, chunk.sentPtr)
-        .filter((l) => l.category === 'A')
-        .length
-      if (motionInFlight >= _getPlannerTarget()) break
+    if (line.category === 'B1' || line.category === 'B2') {
+      // Isolate: let everything already in flight resolve before sending this one alone,
+      // then block all further dispatch until its own ok confirms the drain firmware
+      // guarantees for these categories.
+      if (chunk.outstanding.length > 0) break
+
+      _sendLine(chunk, line)
+      chunk.outstanding.push({ idx: chunk.dispatchPtr, bytes: 0, category: line.category, resolved: false })
+      chunk.blockedOnB1B2 = true
+      chunk.dispatchPtr++
+      break
     }
 
-    machineConnection.sendRaw(line.raw)
-    const trimmed = line.raw.trim()
-    if (trimmed) broadcastPatch([pushConsole({ type: 'sent', text: trimmed, ts: Date.now() })])
+    // Category A/C/unknown — character-counted: keep multiple lines outstanding at
+    // once, gated on bytes-in-flight rather than a per-line ok round trip. Always let
+    // at least one line through even if it alone exceeds the budget, so an oversized
+    // single line can't deadlock the queue.
+    const bytes = lineBytes(line.raw)
+    if (chunk.outstanding.length > 0 && chunk.outstandingBytes + bytes > _rxBudgetBytes) break
 
-    chunk.pendingAck = true
+    _sendLine(chunk, line)
+    chunk.outstanding.push({ idx: chunk.dispatchPtr, bytes, category: line.category, resolved: false })
+    chunk.outstandingBytes += bytes
     chunk.dispatchPtr++
-    break
   }
 }
 
@@ -169,7 +216,7 @@ function _checkCompletion(
   if (chunk.internalState !== 'running') return
 
   const allDispatched = chunk.dispatchPtr >= chunk.lines.length
-  const allConfirmed = !chunk.pendingAck && chunk.sentPtr === chunk.executedPtr
+  const allConfirmed = chunk.outstanding.length === 0 && chunk.sentPtr === chunk.executedPtr
   // Without Bf: reporting, plannerFree is always 0 and can never confirm drain —
   // don't block completion on data this firmware will never send.
   const plannerDrained = !hasBufferReporting() || plannerFree >= effectiveMax
@@ -185,29 +232,18 @@ function _checkCompletion(
   }
 }
 
-/** Called by ws.ts on every `ok` from the machine. */
+/** Called by ws.ts on every `ok` (or rejected `error:N`, which frees the same wire slot) from the machine. */
 export function onOk(): void {
   if (!_activeChunkId) return
   const chunk = _chunks.get(_activeChunkId)
   if (!chunk) return
-  if (!chunk.pendingAck) return  // stale ok (console command sent before chunk)
+  if (chunk.outstanding.length === 0) return  // stale ok (console command sent before chunk)
 
-  chunk.pendingAck = false
-  chunk.sentPtr++
-
-  // Determine category of the acked line (walk back past any comments).
-  const ackedIdx = _findLastRealLine(chunk)
-  const category = ackedIdx !== null ? chunk.lines[ackedIdx]!.category : 'unknown'
-
-  if (category === 'B1' || category === 'B2') {
-    // Planner guaranteed drained before firmware sent this ok — all acked lines done.
-    chunk.executedPtr = chunk.sentPtr
-  } else if (category === 'C' || category === 'unknown') {
-    // Immediate ack — preceding motions may still be executing; drain inference handles it.
-  }
-  // Category A (motion): drain inference handles execPtr advance.
-
-  _emit(chunk)
+  // Oldest unresolved entry — guaranteed to be the one this ok belongs to, since acks
+  // arrive strictly in send order and _drain() always leaves an unresolved entry at
+  // the front (or an empty queue) after every mutation.
+  chunk.outstanding[0]!.resolved = true
+  _drain(chunk)
 
   if (chunk.internalState === 'soft_stopping' && chunk.sentPtr === chunk.executedPtr) {
     _finalize(chunk, 'soft')
@@ -220,11 +256,16 @@ export function onOk(): void {
 /** Called by ws.ts on every status poll response. */
 export function onBufUpdate(
   plannerFree: number,
+  rxFree: number,
   machineState: MachineStatus['state'],
   holdPhase: 0 | 1 | null,
 ): void {
   if (!_maxPlannerSlots && machineState === 'Idle' && plannerFree > 0) {
     _maxPlannerSlots = plannerFree
+  }
+  if (!_rxBudgetCalibrated && machineState === 'Idle' && rxFree > 0) {
+    _rxBudgetBytes = Math.max(DEFAULT_RX_BUDGET_BYTES, rxFree - RX_BUDGET_MARGIN)
+    _rxBudgetCalibrated = true
   }
 
   if (!_activeChunkId) return
@@ -260,7 +301,9 @@ export function onBufUpdate(
       // the machine to before replaying.
       chunk.dispatchPtr = chunk.executedPtr
       chunk.sentPtr = chunk.executedPtr
-      chunk.pendingAck = false
+      chunk.outstanding = []
+      chunk.outstandingBytes = 0
+      chunk.blockedOnB1B2 = false
       _activeChunkId = null
       _inPlanner = 0
       _completionConfirmCount = 0
@@ -320,7 +363,7 @@ export function onBufUpdate(
   // for in-flight motion lines. Once everything has been dispatched and acked
   // and the firmware reports Idle, that IS completion — trust it directly
   // rather than waiting on planner data this firmware will never send.
-  if (!hasBufferReporting() && machineState === 'Idle' && !chunk.pendingAck &&
+  if (!hasBufferReporting() && machineState === 'Idle' && chunk.outstanding.length === 0 &&
     chunk.dispatchPtr >= chunk.lines.length && chunk.executedPtr < chunk.sentPtr) {
     chunk.executedPtr = chunk.sentPtr
     _emit(chunk)
@@ -338,6 +381,8 @@ export function onBufUpdate(
 /** Called by ws.ts on machine disconnect. */
 export function onMachineDisconnected(): void {
   _maxPlannerSlots = 0
+  _rxBudgetBytes = DEFAULT_RX_BUDGET_BYTES
+  _rxBudgetCalibrated = false
   _inPlanner = 0
   _completionConfirmCount = 0
   if (_activeChunkId) {
@@ -373,7 +418,9 @@ export function startSend(lines: SendableLine[], onEvent?: (e: SenderStatusEvent
     sentPtr: 0,
     executedPtr: 0,
     lineOffset,
-    pendingAck: false,
+    outstanding: [],
+    outstandingBytes: 0,
+    blockedOnB1B2: false,
     internalState: 'running',
     onEvent,
   }
