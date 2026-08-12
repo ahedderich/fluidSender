@@ -97,6 +97,20 @@
       </button>
     </div>
 
+    <!-- Zoom in/out (bottom-right, above progress bar) — hidden when there's no 3D-only view to zoom (cam/gcode) -->
+    <div v-if="!['cam', 'gcode'].includes(viewMode)" class="absolute bottom-14 right-2.5 flex flex-col gap-1 z-10">
+      <button
+        title="Zoom in"
+        class="w-7 h-7 flex items-center justify-center bg-slate-800/80 hover:bg-slate-700/90 text-slate-300 text-sm font-bold rounded-md backdrop-blur-sm border border-slate-600/50 transition-colors"
+        @click="zoomIn"
+      >+</button>
+      <button
+        title="Zoom out"
+        class="w-7 h-7 flex items-center justify-center bg-slate-800/80 hover:bg-slate-700/90 text-slate-300 text-sm font-bold rounded-md backdrop-blur-sm border border-slate-600/50 transition-colors"
+        @click="zoomOut"
+      >−</button>
+    </div>
+
     <!-- Loaded tool (bottom-left, above progress bar) -->
     <div v-if="machine.connected" class="group absolute bottom-14 left-2.5 z-10 flex items-center gap-2 px-2.5 py-1.5 bg-slate-800/80 backdrop-blur-sm border border-slate-600/50 rounded-md text-xs">
       <template v-if="loadedLibTool">
@@ -428,9 +442,12 @@ async function initThree() {
 
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.mouseButtons = {
-    LEFT: THREE.MOUSE.ROTATE,
+    LEFT: THREE.MOUSE.PAN,
     MIDDLE: THREE.MOUSE.DOLLY,
-    RIGHT: THREE.MOUSE.PAN,
+    // RIGHT stays mapped to ROTATE only so OrbitControls' own state machine
+    // ignores the button (enableRotate is false below) — actual rotation is
+    // driven by the custom screen-space handler underneath (issue #110).
+    RIGHT: THREE.MOUSE.ROTATE,
   }
   controls.enableDamping = true
   controls.dampingFactor = 0.08
@@ -449,7 +466,7 @@ async function initThree() {
     let lastY = 0
 
     const onPointerDown = (e: PointerEvent) => {
-      if (e.button !== 0) return
+      if (e.button !== 2) return  // right-drag rotates; left-drag pans via OrbitControls (issue #110)
       dragging = true
       lastX = e.clientX
       lastY = e.clientY
@@ -1075,38 +1092,208 @@ async function initThree() {
   ready.value = true
 }
 
+type Vec3Tuple = [number, number, number]
+const dot3 = (a: Vec3Tuple, b: Vec3Tuple) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+const cross3 = (a: Vec3Tuple, b: Vec3Tuple): Vec3Tuple => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
+]
+const normalize3 = (a: Vec3Tuple): Vec3Tuple => {
+  const m = Math.hypot(a[0], a[1], a[2])
+  return m > 0 ? [a[0] / m, a[1] / m, a[2] / m] : [0, 0, 1]
+}
+
+// Axis-aligned bounding box of the loaded toolpath's non-travel geometry, or
+// null when no vectors are loaded / the file has no geometry (comment-only).
+//
+// Rapid ('R') moves are excluded — they're often outliers relative to the
+// actual work (a safe-Z retract, a park position, a return-to-origin at the
+// end of the job) that sit far above/beside the cut geometry. Including them
+// both bloats the fit (more empty space) and drags the box's center away
+// from the visual center of the work.
+function toolpathAABB(): { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number } | null {
+  let minX = Infinity, minY = Infinity, minZ = Infinity
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+  const consider = (x: number, y: number, z: number) => {
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+    if (z < minZ) minZ = z
+    if (z > maxZ) maxZ = z
+  }
+  for (const v of lastVectors.value) {
+    if (!v || v.t === 'R') continue
+    consider(v.x0, v.y0, v.z0)
+    consider(v.x1, v.y1, v.z1)
+  }
+  if (!Number.isFinite(minX)) return null
+  return { minX, minY, minZ, maxX, maxY, maxZ }
+}
+
+// For a candidate aim point, the minimal camera distance along `viewDir` so
+// every AABB corner lands inside the frustum, plus a small margin.
+function fitDistanceFrom(
+  halfFovX: number,
+  halfFovY: number,
+  viewDir: Vec3Tuple,
+  right: Vec3Tuple,
+  trueUp: Vec3Tuple,
+  center: Vec3Tuple,
+  aabb: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number },
+): number {
+  let maxD = 0
+  for (const x of [aabb.minX, aabb.maxX]) {
+    for (const y of [aabb.minY, aabb.maxY]) {
+      for (const z of [aabb.minZ, aabb.maxZ]) {
+        const rel: Vec3Tuple = [x - center[0], y - center[1], z - center[2]]
+        const relView = dot3(rel, viewDir)
+        const dNeededX = relView + Math.abs(dot3(rel, right)) / Math.tan(halfFovX)
+        const dNeededY = relView + Math.abs(dot3(rel, trueUp)) / Math.tan(halfFovY)
+        maxD = Math.max(maxD, dNeededX, dNeededY)
+      }
+    }
+  }
+  return maxD * 1.06  // small margin so geometry isn't flush against the viewport edge
+}
+
+// Aim point + camera distance along `viewDir` (unit vector, pointing from the
+// aim point toward the camera) so every corner of the AABB lands inside the
+// camera's frustum with balanced margins on opposite sides.
+//
+// A circumscribed-sphere fit centered on the AABB midpoint (the previous
+// approach) is only tight when looking squarely down one axis — top/front/
+// right degenerate cleanly since the box's short axis barely affects the
+// projection. GCode toolpaths are typically wide/long but shallow in Z, and
+// viewed obliquely (ISO) that shallow axis still spans real distance along
+// the view direction, so under perspective, corners nearer the camera
+// subtend a larger screen angle per unit of lateral offset than corners
+// farther away — aiming at the raw 3D midpoint leaves the near side tight
+// and the far side with a lot of empty space (issue #110). Balancing must
+// happen in *angular* space, not linear 3D space, and the right/up axes are
+// coupled (re-aiming shifts every corner's depth, which changes the other
+// axis's angles too) — so this iterates a few rounds: compute a distance for
+// the current aim point, use it to convert each corner's screen-relative
+// offset into an angle, re-aim at the midpoint of the min/max angle on each
+// axis, repeat. Each round moves the aim point a bit closer to fully
+// balanced; a handful of rounds is enough to converge to a pixel or two.
+// Exact for any preset or freely-rotated view (fitToVectors() below).
+function frameAABB(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  camera: any,
+  viewDir: Vec3Tuple,
+  up: Vec3Tuple,
+  aabb: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number },
+): { center: Vec3Tuple; distance: number } {
+  const forward = normalize3([-viewDir[0], -viewDir[1], -viewDir[2]])
+  const right = normalize3(cross3(forward, up))
+  const trueUp = cross3(right, forward)  // already unit length — forward/right are orthonormal
+
+  const halfFovY = (camera.fov * Math.PI) / 180 / 2
+  const halfFovX = Math.atan(Math.tan(halfFovY) * camera.aspect)
+
+  let center: Vec3Tuple = [(aabb.minX + aabb.maxX) / 2, (aabb.minY + aabb.maxY) / 2, (aabb.minZ + aabb.maxZ) / 2]
+  let distance = fitDistanceFrom(halfFovX, halfFovY, viewDir, right, trueUp, center, aabb)
+
+  for (let round = 0; round < 4; round++) {
+    const angles: { right: number; up: number }[] = []
+    for (const x of [aabb.minX, aabb.maxX]) {
+      for (const y of [aabb.minY, aabb.maxY]) {
+        for (const z of [aabb.minZ, aabb.maxZ]) {
+          const rel: Vec3Tuple = [x - center[0], y - center[1], z - center[2]]
+          const depth = distance - dot3(rel, viewDir)  // distance from camera to this corner along the view axis
+          angles.push({ right: Math.atan(dot3(rel, right) / depth), up: Math.atan(dot3(rel, trueUp) / depth) })
+        }
+      }
+    }
+    const rightAngles = angles.map((a) => a.right)
+    const upAngles = angles.map((a) => a.up)
+    const midAngleRight = (Math.min(...rightAngles) + Math.max(...rightAngles)) / 2
+    const midAngleUp = (Math.min(...upAngles) + Math.max(...upAngles)) / 2
+    // Small-angle world-space shift at the current depth that re-centers the
+    // angular midpoint on this round's aim point.
+    const shiftRight = Math.tan(midAngleRight) * distance
+    const shiftUp = Math.tan(midAngleUp) * distance
+    center = [
+      center[0] + right[0] * shiftRight + trueUp[0] * shiftUp,
+      center[1] + right[1] * shiftRight + trueUp[1] * shiftUp,
+      center[2] + right[2] * shiftRight + trueUp[2] * shiftUp,
+    ]
+    distance = fitDistanceFrom(halfFovX, halfFovY, viewDir, right, trueUp, center, aabb)
+  }
+
+  return { center, distance }
+}
+
+const ISO_DIR = normalize3([-0.25, -0.75, 0.32])  // z weighted low for a shallow elevation — more vectors stay in view than a steeper look-down angle
+const VIEW_DIRS: Record<ViewKey, { dir: Vec3Tuple; up: Vec3Tuple }> = {
+  top: { dir: [0, 0, 1], up: [0, 1, 0] },
+  front: { dir: [0, 1, 0], up: [0, 0, 1] },
+  right: { dir: [1, 0, 0], up: [0, 0, 1] },
+  iso: { dir: ISO_DIR, up: [0, 0, 1] },
+}
+
+// Presets frame on the loaded toolpath's bounding box when one is loaded
+// (issue #110) so the work is shown close-up rather than the machine's full
+// travel volume; falls back to the machine-bounds-centered view otherwise.
 function setView(view: ViewKey) {
   if (!threeCtx) return
   const { camera, controls } = threeCtx
+  const aabb = toolpathAABB()
   const b = machineBounds.value
-  const d = Math.max(b.x, b.y, 50) * 1.8  // orbit target is origin — scale so work volume stays visible; min 50 prevents camera collapse to origin
+  const { dir, up } = VIEW_DIRS[view]
+  const { center, distance: d } = aabb
+    ? frameAABB(camera, dir, up, aabb)
+    : { center: [0, 0, 0] as Vec3Tuple, distance: Math.max(b.x, b.y, 50) * 1.8 }  // min 50 prevents camera collapse to origin
 
-  // All presets orbit around the machine home (work origin = 0,0,0)
-  controls.target.set(0, 0, 0)
-  switch (view) {
-    case 'top':
-      camera.position.set(0, 0, d)
-      camera.up.set(0, 1, 0)
-      break
-    case 'front':
-      camera.position.set(0, d, 0)
-      camera.up.set(0, 0, 1)
-      break
-    case 'right':
-      camera.position.set(d, 0, 0)
-      camera.up.set(0, 0, 1)
-      break
-    case 'iso':
-      camera.position.set(-d * 0.25, -d * 0.75, d * 0.45)
-      camera.up.set(0, 0, 1)
-      break
-  }
+  controls.target.set(center[0], center[1], center[2])
+  camera.position.set(center[0] + dir[0] * d, center[1] + dir[1] * d, center[2] + dir[2] * d)
+  camera.up.set(up[0], up[1], up[2])
 
   // No split-mode pan needed here — the canvas is actually resized to the left
   // half in split/gcode mode (see the resize handling in initThree()), so the
   // camera's own aspect ratio already matches what's visible; the work volume
   // centers normally without faking it via a target offset.
 
+  controls.update()
+  requestRender()
+}
+
+// Dolly the camera toward/away from the current orbit target, preserving
+// view direction. Scale < 1 zooms in, > 1 zooms out.
+function zoomBy(scale: number) {
+  if (!threeCtx) return
+  const { camera, controls } = threeCtx
+  const offset = camera.position.clone().sub(controls.target).multiplyScalar(scale)
+  if (offset.length() < 1) return  // floor prevents the camera collapsing onto the target
+  camera.position.copy(controls.target).add(offset)
+  controls.update()
+  requestRender()
+}
+function zoomIn() { zoomBy(0.8) }
+function zoomOut() { zoomBy(1.25) }
+
+// Re-centers and re-distances the camera on the loaded toolpath's bounding
+// box (issue #110) — called after a job's vectors load so the work is framed
+// close-up instead of the always-visible-but-often-tiny machine-bounds view
+// from setView(). Preserves the current view direction/angle rather than
+// forcing a preset, so it composes with whatever view the user was already in.
+function fitToVectors() {
+  if (!threeCtx) return
+  const { camera, controls } = threeCtx
+  const aabb = toolpathAABB()
+  if (!aabb) return
+
+  const curOffset = camera.position.clone().sub(controls.target)
+  const dir: Vec3Tuple = curOffset.lengthSq() > 0
+    ? normalize3([curOffset.x, curOffset.y, curOffset.z])
+    : ISO_DIR
+  const up: Vec3Tuple = [camera.up.x, camera.up.y, camera.up.z]
+  const { center, distance: d } = frameAABB(camera, dir, up, aabb)
+
+  controls.target.set(center[0], center[1], center[2])
+  camera.position.set(center[0] + dir[0] * d, center[1] + dir[1] * d, center[2] + dir[2] * d)
   controls.update()
   requestRender()
 }
@@ -1217,6 +1404,7 @@ async function fetchAndLoadVectors(fileId: string) {
     const tFetch1 = performance.now()
     lastVectors.value = vectors
     loadToolpathSegments(vectors)
+    fitToVectors()
     const tBuild1 = performance.now()
     console.debug(
       `[perf] fetchAndLoadVectors(${fileId}): fetch+parse=${(tFetch1 - tFetch0).toFixed(0)}ms ` +
