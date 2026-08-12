@@ -13,6 +13,10 @@ pub const AXIS_COUNT: usize = 6;
 pub const AXIS_NAMES: [&str; AXIS_COUNT] = ["x", "y", "z", "a", "b", "c"];
 /// Number of planner buffer slots, matching FluidNC firmware default.
 pub const MAX_PLANNER_SLOTS: i32 = 15;
+/// Advertised RX byte-buffer ceiling reported in the Bf: status field's second
+/// number, matching real FluidNC's Channel.h (the underlying queue is actually
+/// unbounded — this is the soft, advisory capacity real firmware reports too).
+pub const RX_BUFFER_CAPACITY: usize = 256;
 /// Default reported firmware version (mirrors FluidNC's own current release numbering).
 pub const DEFAULT_FIRMWARE_VERSION: &str = "4.0.3";
 pub const SIM_MACHINE_NAME: &str = "CNC Router (Simulator)";
@@ -129,6 +133,27 @@ impl Default for ToolsetterConfig {
             trigger_z: -60.0,
         }
     }
+}
+
+/// Simulated WiFi/TCP flow-control flakiness, set from the sim-ui. Off by default —
+/// real FluidNC-over-USB-serial has none of this; it comes from documented ESP32-side
+/// WiFi/TCP defects (bdring/FluidNC#1777: availableForWrite() hardcoded to 0 broke
+/// output drain flow-control, plus a missing socket mutex caused races), which are
+/// specific to the TCP/WiFi channel and don't apply to USB serial. Exists purely so a
+/// tester can stress a host sender's pipelined dispatch against delayed/bursty acks,
+/// not to model USB serial (which has no equivalent failure mode).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkJitterConfig {
+    pub enabled: bool,
+    /// Extra latency applied before each response write, uniformly random in
+    /// [min_delay_ms, max_delay_ms].
+    pub min_delay_ms: u64,
+    pub max_delay_ms: u64,
+    /// 0-100: chance per response write of a "stall" delay instead of the normal
+    /// min/max jitter range, standing in for a drain stall like #1777's.
+    pub stall_chance_pct: u8,
+    pub stall_delay_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,6 +297,11 @@ pub struct MachineState {
     /// Tool-setter trigger geometry. Persists across soft_reset (the physical switch
     /// doesn't move when an alarm is cleared).
     pub toolsetter: ToolsetterConfig,
+    /// Simulated TCP/WiFi jitter, set from the sim-ui. Persists across soft_reset —
+    /// it models a network condition, not machine state, and a soft reset doesn't
+    /// reconnect the socket.
+    #[serde(rename = "networkJitter")]
+    pub network_jitter: NetworkJitterConfig,
 }
 
 impl MachineState {
@@ -351,6 +381,7 @@ impl MachineState {
             tool_length: 0.0,
             tool_number: 0,
             toolsetter: ToolsetterConfig::default(),
+            network_jitter: NetworkJitterConfig::default(),
         }
     }
 

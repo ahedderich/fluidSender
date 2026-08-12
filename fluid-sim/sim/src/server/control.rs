@@ -18,8 +18,8 @@ use tracing::info;
 
 use crate::machine::probe::ProbeDeviations;
 use crate::machine::state::{
-    AxisMap, ConsoleBroadcast, LimitState, MachineState, MachineStatus, SharedMachineState,
-    StateBroadcast, ToolsetterConfig, AXIS_COUNT,
+    AxisMap, ConsoleBroadcast, LimitState, MachineState, MachineStatus, NetworkJitterConfig,
+    SharedMachineState, StateBroadcast, ToolsetterConfig, AXIS_COUNT,
 };
 use crate::machine::stock::StockDefinition;
 
@@ -56,6 +56,7 @@ pub struct SimState {
     pub tool_number: u32,
     pub toolsetter: ToolsetterConfig,
     pub firmware_version: String,
+    pub network_jitter: NetworkJitterConfig,
 }
 
 impl SimState {
@@ -82,6 +83,7 @@ impl SimState {
             tool_number: s.tool_number,
             toolsetter: s.toolsetter.clone(),
             firmware_version: s.firmware_version.clone(),
+            network_jitter: s.network_jitter.clone(),
         }
     }
 }
@@ -101,6 +103,7 @@ pub fn router(app: AppState) -> Router {
         .route("/api/stock", post(set_stock))
         .route("/api/tool/current", post(set_tool_current))
         .route("/api/machine/toolsetter", post(set_toolsetter))
+        .route("/api/machine/network-jitter", post(set_network_jitter))
         .route("/ws/state", get(ws_state_handler))
         .route("/ws/console", get(ws_console_handler))
         .layer(TraceLayer::new_for_http())
@@ -362,6 +365,16 @@ async fn set_toolsetter(
 ) -> StatusCode {
     let mut state = app.machine.write().await;
     state.toolsetter = cfg;
+    let _ = app.broadcast.send(());
+    StatusCode::NO_CONTENT
+}
+
+async fn set_network_jitter(
+    State(app): State<AppState>,
+    Json(cfg): Json<NetworkJitterConfig>,
+) -> StatusCode {
+    let mut state = app.machine.write().await;
+    state.network_jitter = cfg;
     let _ = app.broadcast.send(());
     StatusCode::NO_CONTENT
 }
