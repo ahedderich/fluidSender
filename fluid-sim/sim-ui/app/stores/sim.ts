@@ -129,6 +129,20 @@ export const useSimStore = defineStore('sim', () => {
     triggerZ: -60,
   })
 
+  // Simulated WiFi/TCP flow-control flakiness (bdring/FluidNC#1777 documents real
+  // ESP32-side WiFi/TCP defects — broken output drain flow-control + a missing socket
+  // mutex — that only affect the TCP channel, never USB serial). Off by default and
+  // deliberately not persisted across a page reload: it's a stress-testing toggle for
+  // exercising a host sender's pipelined dispatch against delayed/bursty acks, not a
+  // durable machine setting — leaving it silently on would be actively misleading.
+  const networkJitter = reactive({
+    enabled: false,
+    minDelayMs: 0,
+    maxDelayMs: 0,
+    stallChancePct: 0,
+    stallDelayMs: 0,
+  })
+
   // Read-only: the TLO the sim last received via G43.1 (Z axis). Display-only feedback
   // that FluidSender's probe sequence actually reached the firmware and took effect.
   const toolLengthOffset = ref(0)
@@ -381,6 +395,27 @@ export const useSimStore = defineStore('sim', () => {
     }).catch(() => {})
   }
 
+  async function pushNetworkJitterToSim() {
+    await $fetch('/api/sim/machine/network-jitter', {
+      method: 'POST',
+      body: { ...networkJitter },
+    }).catch(() => {})
+  }
+
+  // Debounced push of jitter edits — mirrors the toolsetter watcher below, but with
+  // no persistence step: reloading the sim-ui always starts jitter back at disabled.
+  let networkJitterPushTimer: ReturnType<typeof setTimeout> | null = null
+  watch(
+    () => ({ ...networkJitter }),
+    () => {
+      if (networkJitterPushTimer) clearTimeout(networkJitterPushTimer)
+      networkJitterPushTimer = setTimeout(() => {
+        networkJitterPushTimer = null
+        pushNetworkJitterToSim()
+      }, 300)
+    },
+  )
+
   async function persistToolsetter() {
     await $fetch('/api/toolsetter', {
       method: 'POST',
@@ -466,5 +501,6 @@ export const useSimStore = defineStore('sim', () => {
     tools, loadedToolNumber, toolsetter, toolLengthOffset, toolNumber,
     persistTools, addTool, removeTool, setLoadedTool, importTools,
     pushToolsetterToSim, pushLoadedToolToSim, persistToolsetter, loadPersistedConfig,
+    networkJitter, pushNetworkJitterToSim,
   }
 })

@@ -85,6 +85,44 @@ fn log_console(console: &ConsoleBroadcast, dir: &'static str, source: &str, text
     });
 }
 
+/// A percentage roll and a bounded random delay is all simulated jitter needs — not
+/// worth a `rand` dependency for that. Nanosecond clock jitter between calls is more
+/// than enough entropy for a debug-only network-flakiness toggle that's off by default.
+fn jitter_rand_u64(bound: u64) -> u64 {
+    if bound == 0 {
+        return 0;
+    }
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    u64::from(nanos) % (bound + 1)
+}
+
+/// Delays before a response write according to `MachineState::network_jitter`, standing
+/// in for FluidNC's documented WiFi/TCP-only flow-control defects (bdring/FluidNC#1777)
+/// so a host sender's pipelined dispatch can be stress-tested against delayed/bursty
+/// acks. Off by default — a no-op unless explicitly enabled from the sim-ui.
+async fn apply_response_jitter(shared: &SharedMachineState) {
+    let jitter = { shared.read().await.network_jitter.clone() };
+    if !jitter.enabled {
+        return;
+    }
+    let delay_ms = if jitter.stall_chance_pct > 0
+        && jitter_rand_u64(99) < u64::from(jitter.stall_chance_pct)
+    {
+        jitter.stall_delay_ms
+    } else if jitter.max_delay_ms > jitter.min_delay_ms {
+        jitter.min_delay_ms + jitter_rand_u64(jitter.max_delay_ms - jitter.min_delay_ms)
+    } else {
+        jitter.min_delay_ms
+    };
+    if delay_ms > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+    }
+}
+
 /// Pulls one complete newline-terminated line out of `raw_buf`, if one is already
 /// buffered (a single socket read can return several commands at once), and decides
 /// whether it should be dispatched. `saw_rt` tracks whether a real-time byte (`?`,
@@ -146,6 +184,7 @@ async fn process_pending_line(
         if !matches!(state.status, MachineStatus::Hold) {
             drop(state);
             let resp = response::ok();
+            apply_response_jitter(shared).await;
             writer.write_all(resp.as_bytes()).await?;
             log_console(console, "tx", peer, resp.trim_end());
             return Ok(true);
@@ -172,6 +211,7 @@ async fn handle_connection(
 
     // Send greeting
     let greeting = response::greeting(&shared.read().await.firmware_version);
+    apply_response_jitter(&shared).await;
     writer.write_all(greeting.as_bytes()).await?;
     log_console(&console, "tx", &peer, &greeting);
 
@@ -202,6 +242,7 @@ async fn handle_connection(
 
                 // Async alarm from a background move-result monitor fires here.
                 Some(alarm_msg) = alarm_rx.recv() => {
+                    apply_response_jitter(&shared).await;
                     writer.write_all(alarm_msg.as_bytes()).await?;
                     log_console(&console, "tx", &peer, alarm_msg.trim_end());
                     Next::Skip
@@ -220,8 +261,9 @@ async fn handle_connection(
                         for &b in &chunk[..n] {
                             if crate::protocol::parser::is_realtime_byte(b) {
                                 saw_rt = true;
-                                let response = handle_realtime(classify(b), &shared, &broadcast).await;
+                                let response = handle_realtime(classify(b), &shared, &broadcast, raw_buf.len()).await;
                                 if let Some(resp) = response {
+                                    apply_response_jitter(&shared).await;
                                     writer.write_all(resp.as_bytes()).await?;
                                     log_console(&console, "tx", &peer, resp.trim_end());
                                 }
@@ -248,8 +290,17 @@ async fn handle_connection(
         };
 
         let parsed = parse_line(&line);
-        let (response, pending) = dispatch(parsed, &shared, &broadcast, &move_tx, &alarm_tx).await;
+        let (response, pending) = dispatch(
+            parsed,
+            &shared,
+            &broadcast,
+            &move_tx,
+            &alarm_tx,
+            raw_buf.len(),
+        )
+        .await;
         if !response.is_empty() {
+            apply_response_jitter(&shared).await;
             writer.write_all(response.as_bytes()).await?;
             log_console(&console, "tx", &peer, response.trim_end());
         }
@@ -322,8 +373,9 @@ async fn handle_connection(
                         for &b in &chunk[..n] {
                             if crate::protocol::parser::is_realtime_byte(b) {
                                 saw_rt = true;
-                                let resp = handle_realtime(classify(b), &shared, &broadcast).await;
+                                let resp = handle_realtime(classify(b), &shared, &broadcast, raw_buf.len()).await;
                                 if let Some(r) = resp {
+                                    apply_response_jitter(&shared).await;
                                     writer.write_all(r.as_bytes()).await?;
                                     log_console(&console, "tx", &peer, r.trim_end());
                                 }
@@ -338,6 +390,7 @@ async fn handle_connection(
                         }
                     }
                     Some(alarm_msg) = alarm_rx.recv() => {
+                        apply_response_jitter(&shared).await;
                         writer.write_all(alarm_msg.as_bytes()).await?;
                         log_console(&console, "tx", &peer, alarm_msg.trim_end());
                     }
@@ -358,6 +411,7 @@ async fn handle_connection(
                             drop(state);
                             if hold_exited {
                                 let resp = response::ok();
+                                apply_response_jitter(&shared).await;
                                 writer.write_all(resp.as_bytes()).await?;
                                 log_console(&console, "tx", &peer, resp.trim_end());
                                 break;
@@ -387,6 +441,7 @@ async fn handle_pending_result(
     match kind {
         PendingKind::Dwell | PendingKind::Drain => {
             let resp = response::ok();
+            apply_response_jitter(shared).await;
             writer.write_all(resp.as_bytes()).await?;
             log_console(console, "tx", peer, resp.trim_end());
         }
@@ -403,12 +458,14 @@ async fn handle_pending_result(
                 let _ = broadcast.send(());
             }
             let resp = response::ok();
+            apply_response_jitter(shared).await;
             writer.write_all(resp.as_bytes()).await?;
             log_console(console, "tx", peer, resp.trim_end());
         }
         PendingKind::Probe { error_on_miss } => match result {
             MoveResult::ProbeContact(pos) => {
                 let resp = format!("{}{}", response::probe_result(pos, true), response::ok());
+                apply_response_jitter(shared).await;
                 writer.write_all(resp.as_bytes()).await?;
                 log_console(console, "tx", peer, resp.trim_end());
             }
@@ -428,6 +485,7 @@ async fn handle_pending_result(
                     // G38.3/G38.5 miss is not an error: [PRB:...:0] + ok.
                     format!("{}{}", prb, response::ok())
                 };
+                apply_response_jitter(shared).await;
                 writer.write_all(resp.as_bytes()).await?;
                 log_console(console, "tx", peer, resp.trim_end());
             }
@@ -435,6 +493,7 @@ async fn handle_pending_result(
                 // Mid-probe alarm (e.g. soft limit). The line never got its queue-time
                 // ok (B2), so ack it after the alarm to keep the one-ok-per-line invariant.
                 let resp = format!("{}{}", response::alarm(code), response::ok());
+                apply_response_jitter(shared).await;
                 writer.write_all(resp.as_bytes()).await?;
                 log_console(console, "tx", peer, resp.trim_end());
             }
@@ -442,6 +501,7 @@ async fn handle_pending_result(
                 // Probe aborted before completion (feed hold / soft reset) — still ack
                 // the line so the client's send loop doesn't stall.
                 let resp = response::ok();
+                apply_response_jitter(shared).await;
                 writer.write_all(resp.as_bytes()).await?;
                 log_console(console, "tx", peer, resp.trim_end());
             }
@@ -454,11 +514,12 @@ async fn handle_realtime(
     cmd: RealtimeCmd,
     shared: &SharedMachineState,
     broadcast: &StateBroadcast,
+    raw_buf_len: usize,
 ) -> Option<String> {
     match cmd {
         RealtimeCmd::StatusQuery => {
             let state = shared.read().await;
-            Some(response::status(&state))
+            Some(response::status(&state, raw_buf_len))
         }
         RealtimeCmd::FeedHold => {
             let mut state = shared.write().await;
@@ -574,29 +635,30 @@ async fn dispatch(
     broadcast: &StateBroadcast,
     move_tx: &MoveTx,
     alarm_tx: &mpsc::Sender<String>,
+    raw_buf_len: usize,
 ) -> (String, Option<(PendingKind, oneshot::Receiver<MoveResult>)>) {
     match parsed {
         ParsedLine::Empty => (response::ok(), None),
         ParsedLine::StatusQuery => {
             let state = shared.read().await;
-            (response::status(&state), None)
+            (response::status(&state, raw_buf_len), None)
         }
         ParsedLine::FeedHold => {
-            handle_realtime(RealtimeCmd::FeedHold, shared, broadcast).await;
+            handle_realtime(RealtimeCmd::FeedHold, shared, broadcast, raw_buf_len).await;
             (String::new(), None)
         }
         ParsedLine::CycleStart => {
-            handle_realtime(RealtimeCmd::CycleStart, shared, broadcast).await;
+            handle_realtime(RealtimeCmd::CycleStart, shared, broadcast, raw_buf_len).await;
             (String::new(), None)
         }
         ParsedLine::SoftReset => {
-            let r = handle_realtime(RealtimeCmd::SoftReset, shared, broadcast)
+            let r = handle_realtime(RealtimeCmd::SoftReset, shared, broadcast, raw_buf_len)
                 .await
                 .unwrap_or_default();
             (r, None)
         }
         ParsedLine::JogCancel => {
-            handle_realtime(RealtimeCmd::JogCancel, shared, broadcast).await;
+            handle_realtime(RealtimeCmd::JogCancel, shared, broadcast, raw_buf_len).await;
             (String::new(), None)
         }
         ParsedLine::Home => do_homing(shared, broadcast, move_tx).await,
@@ -701,17 +763,17 @@ async fn dispatch(
                     (response::alarm(code), None)
                 }
                 InterpretResult::SoftReset => {
-                    let r = handle_realtime(RealtimeCmd::SoftReset, shared, broadcast)
+                    let r = handle_realtime(RealtimeCmd::SoftReset, shared, broadcast, raw_buf_len)
                         .await
                         .unwrap_or_default();
                     (r, None)
                 }
                 InterpretResult::FeedHold => {
-                    handle_realtime(RealtimeCmd::FeedHold, shared, broadcast).await;
+                    handle_realtime(RealtimeCmd::FeedHold, shared, broadcast, raw_buf_len).await;
                     (String::new(), None)
                 }
                 InterpretResult::CycleStart => {
-                    handle_realtime(RealtimeCmd::CycleStart, shared, broadcast).await;
+                    handle_realtime(RealtimeCmd::CycleStart, shared, broadcast, raw_buf_len).await;
                     (String::new(), None)
                 }
                 InterpretResult::Move(mv) => {

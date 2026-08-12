@@ -86,6 +86,7 @@ export function useSimConnection() {
       // stock/scenario pattern) — otherwise a sim restart silently loses it.
       store.pushToolsetterToSim()
       store.pushLoadedToolToSim()
+      store.pushNetworkJitterToSim()
     }
 
     ws.onmessage = (event: MessageEvent) => {

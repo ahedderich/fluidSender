@@ -1,7 +1,8 @@
 use serde::Serialize;
 
 use crate::machine::state::{
-    MachineState, MachineStatus, AXIS_COUNT, MAX_PLANNER_SLOTS, SIM_BOARD_NAME, SIM_MACHINE_NAME,
+    MachineState, MachineStatus, AXIS_COUNT, MAX_PLANNER_SLOTS, RX_BUFFER_CAPACITY, SIM_BOARD_NAME,
+    SIM_MACHINE_NAME,
 };
 
 /// `Grbl <ver> [FluidNC v<ver> (Simulator)] ready` — sent on connect and after a soft reset.
@@ -256,7 +257,10 @@ pub fn alarm(code: u32) -> String {
 
 /// Format a full FluidNC status response.
 /// `<State|MPos:x,y,z|WCO:x,y,z|FS:f,s|Pn:pins|A:acc>`
-pub fn status(state: &MachineState) -> String {
+/// `rx_used` is the connection's currently-buffered, not-yet-dispatched byte count
+/// (its `raw_buf.len()`) — reported live against `RX_BUFFER_CAPACITY`, matching real
+/// FluidNC's own live-computed, advisory rxFree number rather than a fixed constant.
+pub fn status(state: &MachineState, rx_used: usize) -> String {
     let n = state.axis_count.min(AXIS_COUNT);
     let mpos = format_axes(&state.pos, n);
     // Real FluidNC folds the tool length offset into the reported WCO
@@ -272,6 +276,7 @@ pub fn status(state: &MachineState) -> String {
     let pn = state.limits.pn_string(state.probe.triggered, state.door);
 
     let planner_free = (MAX_PLANNER_SLOTS - state.planner_buf_used).max(0);
+    let rx_free = RX_BUFFER_CAPACITY.saturating_sub(rx_used);
 
     // Real FluidNC emits Hold:0 (stopped) / Hold:1 (decelerating).
     // The simulator stops instantly on hold_pending, so always emit Hold:0.
@@ -285,7 +290,7 @@ pub fn status(state: &MachineState) -> String {
         format!("MPos:{}", mpos),
         format!("WCO:{}", wco),
         format!("FS:{},{}", f, s),
-        format!("Bf:{},128", planner_free),
+        format!("Bf:{},{}", planner_free, rx_free),
         format!("Ov:{},100,{}", state.feed_override, state.spindle_override),
     ];
     if !pn.is_empty() {
@@ -426,9 +431,19 @@ mod tests {
     }
 
     #[test]
+    fn status_reports_rx_free_live_against_rx_used() {
+        let state = test_state();
+        assert!(status(&state, 0).contains(&format!("Bf:15,{}", RX_BUFFER_CAPACITY)));
+        assert!(status(&state, 56).contains(&format!("Bf:15,{}", RX_BUFFER_CAPACITY - 56)));
+        // Never goes negative even if a connection's buffered bytes exceed the
+        // advertised ceiling — matches real firmware's unbounded underlying queue.
+        assert!(status(&state, RX_BUFFER_CAPACITY + 100).contains("Bf:15,0"));
+    }
+
+    #[test]
     fn status_format() {
         let state = test_state();
-        let s = status(&state);
+        let s = status(&state, 0);
         assert!(s.starts_with('<'));
         assert!(s.contains("Idle"));
         assert!(s.contains("MPos:"));
@@ -460,7 +475,7 @@ mod tests {
     fn status_includes_pn_when_limit_active() {
         let mut state = test_state();
         state.limits.x_min = true;
-        let s = status(&state);
+        let s = status(&state, 0);
         assert!(s.contains("Pn:X"), "status: {}", s);
     }
 
@@ -468,7 +483,7 @@ mod tests {
     fn status_folds_tlo_into_reported_wco() {
         let mut state = test_state();
         state.tool_length_offset[2] = 2.5;
-        let s = status(&state);
+        let s = status(&state, 0);
         let wco_start = s.find("WCO:").unwrap() + 4;
         let wco_end = s[wco_start..].find('|').map(|i| wco_start + i).unwrap();
         let z: f64 = s[wco_start..wco_end]
