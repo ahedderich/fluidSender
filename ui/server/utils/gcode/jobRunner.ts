@@ -229,7 +229,7 @@ class JobRunner {
         totalLines: analysis.totalLines,
         sendPtr: 0,
         execPtr: 0,
-        inPlanner: 0,
+        sendExecGap: 0,
         estimatedTotalMs: analysis.estimatedTotalMs,
         axisRanges: analysis.axisRanges,
         analyzeProgress: 100,
@@ -343,7 +343,7 @@ class JobRunner {
       this._setStatus('recovering', {
         sendPtr: resumePtr,
         execPtr: resumePtr,
-        inPlanner: 0,
+        sendExecGap: 0,
         recovery: null,
       })
 
@@ -423,7 +423,7 @@ class JobRunner {
       this._setStatus('loaded', {
         sendPtr: 0,
         execPtr: 0,
-        inPlanner: 0,
+        sendExecGap: 0,
         recovery: null,
         toolChangeRequest: null,
         programPause: null,
@@ -436,7 +436,7 @@ class JobRunner {
       this._finalizeRuntimeSession().catch((err) => console.error('[jobRunner] runtime finalize error:', err))
       this._mainJobChunkId = null
       this._recordExecution('aborted')
-      this._setStatus('loaded', { toolChangeRequest: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null })
+      this._setStatus('loaded', { toolChangeRequest: null, sendPtr: 0, execPtr: 0, sendExecGap: 0, recovery: null })
       return
     }
     if (this._status === 'program_pause') {
@@ -449,7 +449,7 @@ class JobRunner {
       this._setStatus('loaded', {
         sendPtr: 0,
         execPtr: 0,
-        inPlanner: 0,
+        sendExecGap: 0,
         recovery: null,
         toolChangeRequest: null,
         programPause: null,
@@ -478,7 +478,7 @@ class JobRunner {
     this._setStatus('loaded', {
       sendPtr: 0,
       execPtr: 0,
-      inPlanner: 0,
+      sendExecGap: 0,
       recovery: null,
       toolChangeRequest: null,
       programPause: null,
@@ -511,7 +511,7 @@ class JobRunner {
       totalLines: 0,
       sendPtr: 0,
       execPtr: 0,
-      inPlanner: 0,
+      sendExecGap: 0,
       estimatedTotalMs: 0,
       axisRanges: null,
       analyzeProgress: 0,
@@ -569,7 +569,7 @@ class JobRunner {
         totalLines: analysis.totalLines,
         sendPtr: 0,
         execPtr: 0,
-        inPlanner: 0,
+        sendExecGap: 0,
         estimatedTotalMs: analysis.estimatedTotalMs,
         axisRanges: analysis.axisRanges,
         analyzeProgress: 100,
@@ -654,7 +654,7 @@ class JobRunner {
         totalLines: this.lines.length,
         sendPtr: resumePtr,
         execPtr: resumePtr,
-        inPlanner: 0,
+        sendExecGap: 0,
         estimatedTotalMs: savedAnalysis?.estimatedTotalMs ?? 0,
         axisRanges: savedAnalysis?.axisRanges ?? null,
         recovery: null,
@@ -690,7 +690,7 @@ class JobRunner {
       // stopSend was in progress; treat as loaded since we didn't complete cleanly.
       this._execPtr = 0
       this.sendPtr = 0
-      this._setStatus('loaded', { sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null, toolChangeRequest: null, programPause: null })
+      this._setStatus('loaded', { sendPtr: 0, execPtr: 0, sendExecGap: 0, recovery: null, toolChangeRequest: null, programPause: null })
       clearCheckpoint().catch(() => {})
     } else if (this._status === 'running' || this._status === 'pausing' || this._status === 'recovering') {
       this._setStatus('paused', { errorMessage: 'Machine disconnected during job' })
@@ -801,9 +801,9 @@ class JobRunner {
 
     const ops: PatchOp[] = []
 
-    const inPlanner = Math.max(0, event.sent - event.executed)
+    const sendExecGap = Math.max(0, event.sent - event.executed)
     if (event.sent !== this.sendPtr || event.executed !== this._execPtr) {
-      jLog(`progress: sent=${event.sent} exec=${event.executed} inPlanner=${inPlanner} status=${event.status} holdPhase=${event.holdPhase}`)
+      jLog(`progress: sent=${event.sent} exec=${event.executed} sendExecGap=${sendExecGap} status=${event.status} holdPhase=${event.holdPhase}`)
       this.sendPtr = event.sent
       this._execPtr = event.executed
 
@@ -826,7 +826,7 @@ class JobRunner {
       ops.push(setJobState({
         sendPtr: this.sendPtr,
         execPtr: this._execPtr,
-        inPlanner,
+        sendExecGap,
       }))
       if (ops.length > 0) broadcastPatch(ops)
       this._checkpointIfDue()
@@ -902,7 +902,7 @@ class JobRunner {
         this._setStatus('loaded', {
           sendPtr: 0,
           execPtr: 0,
-          inPlanner: 0,
+          sendExecGap: 0,
           recovery: null,
           toolChangeRequest: null,
           programPause: null,
@@ -1070,7 +1070,7 @@ class JobRunner {
     this._setStatus('complete', {
       sendPtr: this.lines.length,
       execPtr: this.lines.length,
-      inPlanner: 0,
+      sendExecGap: 0,
       toolChangeRequest: null,
       programPause: null,
     })

@@ -156,8 +156,10 @@ export interface JobState {
   sendPtr: number
   /** Line index confirmed executed based on planner drain tracking. Lags behind sendPtr. */
   execPtr: number
-  /** Motion commands currently queued in the FluidNC planner (derived from Buf: field). */
-  inPlanner: number
+  /** sendPtr - execPtr: lines acked by firmware but not yet confirmed executed. Distinct
+   *  from sender.ts's internal planner-occupied count (which comes directly from Bf:) —
+   *  this is the derived send/exec gap, not a firmware value itself. */
+  sendExecGap: number
   /** Max planner slots, captured from machine idle state on connect. */
   maxPlannerSlots: number
   estimatedTotalMs: number
