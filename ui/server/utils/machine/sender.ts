@@ -24,6 +24,12 @@ const CHUNK_HISTORY_LIMIT = 100
 // Character-counting dispatch budget (Category A/C only — see ActiveChunk.outstanding).
 // FluidNC reports rxFree up to 256 (Channel.h); start conservative and self-calibrate
 // upward from the first Idle status report, the same way _maxPlannerSlots does below.
+// Dispatch is gated on bytes-in-flight alone — no separate Category-A/planner-slot cap.
+// Real FluidNC's mc_line() blocks (withholding ok) until a planner slot is free, so
+// firmware ack timing on its own already keeps "sent" from running far ahead of real
+// execution; a client-side admission gate would just reintroduce a Bf:-derived dispatch
+// throttle for no reason. Bf: is still used below (_plannerOccupied/_computeExecPtr),
+// but purely to track executedPtr, never to gate what gets sent.
 const DEFAULT_RX_BUDGET_BYTES = 200
 const RX_BUDGET_MARGIN = 32
 
@@ -31,7 +37,12 @@ const RX_BUDGET_MARGIN = 32
 let _maxPlannerSlots = 0
 let _rxBudgetBytes = DEFAULT_RX_BUDGET_BYTES
 let _rxBudgetCalibrated = false
-let _inPlanner = 0
+// Blocks currently occupied in the firmware planner, per the most recent Bf: report
+// (effectiveMax - plannerFree). null until the first real report for the current
+// chunk/connection arrives — distinct from a genuine reading of 0, so executedPtr
+// inference (_advanceExecPtr) stays inert instead of assuming an empty planner before
+// any measurement exists.
+let _plannerOccupied: number | null = null
 let _completionConfirmCount = 0
 let _restoreProbing = false
 
@@ -126,7 +137,7 @@ function _finalize(chunk: ActiveChunk, completedMode: SenderCompletedMode, error
   })
   _chunks.delete(chunk.chunkId)
   if (_activeChunkId === chunk.chunkId) _activeChunkId = null
-  _inPlanner = 0
+  _plannerOccupied = null
   _completionConfirmCount = 0
   const modeToRestore = _restoreProbing ? 'probing' : 'idle'
   _restoreProbing = false
@@ -135,10 +146,36 @@ function _finalize(chunk: ActiveChunk, completedMode: SenderCompletedMode, error
   _storeHistory(event)
 }
 
+// Category-A-aware backward walk: given `occupied` real planner slots currently in use
+// (per the last Bf: report), returns the largest index E such that exactly `occupied`
+// Category-A lines fall within [E, chunk.sentPtr) — i.e. "the last `occupied` motion
+// lines sent are still in the planner; everything before that is done." Category-C
+// lines never consumed a slot, so they're skipped for free either way. This is an
+// absolute recomputation, not an incremental delta — safe to call on every sentPtr or
+// occupied change, and immune to drift from a missed or noisy sample.
+function _computeExecPtr(chunk: ActiveChunk, occupied: number): number {
+  let remaining = occupied
+  let ptr = chunk.sentPtr
+  while (ptr > chunk.executedPtr && remaining > 0) {
+    if (chunk.lines[ptr - 1]!.category === 'A') remaining--
+    ptr--
+  }
+  return ptr
+}
+
+// Re-derive executedPtr from the last-known occupied count, independent of whether
+// that count just changed — this is what lets executedPtr keep pace with sentPtr
+// between Bf: reports (e.g. a steady state where occupied holds constant), instead of
+// only advancing at the instant a fresh report arrives.
+function _advanceExecPtr(chunk: ActiveChunk): void {
+  if (_plannerOccupied === null) return
+  const computed = _computeExecPtr(chunk, _plannerOccupied)
+  if (computed > chunk.executedPtr) chunk.executedPtr = computed
+}
+
 // Pop resolved entries off the front of the outstanding queue, advancing sentPtr (and,
-// for comments/B1/B2, executedPtr) in strict file order. Category A/C executedPtr
-// advancement is NOT done here — that stays entirely driven by the Bf: drain walk in
-// onBufUpdate, unchanged from before this rework.
+// for comments/B1/B2, executedPtr) in strict file order, then re-deriving executedPtr
+// for Category A/C from the last-known occupied count.
 function _drain(chunk: ActiveChunk): void {
   let advanced = false
   while (chunk.outstanding.length > 0 && chunk.outstanding[0]!.resolved) {
@@ -154,7 +191,10 @@ function _drain(chunk: ActiveChunk): void {
       chunk.blockedOnB1B2 = false
     }
   }
-  if (advanced) _emit(chunk)
+  if (advanced) {
+    _advanceExecPtr(chunk)
+    _emit(chunk)
+  }
 }
 
 function _sendLine(chunk: ActiveChunk, line: SendableLine): void {
@@ -305,7 +345,7 @@ export function onBufUpdate(
       chunk.outstandingBytes = 0
       chunk.blockedOnB1B2 = false
       _activeChunkId = null
-      _inPlanner = 0
+      _plannerOccupied = null
       _completionConfirmCount = 0
       setMode('idle')
       _emit(chunk, { status: 'suspended', pausedToolLengthOffset })
@@ -325,44 +365,19 @@ export function onBufUpdate(
 
   // ── Normal run path ───────────────────────────────────────────────────────
   const effectiveMax = _maxPlannerSlots || DEFAULT_MAX_PLANNER_SLOTS
-  const newInPlanner = Math.max(0, effectiveMax - plannerFree)
-  const drained = _inPlanner - newInPlanner
-  _inPlanner = newInPlanner
-
-  if (drained > 0) {
-    let remaining = drained
-    let ptr = chunk.executedPtr
-    while (ptr < chunk.sentPtr) {
-      const ln = chunk.lines[ptr]!
-      if (ln.category === 'A') {
-        if (remaining <= 0) break
-        remaining--
-        ptr++
-      } else if (ln.category === 'C') {
-        // Category C lines don't consume planner slots — advance for free.
-        ptr++
-      } else {
-        // B1/B2: onOk sets execPtr=sentPtr when its ok arrives; stop and wait.
-        break
-      }
-    }
-    if (ptr > chunk.executedPtr) {
-      chunk.executedPtr = ptr
-      _emit(chunk)
-    }
+  // Only trust a report as a real occupancy measurement when this firmware actually
+  // sends Bf: — otherwise plannerFree is always 0 and would look like "planner full."
+  if (hasBufferReporting()) {
+    _plannerOccupied = Math.max(0, effectiveMax - plannerFree)
   }
+  const beforeExecPtr = chunk.executedPtr
+  _advanceExecPtr(chunk)
+  if (chunk.executedPtr !== beforeExecPtr) _emit(chunk)
 
-  // Fallback: planner fully empty → align executedPtr to sentPtr
-  if (newInPlanner === 0 && chunk.executedPtr < chunk.sentPtr) {
-    chunk.executedPtr = chunk.sentPtr
-    _emit(chunk)
-  }
-
-  // Without Bf: reporting, plannerFree is always 0, so the drain-inference walk
-  // above and the "planner fully empty" fallback can never advance executedPtr
-  // for in-flight motion lines. Once everything has been dispatched and acked
-  // and the firmware reports Idle, that IS completion — trust it directly
-  // rather than waiting on planner data this firmware will never send.
+  // Without Bf: reporting, _plannerOccupied is never set, so _advanceExecPtr above is
+  // always a no-op. Once everything has been dispatched and acked and the firmware
+  // reports Idle, that IS completion — trust it directly rather than waiting on
+  // planner data this firmware will never send.
   if (!hasBufferReporting() && machineState === 'Idle' && chunk.outstanding.length === 0 &&
     chunk.dispatchPtr >= chunk.lines.length && chunk.executedPtr < chunk.sentPtr) {
     chunk.executedPtr = chunk.sentPtr
@@ -383,7 +398,7 @@ export function onMachineDisconnected(): void {
   _maxPlannerSlots = 0
   _rxBudgetBytes = DEFAULT_RX_BUDGET_BYTES
   _rxBudgetCalibrated = false
-  _inPlanner = 0
+  _plannerOccupied = null
   _completionConfirmCount = 0
   if (_activeChunkId) {
     const chunk = _chunks.get(_activeChunkId)
@@ -427,7 +442,7 @@ export function startSend(lines: SendableLine[], onEvent?: (e: SenderStatusEvent
 
   _chunks.set(chunkId, chunk)
   _activeChunkId = chunkId
-  _inPlanner = 0
+  _plannerOccupied = null
   _completionConfirmCount = 0
   setMode('sending')
 
@@ -469,7 +484,7 @@ export function resumeChunk(chunkId: string): SendHandle {
 
   chunk.internalState = 'running'
   _activeChunkId = chunkId
-  _inPlanner = 0
+  _plannerOccupied = null
   _completionConfirmCount = 0
   setMode('sending')
   _emit(chunk)

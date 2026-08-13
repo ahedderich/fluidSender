@@ -144,22 +144,55 @@ describe('B1/B2 isolation boundary', () => {
   })
 })
 
-describe('executedPtr stays entirely Bf:-drain-driven for Category A (unchanged by the dispatch rework)', () => {
-  it('does not advance executed on ok alone; only on inferred planner drain via onBufUpdate', () => {
+describe('executedPtr is recomputed from the last-known occupied count (absolute, not delta)', () => {
+  it('does not advance executed on ok alone before any Bf: reading has ever been received', () => {
     const lines = Array.from({ length: 5 }, (_, i) => line(`G1 X${i}`, 'A'))
     startSend(lines, undefined)
 
     for (let i = 0; i < 5; i++) onOk()
     expect(getSenderStatus()?.sent).toBe(5)
-    expect(getSenderStatus()?.executed).toBe(0)  // firmware ok'd them, but planner hasn't confirmed drain
+    expect(getSenderStatus()?.executed).toBe(0)  // occupied is still unknown — no reading yet
 
-    // Planner goes from full (15 free) down to 10 free — 5 slots consumed, nothing drained yet.
+    // Planner goes from full (15 free) down to 10 free — 5 slots occupied, none of the
+    // 5 acked lines confirmed done yet.
     onBufUpdate(10, 256, 'Run', null)
     expect(getSenderStatus()?.executed).toBe(0)
 
-    // Planner reports fully free again — all 5 slots drained.
+    // Planner reports fully free again — 0 occupied, everything sent is done.
     onBufUpdate(15, 256, 'Run', null)
     expect(getSenderStatus()?.executed).toBe(5)
+  })
+
+  it('advances executed immediately on new acks using the last-known occupied count, with no fresh poll required', () => {
+    // This is the steady-state case that used to stall: occupied holds constant across
+    // a run of acks, so a delta-based drain walk would never see drained > 0 again.
+    const lines = Array.from({ length: 10 }, (_, i) => line(`G1 X${i}`, 'A'))
+    startSend(lines, undefined)
+
+    for (let i = 0; i < 5; i++) onOk()
+    expect(getSenderStatus()?.executed).toBe(0)  // no reading yet
+
+    // First (and only) reading: 3 slots occupied out of 5 sent.
+    onBufUpdate(12, 256, 'Run', null)
+    expect(getSenderStatus()?.executed).toBe(2)
+
+    // Three more acks land with NO further onBufUpdate call — executed must still climb,
+    // recomputed from the same cached occupied=3 against the new sentPtr=8.
+    for (let i = 0; i < 3; i++) onOk()
+    expect(getSenderStatus()?.sent).toBe(8)
+    expect(getSenderStatus()?.executed).toBe(5)
+  })
+})
+
+describe('dispatch is gated on bytes-in-flight alone, not a separate planner-slot cap', () => {
+  it('sends far more Category A lines outstanding at once than the old planner-slot fallback (3) allowed', () => {
+    // ~9 bytes each; 10 lines = ~90 bytes, comfortably under the 200-byte default budget,
+    // and no Idle report has calibrated _maxPlannerSlots — the old gate would have
+    // stopped dispatch at its uncalibrated fallback of 3.
+    const lines = Array.from({ length: 10 }, (_, i) => line(`G1 X${i}`, 'A'))
+    startSend(lines, undefined)
+
+    expect(sendRaw).toHaveBeenCalledTimes(10)
   })
 })
 

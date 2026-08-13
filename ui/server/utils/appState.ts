@@ -334,7 +334,7 @@ const job: JobState = {
   totalLines: 0,
   sendPtr: 0,
   execPtr: 0,
-  inPlanner: 0,
+  sendExecGap: 0,
   maxPlannerSlots: 0,
   estimatedTotalMs: 0,
   analyzedAt: null,

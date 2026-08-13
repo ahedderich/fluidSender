@@ -537,6 +537,26 @@ export function analyzeGCode(
     }
 
     const classified = classifyLine(raw, getActiveFirmwareVersion())
+    // classifyLine() is stateless per-line, so it can't see modal continuation —
+    // a line with only axis words (no repeated G0/G1/G2/G3) inherits the active
+    // motion mode tracked above (isModalMotion/state.motionMode) but has no
+    // token classifyLine() recognizes, so on its own it falls back to Category C.
+    // type already resolves that modal state correctly (rapid/feed/arc for
+    // G0/G1/G2-G3 respectively, explicit or modal), so for a line with no
+    // explicit token at all it's the source of truth for whether this is really
+    // Category A motion — sender.ts's planner-slot dispatch throttle depends on
+    // that being accurate, or a run of modal continuation lines (the common case
+    // in CAM-generated files) bypasses it entirely and lets sentPtr race far
+    // ahead of real execution.
+    //
+    // Only applied when classifyLine() found no token at all (category 'C' via
+    // its null-token fallback) — isModalMotion above doesn't exclude every
+    // non-motion command with axis-shaped words (e.g. G92 X0 Y0), so a line
+    // classifyLine already resolved to a real token (B1/B2/etc.) keeps that
+    // answer rather than trusting type, which could misidentify such a line as
+    // a modal continuation if the motion mode happens to be G0-G3 at that point.
+    const isMotionLine = classified.category === 'C' && (type === 'rapid' || type === 'feed' || type === 'arc')
+    const category = isMotionLine ? 'A' : classified.category
 
     cumulativeMs += durationMs
 
@@ -552,8 +572,8 @@ export function analyzeGCode(
       index: i,
       raw,
       type,
-      isMotion: classified.isMotion,
-      category: classified.category,
+      isMotion: isMotionLine,
+      category,
       estimatedDurationMs: durationMs,
       cumulativeDurationMs: cumulativeMs,
       ...(type === 'program_pause' ? { pauseComment } : {}),

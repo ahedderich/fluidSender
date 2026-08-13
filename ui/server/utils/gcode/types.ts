@@ -77,9 +77,14 @@ export type LineVector =
  *  version 8: applyRotation() (transform.ts) fixed — it was dropping the rotated value
  *  of whichever axis word wasn't already on the source line, and rotating the wrong
  *  direction. Neither bug changes fileId/kinematics/sourceFingerprint, so without this
- *  bump a cache written by the old code would keep being served as a "hit" forever. */
+ *  bump a cache written by the old code would keep being served as a "hit" forever.
+ *  version 9: modal-continuation motion lines (axis words with no repeated G0/G1/G2/G3 —
+ *  the common case in CAM-generated files) are now classified Category A instead of
+ *  falling back to C. sender.ts's planner-slot dispatch throttle only caps Category A,
+ *  so a run of these lines previously bypassed it entirely and let sentPtr race
+ *  thousands of lines ahead of real execution. */
 export interface JobAnalysis {
-  version: 8
+  version: 9
   fileId: string
   filename: string
   analyzedAt: number
@@ -151,8 +156,10 @@ export interface JobState {
   sendPtr: number
   /** Line index confirmed executed based on planner drain tracking. Lags behind sendPtr. */
   execPtr: number
-  /** Motion commands currently queued in the FluidNC planner (derived from Buf: field). */
-  inPlanner: number
+  /** sendPtr - execPtr: lines acked by firmware but not yet confirmed executed. Distinct
+   *  from sender.ts's internal planner-occupied count (which comes directly from Bf:) —
+   *  this is the derived send/exec gap, not a firmware value itself. */
+  sendExecGap: number
   /** Max planner slots, captured from machine idle state on connect. */
   maxPlannerSlots: number
   estimatedTotalMs: number
