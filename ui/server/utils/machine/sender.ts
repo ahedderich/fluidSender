@@ -27,6 +27,19 @@ const CHUNK_HISTORY_LIMIT = 100
 const DEFAULT_RX_BUDGET_BYTES = 200
 const RX_BUDGET_MARGIN = 32
 
+// Category-A (motion) lines get a SEPARATE outstanding cap on top of the byte budget.
+// Real FluidNC's mc_line() blocks (withholding ok) until a planner slot is free, which
+// naturally keeps a host's "sent" count from running far ahead of real execution — but
+// the sim's motion queue doesn't reproduce that blocking (it acks once the move is
+// merely queued in an oversized in-memory channel, not once a planner slot is actually
+// free), so relying on firmware ack timing alone let sentPtr run thousands of lines
+// ahead of executedPtr with the sim. Capping motion lines in flight to roughly the
+// planner's own size — the same client-side throttle the pre-character-counting sender
+// used — bounds that gap regardless of how strictly the far end's ok timing matches
+// real hardware.
+const PLANNER_SAFETY_MARGIN = 2
+const PLANNER_TARGET_FALLBACK = 3
+
 // Connection-level state — resets on disconnect
 let _maxPlannerSlots = 0
 let _rxBudgetBytes = DEFAULT_RX_BUDGET_BYTES
@@ -34,6 +47,15 @@ let _rxBudgetCalibrated = false
 let _inPlanner = 0
 let _completionConfirmCount = 0
 let _restoreProbing = false
+
+// Motion lines allowed outstanding at once, leaving a safety margin so B1/B2 and
+// urgent commands always have room; falls back to a conservative value before the
+// first Idle status report calibrates _maxPlannerSlots.
+function _plannerTarget(): number {
+  return _maxPlannerSlots > 0
+    ? Math.max(PLANNER_TARGET_FALLBACK, _maxPlannerSlots - PLANNER_SAFETY_MARGIN)
+    : PLANNER_TARGET_FALLBACK
+}
 
 /** Send the soft-reset byte (0x18) and invalidate any cached TLO — FluidNC's gc_init()
  *  zeroes the G43.1 tool length offset on every soft reset, so the cached value can no
@@ -199,6 +221,19 @@ function _tryDispatch(chunk: ActiveChunk): void {
     // single line can't deadlock the queue.
     const bytes = lineBytes(line.raw)
     if (chunk.outstanding.length > 0 && chunk.outstandingBytes + bytes > _rxBudgetBytes) break
+
+    // Category A also has its own planner-slot gate, independent of the byte budget —
+    // see _plannerTarget()'s comment for why the byte budget alone isn't enough.
+    // motionInFlight is acked-but-not-yet-executed motion lines (sentPtr has passed
+    // them, executedPtr hasn't caught up), the same window the pre-character-counting
+    // sender capped.
+    if (line.category === 'A') {
+      const motionInFlight = chunk.lines
+        .slice(chunk.executedPtr, chunk.sentPtr)
+        .filter((l) => l.category === 'A')
+        .length
+      if (motionInFlight >= _plannerTarget()) break
+    }
 
     _sendLine(chunk, line)
     chunk.outstanding.push({ idx: chunk.dispatchPtr, bytes, category: line.category, resolved: false })

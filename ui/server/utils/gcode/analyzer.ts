@@ -14,7 +14,7 @@ const BASE_JOB_DIR = join(DATA_DIR, 'current_job')
 // same input — this is the only thing that invalidates a cached analysis/vectors/lines
 // artefact, since the cache key (fileId + kinematics + source fingerprint) doesn't change
 // when the transform algorithm itself does.
-const ANALYSIS_VERSION = 8
+const ANALYSIS_VERSION = 9
 
 export function getJobDir(mode: TransformMode): string {
   const sub = subdirForMode(mode)
