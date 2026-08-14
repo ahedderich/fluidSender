@@ -329,9 +329,6 @@ export function onBufUpdate(
   if (machineState === 'Hold' && chunk.internalState === 'suspending') {
     const resolvedPhase = holdPhase ?? 0
     if (resolvedPhase === 0) {
-      // Capture before sendSoftReset() invalidates it — the resume recovery sequence
-      // needs this to restore G43.1 once the chunk continues.
-      const pausedToolLengthOffset = getToolLengthOffset()
       sendSoftReset()
       chunk.internalState = 'suspended'
       // 0x18 clears the planner — all queued-but-not-executing lines are gone.
@@ -348,7 +345,7 @@ export function onBufUpdate(
       _plannerOccupied = null
       _completionConfirmCount = 0
       setMode('idle')
-      _emit(chunk, { status: 'suspended', pausedToolLengthOffset })
+      _emit(chunk, { status: 'suspended' })
     }
     return
   }

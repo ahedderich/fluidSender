@@ -17,7 +17,6 @@ import {
   settleProgramPauseModal,
   setLoadedTool,
   getConnection,
-  setConnection,
   getConfig,
   getUiState,
   pushToast,
@@ -28,7 +27,7 @@ import {
 import { getLastMachineStatus } from '../machine/poller'
 import { startSend, sendGCode, suspendSend, resumeChunk, stopSend, senderHardStop } from '../machine/sender'
 import { setMode } from '../machine/machineMode'
-import { setToolLengthOffset } from '../machine/toolLengthState'
+import { requestToolLengthRefresh } from '../machine/toolLengthState'
 import { toolStore } from '../tool/toolStore'
 import { appendRuntimeSession } from '../tool/runtimeLog'
 import { applyTransforms } from './transform'
@@ -63,12 +62,6 @@ class JobRunner {
   private _sendHandle: SendHandle | null = null
   // ChunkId of the suspended main job chunk while status is 'paused'
   private _mainJobChunkId: string | null = null
-  // Tool length offset confirmed live at the moment of the most recent pause — captured
-  // before the soft reset zeroes it in firmware, so _buildRecoverySequence can restore
-  // it via G43.1 on resume instead of guessing. Null after a crash-recovery restart,
-  // where no in-memory value survives — the recovery sequence correctly skips restoring
-  // TLO in that case rather than assuming a stale value.
-  private _pausedToolLengthOffset: number | null = null
 
   // Chunk-send (multi-section) state
   private _toolSections: ToolSection[] = []
@@ -361,7 +354,6 @@ class JobRunner {
         // No modal recovery needed — resume the suspended chunk directly.
         jLog(`resume() direct resumeChunk (no modal) suspendedChunkId=${suspendedChunkId.slice(0, 8)}`)
         this._mainJobChunkId = null
-        this._pausedToolLengthOffset = null
         this._sendHandle = resumeChunk(suspendedChunkId)
         this._setStatus('running')
       } else {
@@ -415,7 +407,6 @@ class JobRunner {
       if (this._mainJobChunkId) {
         senderHardStop(this._mainJobChunkId)
         this._mainJobChunkId = null
-        this._pausedToolLengthOffset = null
       }
       this._execPtr = 0
       this.sendPtr = 0
@@ -684,7 +675,6 @@ class JobRunner {
     this._finalizeRuntimeSession().catch((err) => console.error('[jobRunner] runtime finalize error:', err))
     this._sendHandle = null
     this._mainJobChunkId = null  // suspended chunk was finalized by senderDisconnected()
-    this._pausedToolLengthOffset = null
 
     if (this._status === 'stopping') {
       // stopSend was in progress; treat as loaded since we didn't complete cleanly.
@@ -843,14 +833,16 @@ class JobRunner {
     // Skip other holdPhase progress events (Hold:1 deceleration during machine-initiated holds)
     if (event.holdPhase !== null) return
 
-    // Chunk was suspended by suspendSend() — store chunkId for resume
+    // Chunk was suspended by suspendSend() — store chunkId for resume. Status stays
+    // 'pausing' (not yet 'paused') until _restoreToolLengthThenPause confirms TLO from
+    // firmware and re-applies it live, so Resume — gated on status === 'paused' — can't
+    // fire against a machine whose G43.1 offset hasn't actually been restored yet.
     if (event.status === 'suspended') {
-      jLog(`sender SUSPENDED event: chunkId=${event.chunkId.slice(0, 8)} sent=${event.sent} exec=${event.executed} → storing as mainJobChunkId, status→paused`)
+      jLog(`sender SUSPENDED event: chunkId=${event.chunkId.slice(0, 8)} sent=${event.sent} exec=${event.executed} → storing as mainJobChunkId, restoring TLO before status→paused`)
       this._mainJobChunkId = event.chunkId
-      this._pausedToolLengthOffset = event.pausedToolLengthOffset ?? null
       this._sendHandle = null
       this.sendPtr = this._execPtr
-      this._setStatus('paused', { sendPtr: this._execPtr })
+      this._restoreToolLengthThenPause(event.chunkId)
       return
     }
 
@@ -895,7 +887,6 @@ class JobRunner {
         // it now, otherwise its accrued time is silently lost.
         this._finalizeRuntimeSession().catch((err) => console.error('[jobRunner] runtime finalize error:', err))
         this._mainJobChunkId = null
-        this._pausedToolLengthOffset = null
         this._execPtr = 0
         this.sendPtr = 0
         this._recordExecution('aborted')
@@ -930,17 +921,9 @@ class JobRunner {
     switch (event.completedMode) {
       case 'success':
         if (suspendedChunkId) {
-          // Resume the suspended main job chunk now that repositioning is done.
-          // The recovery sequence just commanded and confirmed G43.1 (if an offset was
-          // captured at pause time) — no need to round-trip a $# query to re-learn it,
-          // same reasoning as the toolchange probe flow.
-          if (this._pausedToolLengthOffset !== null) {
-            const restoredOffset = this._pausedToolLengthOffset
-            setToolLengthOffset(restoredOffset)
-            broadcastPatch([{ path: 'connection', set: { ...setConnection({ toolLengthOffset: restoredOffset }) } }])
-          }
+          // TLO was already re-confirmed from firmware and re-applied live back when the
+          // pause completed (_restoreToolLengthThenPause) — nothing to redo here.
           this._mainJobChunkId = null
-          this._pausedToolLengthOffset = null
           this._sendHandle = resumeChunk(suspendedChunkId)
           this._setStatus('running')
           // The resumed chunk fires its own events via its existing onEvent callback.
@@ -955,6 +938,35 @@ class JobRunner {
       case 'hard':
         break
     }
+  }
+
+  /** After a pause's soft reset completes, query firmware's persisted TLO (survives a
+   *  plain soft reset — see toolLengthState.ts) and re-apply it live via G43.1 before
+   *  exposing status 'paused'. Status stays 'pausing' for this short window — Resume is
+   *  gated on 'paused' — so the UI never shows a resumable pause before firmware's real
+   *  G43.1 offset has actually been restored. */
+  private _restoreToolLengthThenPause(chunkId: string): void {
+    requestToolLengthRefresh().then((offset) => {
+      // Superseded by a stop/hard-stop/disconnect while the query was in flight.
+      if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
+
+      if (offset === null) {
+        this._setStatus('paused', { sendPtr: this._execPtr })
+        return
+      }
+
+      this._sendHandle = sendGCode([`G43.1 Z${offset.toFixed(4)}`], (event) => {
+        if (event.status !== 'completed') return
+        this._sendHandle = null
+        if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
+        this._setStatus('paused', { sendPtr: this._execPtr })
+      })
+    }).catch((err: unknown) => {
+      console.error('[jobRunner] TLO restore-on-pause error:', err)
+      if (this._status === 'pausing' && this._mainJobChunkId === chunkId) {
+        this._setStatus('paused', { sendPtr: this._execPtr })
+      }
+    })
   }
 
   private _enterProgramPause(comment: string | null): void {
@@ -1111,10 +1123,9 @@ class JobRunner {
 
   private _buildRecoverySequence(modal: GCodeModalState, safeZ: number): string[] {
     const cmds: string[] = []
-    // FluidNC has no tool table — restore the offset that was actually live at pause
-    // time via G43.1, not a lookup by tool number. Null (e.g. after a crash-recovery
-    // restart, where no in-memory value survives) means skip rather than guess.
-    if (this._pausedToolLengthOffset !== null) cmds.push(`G43.1 Z${this._pausedToolLengthOffset.toFixed(4)}`)
+    // TLO is restored separately, immediately after the pause completes
+    // (_restoreToolLengthThenPause) — by the time this recovery sequence runs, firmware
+    // already has the correct G43.1 offset live, so there's nothing to redo here.
     cmds.push(modal.workCoordinate)
     cmds.push(modal.units)
     cmds.push('G90')
