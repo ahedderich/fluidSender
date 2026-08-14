@@ -56,7 +56,7 @@ import {
 } from '../utils/machine/poller'
 import { parseGreetingVersion } from '../utils/machine/statusParser'
 import { parseBootInfo } from '../utils/machine/bootInfoParser'
-import { getToolLengthOffset, setToolLengthOffset, resetToolLengthSession } from '../utils/machine/toolLengthState'
+import { getToolLengthOffset, setToolLengthOffset, resetToolLengthSession, registerToolLengthRefreshProvider } from '../utils/machine/toolLengthState'
 import { setActiveFirmwareVersion } from '../utils/gcode/classifier'
 import { initMachineMode } from '../utils/machine/machineMode'
 import {
@@ -102,6 +102,7 @@ initPoller((msg) => broadcast(msg))
 initMachineMode((msg) => broadcast(msg))
 registerMachineStatusProvider(getLastMachineStatus)
 registerToolLibraryProvider((machineId) => toolStore.getAll(machineId) as { machine: unknown[]; app: unknown[] })
+registerToolLengthRefreshProvider(() => refreshToolLengthOffset())
 
 jobRunner.bootRestore().then((mode) => {
   if (mode === 'crash') {
