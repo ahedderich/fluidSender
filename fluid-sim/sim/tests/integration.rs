@@ -40,7 +40,7 @@ async fn start_sim_with_speed(speed: u8) -> (u16, u16) {
 
     let (shared, broadcast) = fluidsim::machine::state::new_shared(state);
     let console = fluidsim::machine::state::new_console();
-    let move_tx = fluidsim::machine::motion::spawn_motion_task(
+    let (move_tx, move_permits) = fluidsim::machine::motion::spawn_motion_task(
         Arc::clone(&shared),
         broadcast.clone(),
         cfg.sim.tick_hz,
@@ -58,6 +58,7 @@ async fn start_sim_with_speed(speed: u8) -> (u16, u16) {
         broadcast.clone(),
         console.clone(),
         move_tx,
+        move_permits,
     ));
     tokio::spawn(fluidsim::server::control::run(control_port, app_state));
 
@@ -304,20 +305,24 @@ async fn program_pause_m0_resumes_on_cycle_start() {
     assert!(saw_idle, "M0 never resumed back to Idle after cycle-start");
 }
 
-/// Regression for the connection task blocking on `move_tx.send()` once the internal
-/// motion queue (32 slots) fills up. Admission races far ahead of real execution — `ok`
-/// is returned when a line is queued, not when it finishes — so a normal host sender
-/// saturates that queue almost immediately on any run of several moves. Once saturated,
-/// the *next* line's `ok` is withheld until a queued move actually completes; without
+/// Regression for the connection task blocking while acquiring a planner-slot permit
+/// (`MovePermits`, exactly `MAX_PLANNER_SLOTS` — see motion.rs's `spawn_motion_task`).
+/// Admission races far ahead of real execution — `ok` is returned when a line is
+/// queued, not when it finishes — so a normal host sender saturates the permits almost
+/// immediately on any run of several moves. Once saturated, the *next* line's `ok` is
+/// withheld until a queued move actually completes and releases its permit; without
 /// dispatch racing that block against continued socket reads, the connection couldn't
-/// even read a `?` byte off the wire during that window, let alone answer it, making the
-/// UI's toolhead position appear frozen for as long as the backlog took to drain.
+/// even read a `?` byte off the wire during that window, let alone answer it, making
+/// the UI's toolhead position appear frozen for as long as the backlog took to drain.
 #[tokio::test]
 async fn status_query_stays_responsive_while_motion_queue_is_full() {
     // speed=1 (real-time): each 0.5mm move at F120 (2mm/s) takes ~250ms to actually
     // execute — generous relative to our own read-loop overhead below, so the test
-    // isn't sensitive to scheduler jitter — and 40 queued moves keep the 32-slot
-    // queue saturated for a couple of seconds, plenty of window to query mid-backlog.
+    // isn't sensitive to scheduler jitter — and enough queued moves keep the queue
+    // saturated for a couple of seconds, plenty of window to query mid-backlog.
+    const PLANNER_SLOTS: usize = 15; // must match state::MAX_PLANNER_SLOTS
+    const TOTAL_LINES: usize = PLANNER_SLOTS + 9;
+
     let (fluidnc_port, _control_port) = start_sim_with_speed(1).await;
     let (mut reader, mut writer) = connect(fluidnc_port).await;
     read_until(&mut reader, "ok").await; // greeting
@@ -326,21 +331,20 @@ async fn status_query_stays_responsive_while_motion_queue_is_full() {
     read_until(&mut reader, "ok").await;
 
     let mut script = String::new();
-    for i in 0..40 {
+    for i in 0..TOTAL_LINES {
         let dx = if i % 2 == 0 { 0.5 } else { -0.5 };
         script.push_str(&format!("G1 X{dx} F120\n"));
     }
     writer.write_all(script.as_bytes()).await.unwrap();
 
-    // The internal motion queue holds exactly 32 slots (`mpsc::channel(32)` in
-    // motion.rs) — read exactly that many oks. That's deterministic (no timing
-    // guesswork: the "ok" trickle for backlogged lines runs at the same ~40ms
-    // move-completion cadence whether or not this bug is fixed, so there's no
-    // reliable pause to detect — only a fixed count works), and tells us for
-    // certain the 33rd+ line's ok is now gated on a queued move actually
-    // completing, i.e. we're genuinely mid-backlog.
+    // The internal motion queue holds exactly PLANNER_SLOTS slots — read exactly that
+    // many oks. That's deterministic (no timing guesswork: the "ok" trickle for
+    // backlogged lines runs at the same ~250ms move-completion cadence whether or not
+    // this bug is fixed, so there's no reliable pause to detect — only a fixed count
+    // works), and tells us for certain the (PLANNER_SLOTS+1)th+ line's ok is now gated
+    // on a queued move actually completing, i.e. we're genuinely mid-backlog.
     let mut oks = 0;
-    while oks < 32 {
+    while oks < PLANNER_SLOTS {
         assert_eq!(read_line(&mut reader).await, "ok");
         oks += 1;
     }
@@ -379,7 +383,7 @@ async fn status_query_stays_responsive_while_motion_queue_is_full() {
 
     // Drain remaining oks so the connection doesn't leave the machine mid-job.
     oks += oks_before_query_answered;
-    while oks < 40 {
+    while oks < TOTAL_LINES {
         if read_line(&mut reader).await == "ok" {
             oks += 1;
         }

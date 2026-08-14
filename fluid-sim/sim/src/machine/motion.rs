@@ -1,10 +1,11 @@
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 use tokio::time; // used in tests
 
 use crate::machine::probe::{check_probe_contact, ProbeDeviations, ProbeHit};
 use crate::machine::state::{
-    MachineState, MachineStatus, SharedMachineState, StateBroadcast, AXIS_COUNT,
+    MachineState, MachineStatus, SharedMachineState, StateBroadcast, AXIS_COUNT, MAX_PLANNER_SLOTS,
 };
 
 /// Probe options for a motion move that behaves as a probing cycle.
@@ -48,41 +49,83 @@ pub enum MoveResult {
     Alarm(u32),
 }
 
-pub type MoveTx = mpsc::Sender<(PendingMove, tokio::sync::oneshot::Sender<MoveResult>)>;
-pub type MoveRx = mpsc::Receiver<(PendingMove, tokio::sync::oneshot::Sender<MoveResult>)>;
+// Each queued item optionally carries the `OwnedSemaphorePermit` (see `MovePermits`
+// below) that admitted it — `None` for items that never occupy a reported planner
+// slot (dwell/B1/B2 drain placeholders, jog, homing). Held until the move genuinely
+// finishes (dropped in motion_loop below, not on dequeue), so a still-executing move
+// keeps occupying its slot for as long as it really does.
+pub type MoveTx = mpsc::Sender<(
+    PendingMove,
+    tokio::sync::oneshot::Sender<MoveResult>,
+    Option<OwnedSemaphorePermit>,
+)>;
+pub type MoveRx = mpsc::Receiver<(
+    PendingMove,
+    tokio::sync::oneshot::Sender<MoveResult>,
+    Option<OwnedSemaphorePermit>,
+)>;
 
-/// Spawn the motion controller task. Returns the channel sender used to enqueue moves.
+/// The real planner-occupancy gate: exactly `MAX_PLANNER_SLOTS` permits. `dispatch()`
+/// must acquire one *before* admitting a Category-A move — this is what actually blocks
+/// (matching real FluidNC's `mc_line()`, which withholds `ok` until a planner slot is
+/// free), not the motion channel's own capacity, which only needs to be "big enough"
+/// now (see `spawn_motion_task`). Kept separate from `MachineState::planner_buf_used`
+/// on purpose: that field is just this semaphore's count, reported — a previous version
+/// tracked it as its own independently-mutated counter, which drifted out of sync with
+/// real occupancy (see git history on this function). One source of truth this time.
+pub type MovePermits = Arc<Semaphore>;
+
+/// Spawn the motion controller task. Returns the channel sender used to enqueue moves,
+/// and the semaphore callers must acquire a permit from before sending a Category-A move.
 pub fn spawn_motion_task(
     shared: SharedMachineState,
     broadcast: StateBroadcast,
     tick_hz: u32,
-) -> MoveTx {
-    let (tx, rx) = mpsc::channel(32);
-    tokio::spawn(motion_loop(shared, broadcast, rx, tick_hz));
-    tx
+) -> (MoveTx, MovePermits) {
+    let permits: MovePermits = Arc::new(Semaphore::new(MAX_PLANNER_SLOTS as usize));
+    // No longer the admission gate (the semaphore is) — just needs headroom over what
+    // can realistically be in flight at once: up to MAX_PLANNER_SLOTS permit-holding
+    // moves, plus the rare non-gated item (a dwell/B1/B2 placeholder, jog, or homing
+    // move) a client might have in flight alongside them.
+    let (tx, rx) = mpsc::channel(MAX_PLANNER_SLOTS as usize + 8);
+    tokio::spawn(motion_loop(
+        shared,
+        broadcast,
+        rx,
+        Arc::clone(&permits),
+        tick_hz,
+    ));
+    (tx, permits)
 }
 
 async fn motion_loop(
     shared: SharedMachineState,
     broadcast: StateBroadcast,
     mut rx: MoveRx,
+    permits: MovePermits,
     tick_hz: u32,
 ) {
     let dt = 1.0 / tick_hz as f64;
     let interval_dur = Duration::from_secs_f64(dt);
 
-    while let Some((mv, result_tx)) = rx.recv().await {
+    while let Some((mv, result_tx, permit)) = rx.recv().await {
         // Capture epoch at dequeue time — if a soft_reset happened between when this move
         // was queued and now, the epoch will differ and execute_move will skip it.
         let epoch = { shared.read().await.reset_epoch };
-        let is_dwell = matches!(mv.kind, MoveKind::Dwell { .. });
         let result = execute_move(&shared, &broadcast, &mv, dt, interval_dur, epoch).await;
-        // Decrement planner count — but NOT for dwell: G4 drains the planner, never fills it.
-        if !is_dwell {
+        // Release the permit (if this move held one) now that it has genuinely
+        // finished — not on dequeue — so the semaphore only admits a new move once
+        // real occupancy actually drops. Captured before dropping since drop consumes it.
+        let had_permit = permit.is_some();
+        drop(permit);
+        if had_permit {
             let mut state = shared.write().await;
-            if state.planner_buf_used > 0 {
-                state.planner_buf_used -= 1;
-            }
+            // Derived directly from the semaphore's own atomic count, not an
+            // independent -1 — this is what makes the acquire (dispatch()) and
+            // release (here) sides race-free against each other: both write the
+            // semaphore's actual state at that instant rather than assuming their
+            // own prior read of it is still valid.
+            state.planner_buf_used = MAX_PLANNER_SLOTS - permits.available_permits() as i32;
             let _ = broadcast.send(());
         }
         let _ = result_tx.send(result);
@@ -460,7 +503,7 @@ mod tests {
     #[tokio::test]
     async fn linear_move_reaches_target() {
         let (shared, bcast) = make_shared();
-        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+        let (tx, _permits) = spawn_motion_task(Arc::clone(&shared), bcast, 100);
 
         let target = {
             let s = shared.read().await;
@@ -479,6 +522,7 @@ mod tests {
                 probe: None,
             },
             result_tx,
+            None,
         ))
         .await
         .unwrap();
@@ -495,7 +539,7 @@ mod tests {
     #[tokio::test]
     async fn jog_cancel_stops_motion() {
         let (shared, bcast) = make_shared();
-        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+        let (tx, _permits) = spawn_motion_task(Arc::clone(&shared), bcast, 100);
 
         // Start a long jog toward the negative X limit
         let mut target = [0.0f64; AXIS_COUNT];
@@ -510,6 +554,7 @@ mod tests {
                 probe: None,
             },
             result_tx,
+            None,
         ))
         .await
         .unwrap();
@@ -547,7 +592,7 @@ mod tests {
     #[tokio::test]
     async fn probe_contact_syncs_planned_pos() {
         let (shared, bcast) = make_shared();
-        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+        let (tx, _permits) = spawn_motion_task(Arc::clone(&shared), bcast, 100);
 
         let target = {
             let mut s = shared.write().await;
@@ -571,6 +616,7 @@ mod tests {
                 }),
             },
             result_tx,
+            None,
         ))
         .await
         .unwrap();
@@ -592,7 +638,7 @@ mod tests {
         use crate::machine::state::ToolsetterConfig;
 
         let (shared, bcast) = make_shared();
-        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+        let (tx, _permits) = spawn_motion_task(Arc::clone(&shared), bcast, 100);
 
         let target = {
             let mut s = shared.write().await;
@@ -622,6 +668,7 @@ mod tests {
                 }),
             },
             result_tx,
+            None,
         ))
         .await
         .unwrap();
@@ -640,7 +687,7 @@ mod tests {
         use crate::machine::state::ToolsetterConfig;
 
         let (shared, bcast) = make_shared();
-        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+        let (tx, _permits) = spawn_motion_task(Arc::clone(&shared), bcast, 100);
 
         // Toolsetter configured far from the probe's XY — and no stock defined —
         // so a misconfigured (or unsynced) toolsetter position must miss entirely,
@@ -673,6 +720,7 @@ mod tests {
                 }),
             },
             result_tx,
+            None,
         ))
         .await
         .unwrap();
@@ -684,7 +732,7 @@ mod tests {
     #[tokio::test]
     async fn probe_miss_returns_no_contact_without_error_flag() {
         let (shared, bcast) = make_shared();
-        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+        let (tx, _permits) = spawn_motion_task(Arc::clone(&shared), bcast, 100);
 
         // No stock → the probe runs to full travel and misses.
         let target = {
@@ -706,6 +754,7 @@ mod tests {
                 }),
             },
             result_tx,
+            None,
         ))
         .await
         .unwrap();
@@ -717,7 +766,7 @@ mod tests {
     #[tokio::test]
     async fn jog_cancel_syncs_planned_pos() {
         let (shared, bcast) = make_shared();
-        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+        let (tx, _permits) = spawn_motion_task(Arc::clone(&shared), bcast, 100);
 
         let mut target = [0.0f64; AXIS_COUNT];
         target[0] = -250.0;
@@ -735,6 +784,7 @@ mod tests {
                 probe: None,
             },
             result_tx,
+            None,
         ))
         .await
         .unwrap();
@@ -757,7 +807,7 @@ mod tests {
     #[tokio::test]
     async fn soft_limit_triggers_alarm() {
         let (shared, bcast) = make_shared();
-        let tx = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+        let (tx, _permits) = spawn_motion_task(Arc::clone(&shared), bcast, 100);
 
         // Move past X travel limit (past -300mm)
         let mut target = [0.0f64; AXIS_COUNT];
@@ -772,6 +822,7 @@ mod tests {
                 probe: None,
             },
             result_tx,
+            None,
         ))
         .await
         .unwrap();
@@ -780,5 +831,70 @@ mod tests {
         assert!(matches!(result, MoveResult::Alarm(_)));
         let state = shared.read().await;
         assert_eq!(state.status, MachineStatus::Alarm);
+    }
+
+    /// Regression for the "execPtr runs exactly one line ahead" bug: a previous version
+    /// tracked planner occupancy as an independently-mutated counter that incremented on
+    /// dispatch but was capped at MAX_PLANNER_SLOTS, while the channel it gated actually
+    /// allowed more in flight — so once real occupancy exceeded the cap even briefly, the
+    /// counter permanently under-reported it. Exercises the semaphore directly (no TCP
+    /// layer, so no live-polling raciness) to prove occupancy is exact, not just "close":
+    /// saturating all MAX_PLANNER_SLOTS permits must leave exactly zero available, and a
+    /// further acquire must genuinely block rather than slip through.
+    #[tokio::test]
+    async fn planner_permits_track_real_occupancy_exactly() {
+        let (shared, bcast) = make_shared();
+        let (tx, permits) = spawn_motion_task(Arc::clone(&shared), bcast, 100);
+
+        // Slow enough (~60ms/move) that none of these can possibly complete before the
+        // assertions below run, however many the scheduler lets through back-to-back.
+        let n = MAX_PLANNER_SLOTS as usize;
+        let mut receivers = Vec::with_capacity(n);
+        for i in 0..n {
+            let permit = Arc::clone(&permits).acquire_owned().await.unwrap();
+            let target = {
+                let mut t = shared.read().await.pos;
+                t[0] -= 0.1 * (i as f64 + 1.0);
+                t
+            };
+            let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+            tx.send((
+                PendingMove {
+                    kind: MoveKind::Linear,
+                    target,
+                    feed: 100.0,
+                    probe: None,
+                },
+                result_tx,
+                Some(permit),
+            ))
+            .await
+            .unwrap();
+            receivers.push(result_rx);
+        }
+
+        // All MAX_PLANNER_SLOTS moves are admitted and none have finished — the
+        // semaphore must report exactly zero available, not "close to zero".
+        assert_eq!(permits.available_permits(), 0);
+
+        // A further acquire must genuinely block on real completion, not slip through
+        // via some other path (e.g. a channel slot freed by dequeue-before-completion).
+        // Scoped so the future (and its registered-waiter slot on the semaphore) is
+        // dropped once this check is done — left alive, it would still be registered
+        // and could silently steal one of the permits released below.
+        {
+            let acquire_fut = Arc::clone(&permits).acquire_owned();
+            tokio::pin!(acquire_fut);
+            tokio::select! {
+                _ = &mut acquire_fut => panic!("acquired a permit while all were still genuinely held"),
+                _ = time::sleep(Duration::from_millis(50)) => {}
+            }
+        }
+
+        // Let every move finish, then confirm every permit came back — no leaks either.
+        for rx in receivers {
+            rx.await.unwrap();
+        }
+        assert_eq!(permits.available_permits(), n);
     }
 }

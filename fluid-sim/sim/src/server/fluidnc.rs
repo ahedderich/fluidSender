@@ -5,7 +5,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{error, info, warn};
 
 use crate::machine::gcode::{interpret, interpret_jog, InterpretResult};
-use crate::machine::motion::{MoveKind, MoveResult, MoveTx, PendingMove};
+use crate::machine::motion::{MoveKind, MovePermits, MoveResult, MoveTx, PendingMove};
 use crate::machine::state::{
     now_ms, ConsoleBroadcast, ConsoleEntry, MachineStatus, SharedMachineState, StateBroadcast,
     AXIS_COUNT, MAX_PLANNER_SLOTS,
@@ -36,6 +36,7 @@ pub async fn run(
     broadcast: StateBroadcast,
     console: ConsoleBroadcast,
     move_tx: MoveTx,
+    move_permits: MovePermits,
 ) {
     let addr = format!("0.0.0.0:{}", port);
     let listener = TcpListener::bind(&addr)
@@ -51,6 +52,7 @@ pub async fn run(
                 let broadcast = broadcast.clone();
                 let console = console.clone();
                 let move_tx = move_tx.clone();
+                let move_permits = Arc::clone(&move_permits);
                 tokio::spawn(async move {
                     if let Err(e) = handle_connection(
                         stream,
@@ -58,6 +60,7 @@ pub async fn run(
                         broadcast,
                         console,
                         move_tx,
+                        move_permits,
                         peer.to_string(),
                     )
                     .await
@@ -267,18 +270,20 @@ enum DispatchOutcome {
 /// Runs `dispatch()` to completion while continuing to service realtime bytes and
 /// deferring any full lines that arrive in the meantime.
 ///
-/// `dispatch()` can block for a long time inside `move_tx.send()` — the motion queue
-/// (32 slots) fills far faster than moves actually execute in real simulated time,
-/// since `ok` is returned on admission, not completion, so a host sender paces
-/// dispatch on bytes-in-flight rather than moves-in-flight and races ahead. Without
-/// this wrapper, that block would stop the connection from reading the socket at
-/// all — including `?` status polls — for as long as the queue stays full, which
-/// looks like the machine freezing (and the sim-ui staying fluid throughout, since
-/// it reads shared state directly and never goes through this connection).
+/// `dispatch()` can block for a long time acquiring a planner-slot permit (see
+/// `MovePermits`) — that fills up far faster than moves actually execute in real
+/// simulated time, since `ok` is returned on admission, not completion, so a host
+/// sender paces dispatch on bytes-in-flight rather than moves-in-flight and races
+/// ahead. Without this wrapper, that block would stop the connection from reading
+/// the socket at all — including `?` status polls — for as long as the planner stays
+/// full, which looks like the machine freezing (and the sim-ui staying fluid
+/// throughout, since it reads shared state directly and never goes through this
+/// connection).
 async fn dispatch_with_realtime_service(
     parsed: ParsedLine,
     ctx: &SimCtx<'_>,
     move_tx: &MoveTx,
+    move_permits: &MovePermits,
     alarm_tx: &mpsc::Sender<String>,
     io: &mut RealtimeIo<'_>,
     deferred: &mut std::collections::VecDeque<String>,
@@ -289,6 +294,7 @@ async fn dispatch_with_realtime_service(
         ctx.shared,
         ctx.broadcast,
         move_tx,
+        move_permits,
         alarm_tx,
         raw_buf_len,
     );
@@ -317,6 +323,7 @@ async fn handle_connection(
     broadcast: StateBroadcast,
     console: ConsoleBroadcast,
     move_tx: MoveTx,
+    move_permits: MovePermits,
     peer: String,
 ) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
@@ -413,6 +420,7 @@ async fn handle_connection(
                 peer: &peer,
             },
             &move_tx,
+            &move_permits,
             &alarm_tx,
             &mut RealtimeIo {
                 reader: &mut reader,
@@ -763,6 +771,7 @@ async fn dispatch(
     shared: &SharedMachineState,
     broadcast: &StateBroadcast,
     move_tx: &MoveTx,
+    move_permits: &MovePermits,
     alarm_tx: &mpsc::Sender<String>,
     raw_buf_len: usize,
 ) -> (String, Option<(PendingKind, oneshot::Receiver<MoveResult>)>) {
@@ -910,19 +919,36 @@ async fn dispatch(
                     let is_probe = probe_error_on_miss.is_some();
                     let (res_tx, res_rx) = oneshot::channel();
                     // Probe moves (B2) drain the planner before running — they never add a
-                    // planner slot. Only category-A moves (linear/arc/jog) consume a slot.
+                    // planner slot. Only category-A moves (linear/arc/jog) consume one, and
+                    // this permit is the real admission gate for that — it only resolves once
+                    // a slot is genuinely free, matching real FluidNC's mc_line(), which
+                    // withholds ok the same way. planner_buf_used below is just this
+                    // semaphore's occupancy count, reported — not an independent counter (a
+                    // previous version was, and drifted out of sync with real occupancy).
+                    let permit = if is_probe {
+                        None
+                    } else {
+                        match move_permits.clone().acquire_owned().await {
+                            Ok(permit) => Some(permit),
+                            Err(_) => return (response::error(9), None), // semaphore closed (shutdown)
+                        }
+                    };
                     if !is_probe {
                         let mut state = shared.write().await;
+                        // Derived from the semaphore's own atomic count, not a bare +1 —
+                        // see the matching comment in motion.rs's motion_loop for why.
                         state.planner_buf_used =
-                            (state.planner_buf_used + 1).min(MAX_PLANNER_SLOTS);
+                            MAX_PLANNER_SLOTS - move_permits.available_permits() as i32;
                         let _ = broadcast.send(());
                     }
-                    if move_tx.send((mv, res_tx)).await.is_err() {
+                    if move_tx.send((mv, res_tx, permit)).await.is_err() {
+                        // The failed send returns the tuple (including the permit) inside
+                        // its error, already dropped by the time is_err() is evaluated —
+                        // so the permit's back in the semaphore before this reads it.
                         if !is_probe {
                             let mut state = shared.write().await;
-                            if state.planner_buf_used > 0 {
-                                state.planner_buf_used -= 1;
-                            }
+                            state.planner_buf_used =
+                                MAX_PLANNER_SLOTS - move_permits.available_permits() as i32;
                             let _ = broadcast.send(());
                         }
                         return (response::error(9), None);
@@ -962,6 +988,7 @@ async fn dispatch(
                                 probe: None,
                             },
                             res_tx,
+                            None,
                         ))
                         .await
                         .is_err()
@@ -984,6 +1011,7 @@ async fn dispatch(
                                 probe: None,
                             },
                             res_tx,
+                            None,
                         ))
                         .await
                         .is_err()
@@ -1005,6 +1033,7 @@ async fn dispatch(
                                 probe: None,
                             },
                             res_tx,
+                            None,
                         ))
                         .await
                         .is_err()
@@ -1024,7 +1053,7 @@ async fn dispatch(
                 None => (response::error(9), None),
                 Some(mv) => {
                     let (res_tx, _res_rx) = oneshot::channel();
-                    let _ = move_tx.send((mv, res_tx)).await;
+                    let _ = move_tx.send((mv, res_tx, None)).await;
                     (response::ok(), None)
                 }
             }
@@ -1065,6 +1094,7 @@ async fn do_homing(
                 probe: None,
             },
             res_tx,
+            None,
         ))
         .await;
 
