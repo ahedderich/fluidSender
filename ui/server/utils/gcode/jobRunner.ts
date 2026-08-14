@@ -27,7 +27,7 @@ import {
 import { getLastMachineStatus } from '../machine/poller'
 import { startSend, sendGCode, suspendSend, resumeChunk, stopSend, senderHardStop } from '../machine/sender'
 import { setMode } from '../machine/machineMode'
-import { requestToolLengthRefresh } from '../machine/toolLengthState'
+import { getToolLengthOffset, requestToolLengthRefresh } from '../machine/toolLengthState'
 import { toolStore } from '../tool/toolStore'
 import { appendRuntimeSession } from '../tool/runtimeLog'
 import { applyTransforms } from './transform'
@@ -921,8 +921,8 @@ class JobRunner {
     switch (event.completedMode) {
       case 'success':
         if (suspendedChunkId) {
-          // TLO was already re-confirmed from firmware and re-applied live back when the
-          // pause completed (_restoreToolLengthThenPause) — nothing to redo here.
+          // TLO itself was already handled by the recovery sequence just sent
+          // (_buildRecoverySequence's G43.1 resend) — nothing further to do here.
           this._mainJobChunkId = null
           this._sendHandle = resumeChunk(suspendedChunkId)
           this._setStatus('running')
@@ -940,14 +940,31 @@ class JobRunner {
     }
   }
 
+  /** Poll the already-running status poller's last-known state for a confirmed Idle,
+   *  rather than firing $# immediately after 0x18. FluidNC rejects $# with error:8
+   *  ("Command requires idle state") while still in Hold/Cycle — on real hardware the
+   *  soft reset does not always settle to a reported Idle as fast as sending $# right
+   *  behind 0x18 assumes, so querying too early silently comes back null instead of the
+   *  real value. Bounded so a stuck/never-arriving Idle can't hang the pause forever. */
+  private async _waitForIdle(timeoutMs = 2000): Promise<void> {
+    const start = Date.now()
+    while (getLastMachineStatus()?.state !== 'Idle' && Date.now() - start < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
   /** After a pause's soft reset completes, query firmware's persisted TLO (survives a
    *  plain soft reset — see toolLengthState.ts) and re-apply it live via G43.1 before
    *  exposing status 'paused'. Status stays 'pausing' for this short window — Resume is
    *  gated on 'paused' — so the UI never shows a resumable pause before firmware's real
    *  G43.1 offset has actually been restored. */
-  private _restoreToolLengthThenPause(chunkId: string): void {
-    requestToolLengthRefresh().then((offset) => {
-      // Superseded by a stop/hard-stop/disconnect while the query was in flight.
+  private async _restoreToolLengthThenPause(chunkId: string): Promise<void> {
+    try {
+      await this._waitForIdle()
+      // Superseded by a stop/hard-stop/disconnect while waiting/querying.
+      if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
+
+      const offset = await requestToolLengthRefresh()
       if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
 
       if (offset === null) {
@@ -961,12 +978,12 @@ class JobRunner {
         if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
         this._setStatus('paused', { sendPtr: this._execPtr })
       })
-    }).catch((err: unknown) => {
+    } catch (err) {
       console.error('[jobRunner] TLO restore-on-pause error:', err)
       if (this._status === 'pausing' && this._mainJobChunkId === chunkId) {
         this._setStatus('paused', { sendPtr: this._execPtr })
       }
-    })
+    }
   }
 
   private _enterProgramPause(comment: string | null): void {
@@ -1123,9 +1140,15 @@ class JobRunner {
 
   private _buildRecoverySequence(modal: GCodeModalState, safeZ: number): string[] {
     const cmds: string[] = []
-    // TLO is restored separately, immediately after the pause completes
-    // (_restoreToolLengthThenPause) — by the time this recovery sequence runs, firmware
-    // already has the correct G43.1 offset live, so there's nothing to redo here.
+    // TLO is normally already restored by the time this runs (_restoreToolLengthThenPause
+    // re-applies it right after the pause completes) — but that's a best-effort query
+    // against firmware, not a guarantee (e.g. it can silently come back null if the
+    // machine hadn't settled to Idle yet). Resend it here from whatever's currently
+    // cached as a second line of defense, so a failed pause-time restore doesn't leave
+    // firmware silently running with the wrong Z offset. Null means genuinely never
+    // confirmed (e.g. after a crash-recovery restart) — skip rather than guess.
+    const knownOffset = getToolLengthOffset()
+    if (knownOffset !== null) cmds.push(`G43.1 Z${knownOffset.toFixed(4)}`)
     cmds.push(modal.workCoordinate)
     cmds.push(modal.units)
     cmds.push('G90')
