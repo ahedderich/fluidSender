@@ -85,7 +85,8 @@ async fn main() {
     let (shared, broadcast) = new_shared(state);
     let console = new_console();
 
-    let move_tx = spawn_motion_task(Arc::clone(&shared), broadcast.clone(), cfg.sim.tick_hz);
+    let (move_tx, move_permits) =
+        spawn_motion_task(Arc::clone(&shared), broadcast.clone(), cfg.sim.tick_hz);
 
     let app_state = AppState {
         machine: Arc::clone(&shared),
@@ -102,6 +103,7 @@ async fn main() {
         broadcast.clone(),
         console.clone(),
         move_tx,
+        move_permits,
     ));
 
     let control_handle = tokio::spawn(run_control(control_port, app_state));
