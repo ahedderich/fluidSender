@@ -304,6 +304,88 @@ async fn program_pause_m0_resumes_on_cycle_start() {
     assert!(saw_idle, "M0 never resumed back to Idle after cycle-start");
 }
 
+/// Regression for the connection task blocking on `move_tx.send()` once the internal
+/// motion queue (32 slots) fills up. Admission races far ahead of real execution — `ok`
+/// is returned when a line is queued, not when it finishes — so a normal host sender
+/// saturates that queue almost immediately on any run of several moves. Once saturated,
+/// the *next* line's `ok` is withheld until a queued move actually completes; without
+/// dispatch racing that block against continued socket reads, the connection couldn't
+/// even read a `?` byte off the wire during that window, let alone answer it, making the
+/// UI's toolhead position appear frozen for as long as the backlog took to drain.
+#[tokio::test]
+async fn status_query_stays_responsive_while_motion_queue_is_full() {
+    // speed=1 (real-time): each 0.5mm move at F120 (2mm/s) takes ~250ms to actually
+    // execute — generous relative to our own read-loop overhead below, so the test
+    // isn't sensitive to scheduler jitter — and 40 queued moves keep the 32-slot
+    // queue saturated for a couple of seconds, plenty of window to query mid-backlog.
+    let (fluidnc_port, _control_port) = start_sim_with_speed(1).await;
+    let (mut reader, mut writer) = connect(fluidnc_port).await;
+    read_until(&mut reader, "ok").await; // greeting
+
+    writer.write_all(b"G91\n").await.unwrap();
+    read_until(&mut reader, "ok").await;
+
+    let mut script = String::new();
+    for i in 0..40 {
+        let dx = if i % 2 == 0 { 0.5 } else { -0.5 };
+        script.push_str(&format!("G1 X{dx} F120\n"));
+    }
+    writer.write_all(script.as_bytes()).await.unwrap();
+
+    // The internal motion queue holds exactly 32 slots (`mpsc::channel(32)` in
+    // motion.rs) — read exactly that many oks. That's deterministic (no timing
+    // guesswork: the "ok" trickle for backlogged lines runs at the same ~40ms
+    // move-completion cadence whether or not this bug is fixed, so there's no
+    // reliable pause to detect — only a fixed count works), and tells us for
+    // certain the 33rd+ line's ok is now gated on a queued move actually
+    // completing, i.e. we're genuinely mid-backlog.
+    let mut oks = 0;
+    while oks < 32 {
+        assert_eq!(read_line(&mut reader).await, "ok");
+        oks += 1;
+    }
+
+    // Now genuinely mid-backlog: send `?` and see whether it jumps the queue or has
+    // to wait for more backlogged lines to drain ahead of it first — wall-clock
+    // timing alone is too easy to satisfy by luck (the remaining backlog drains in
+    // well under a second either way), so the real signal is *order*.
+    writer.write_all(b"?\n").await.unwrap();
+    let mut oks_before_query_answered = 0;
+    let status = timeout(Duration::from_secs(2), async {
+        loop {
+            let line = read_line(&mut reader).await;
+            if line == "ok" {
+                oks_before_query_answered += 1;
+                continue;
+            }
+            if line.starts_with('<') {
+                return line;
+            }
+        }
+    })
+    .await
+    .expect("status query was never answered");
+    assert!(
+        status.contains("Run"),
+        "expected machine still running: {}",
+        status
+    );
+    assert!(
+        oks_before_query_answered <= 2,
+        "status query was only answered after {} more backlogged lines drained ahead of it — \
+         the connection was stuck admitting queued moves instead of servicing the query promptly",
+        oks_before_query_answered
+    );
+
+    // Drain remaining oks so the connection doesn't leave the machine mid-job.
+    oks += oks_before_query_answered;
+    while oks < 40 {
+        if read_line(&mut reader).await == "ok" {
+            oks += 1;
+        }
+    }
+}
+
 // 100×80 rect stock centred at (-150, -100) (the sim's initial XY position),
 // top z = -10, depth 20 → XY footprint [-200,-100] × [-140,-60].
 const STOCK_JSON: &str = r#"{"shape":{"type":"rect","width":100.0,"height":80.0,"rotation":0.0},"depth":20.0,"ox":-150.0,"oy":-100.0,"oz":-10.0}"#;

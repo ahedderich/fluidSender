@@ -10,7 +10,7 @@ use crate::machine::state::{
     now_ms, ConsoleBroadcast, ConsoleEntry, MachineStatus, SharedMachineState, StateBroadcast,
     AXIS_COUNT, MAX_PLANNER_SLOTS,
 };
-use crate::protocol::parser::{parse_line, ParsedLine};
+use crate::protocol::parser::{is_realtime_byte, parse_line, ParsedLine};
 use crate::protocol::realtime::classify;
 use crate::protocol::realtime::RealtimeCmd;
 use crate::protocol::response;
@@ -193,6 +193,124 @@ async fn process_pending_line(
     Ok(false)
 }
 
+/// The per-connection socket/read-buffer state, bundled so it can be threaded through
+/// `read_and_service_realtime`/`dispatch_with_realtime_service` as one argument instead
+/// of five — those fields are always borrowed together, never independently.
+struct RealtimeIo<'a> {
+    reader: &'a mut BufReader<tokio::net::tcp::OwnedReadHalf>,
+    writer: &'a mut tokio::net::tcp::OwnedWriteHalf,
+    chunk: &'a mut [u8; 1024],
+    raw_buf: &'a mut Vec<u8>,
+    saw_rt: &'a mut bool,
+}
+
+/// The per-connection environment (state handles + logging identity), bundled for the
+/// same reason as `RealtimeIo` — always passed as a group.
+struct SimCtx<'a> {
+    shared: &'a SharedMachineState,
+    broadcast: &'a StateBroadcast,
+    console: &'a ConsoleBroadcast,
+    peer: &'a str,
+}
+
+/// Outcome of one `read_and_service_realtime` call.
+enum ReadOutcome {
+    Eof,
+    /// A full line is ready. Not yet console-logged — callers are responsible for
+    /// that (some log it immediately, others defer the line and let whoever
+    /// eventually dispatches it log it once, matching the existing `deferred`
+    /// convention — see the comment on `Next::Line` below).
+    Line(String),
+    NoLine,
+}
+
+/// Read whatever is currently available on the socket, answering any realtime bytes
+/// (`?`, feed-hold, jog-cancel, etc.) found in it immediately — real FluidNC answers
+/// those the instant they arrive, not after a `\n` shows up later in the stream —
+/// and reporting the next fully-buffered line, if any. Shared by every place that
+/// needs to keep servicing realtime bytes while otherwise waiting on something else:
+/// the main dispatch loop, a pending B2 op, and (below) a full motion queue.
+async fn read_and_service_realtime(
+    io: &mut RealtimeIo<'_>,
+    ctx: &SimCtx<'_>,
+) -> anyhow::Result<ReadOutcome> {
+    let n = io.reader.read(&mut io.chunk[..]).await?;
+    if n == 0 {
+        return Ok(ReadOutcome::Eof);
+    }
+    for &b in &io.chunk[..n] {
+        if is_realtime_byte(b) {
+            *io.saw_rt = true;
+            let response =
+                handle_realtime(classify(b), ctx.shared, ctx.broadcast, io.raw_buf.len()).await;
+            if let Some(resp) = response {
+                apply_response_jitter(ctx.shared).await;
+                io.writer.write_all(resp.as_bytes()).await?;
+                log_console(ctx.console, "tx", ctx.peer, resp.trim_end());
+            }
+        } else {
+            io.raw_buf.push(b);
+        }
+    }
+    match next_dispatchable_line(io.raw_buf, io.saw_rt) {
+        Some(line) => Ok(ReadOutcome::Line(line)),
+        None => Ok(ReadOutcome::NoLine),
+    }
+}
+
+/// Outcome of `dispatch_with_realtime_service`.
+enum DispatchOutcome {
+    Eof,
+    Done(String, Option<(PendingKind, oneshot::Receiver<MoveResult>)>),
+}
+
+/// Runs `dispatch()` to completion while continuing to service realtime bytes and
+/// deferring any full lines that arrive in the meantime.
+///
+/// `dispatch()` can block for a long time inside `move_tx.send()` — the motion queue
+/// (32 slots) fills far faster than moves actually execute in real simulated time,
+/// since `ok` is returned on admission, not completion, so a host sender paces
+/// dispatch on bytes-in-flight rather than moves-in-flight and races ahead. Without
+/// this wrapper, that block would stop the connection from reading the socket at
+/// all — including `?` status polls — for as long as the queue stays full, which
+/// looks like the machine freezing (and the sim-ui staying fluid throughout, since
+/// it reads shared state directly and never goes through this connection).
+async fn dispatch_with_realtime_service(
+    parsed: ParsedLine,
+    ctx: &SimCtx<'_>,
+    move_tx: &MoveTx,
+    alarm_tx: &mpsc::Sender<String>,
+    io: &mut RealtimeIo<'_>,
+    deferred: &mut std::collections::VecDeque<String>,
+) -> anyhow::Result<DispatchOutcome> {
+    let raw_buf_len = io.raw_buf.len();
+    let fut = dispatch(
+        parsed,
+        ctx.shared,
+        ctx.broadcast,
+        move_tx,
+        alarm_tx,
+        raw_buf_len,
+    );
+    tokio::pin!(fut);
+    loop {
+        tokio::select! {
+            biased;
+            (response, pending) = &mut fut => return Ok(DispatchOutcome::Done(response, pending)),
+            outcome = read_and_service_realtime(io, ctx) => {
+                match outcome? {
+                    ReadOutcome::Eof => return Ok(DispatchOutcome::Eof),
+                    ReadOutcome::Line(line) => {
+                        log_console(ctx.console, "rx", ctx.peer, &line);
+                        deferred.push_back(line);
+                    }
+                    ReadOutcome::NoLine => {}
+                }
+            }
+        }
+    }
+}
+
 async fn handle_connection(
     stream: TcpStream,
     shared: SharedMachineState,
@@ -237,6 +355,19 @@ async fn handle_connection(
             log_console(&console, "rx", &peer, &line);
             Next::Line(line)
         } else {
+            let mut io = RealtimeIo {
+                reader: &mut reader,
+                writer: &mut writer,
+                chunk: &mut chunk,
+                raw_buf: &mut raw_buf,
+                saw_rt: &mut saw_rt,
+            };
+            let ctx = SimCtx {
+                shared: &shared,
+                broadcast: &broadcast,
+                console: &console,
+                peer: &peer,
+            };
             tokio::select! {
                 biased;
 
@@ -253,31 +384,14 @@ async fn handle_connection(
                 // as it's read instead of waiting for a `\n` to show up later in the stream
                 // (waiting on read_until here would let a lone `?` sit unanswered for as long as
                 // the connection stays otherwise idle).
-                n = reader.read(&mut chunk) => {
-                    let n = n?;
-                    if n == 0 {
-                        Next::Eof
-                    } else {
-                        for &b in &chunk[..n] {
-                            if crate::protocol::parser::is_realtime_byte(b) {
-                                saw_rt = true;
-                                let response = handle_realtime(classify(b), &shared, &broadcast, raw_buf.len()).await;
-                                if let Some(resp) = response {
-                                    apply_response_jitter(&shared).await;
-                                    writer.write_all(resp.as_bytes()).await?;
-                                    log_console(&console, "tx", &peer, resp.trim_end());
-                                }
-                            } else {
-                                raw_buf.push(b);
-                            }
-                        }
-
-                        if let Some(line) = next_dispatchable_line(&mut raw_buf, &mut saw_rt) {
+                outcome = read_and_service_realtime(&mut io, &ctx) => {
+                    match outcome? {
+                        ReadOutcome::Eof => Next::Eof,
+                        ReadOutcome::Line(line) => {
                             log_console(&console, "rx", &peer, &line);
                             Next::Line(line)
-                        } else {
-                            Next::Skip
                         }
+                        ReadOutcome::NoLine => Next::Skip,
                     }
                 }
             }
@@ -290,15 +404,30 @@ async fn handle_connection(
         };
 
         let parsed = parse_line(&line);
-        let (response, pending) = dispatch(
+        let (response, pending) = match dispatch_with_realtime_service(
             parsed,
-            &shared,
-            &broadcast,
+            &SimCtx {
+                shared: &shared,
+                broadcast: &broadcast,
+                console: &console,
+                peer: &peer,
+            },
             &move_tx,
             &alarm_tx,
-            raw_buf.len(),
+            &mut RealtimeIo {
+                reader: &mut reader,
+                writer: &mut writer,
+                chunk: &mut chunk,
+                raw_buf: &mut raw_buf,
+                saw_rt: &mut saw_rt,
+            },
+            &mut deferred,
         )
-        .await;
+        .await?
+        {
+            DispatchOutcome::Eof => break,
+            DispatchOutcome::Done(response, pending) => (response, pending),
+        };
         if !response.is_empty() {
             apply_response_jitter(&shared).await;
             writer.write_all(response.as_bytes()).await?;
@@ -340,6 +469,19 @@ async fn handle_connection(
                     continue;
                 }
 
+                let mut io = RealtimeIo {
+                    reader: &mut reader,
+                    writer: &mut writer,
+                    chunk: &mut chunk,
+                    raw_buf: &mut raw_buf,
+                    saw_rt: &mut saw_rt,
+                };
+                let ctx = SimCtx {
+                    shared: &shared,
+                    broadcast: &broadcast,
+                    console: &console,
+                    peer: &peer,
+                };
                 tokio::select! {
                     // Guard prevents polling a consumed oneshot in the pause phase.
                     result = &mut rx, if !in_pause => {
@@ -365,28 +507,15 @@ async fn handle_connection(
                     }
                     // Real-time bytes (`?` status, etc.) are dispatched the instant they
                     // arrive rather than waiting for a `\n` — see the outer loop's comment.
-                    n = reader.read(&mut chunk) => {
-                        let n = n?;
-                        if n == 0 {
-                            return Ok(()); // EOF
-                        }
-                        for &b in &chunk[..n] {
-                            if crate::protocol::parser::is_realtime_byte(b) {
-                                saw_rt = true;
-                                let resp = handle_realtime(classify(b), &shared, &broadcast, raw_buf.len()).await;
-                                if let Some(r) = resp {
-                                    apply_response_jitter(&shared).await;
-                                    writer.write_all(r.as_bytes()).await?;
-                                    log_console(&console, "tx", &peer, r.trim_end());
+                    outcome = read_and_service_realtime(&mut io, &ctx) => {
+                        match outcome? {
+                            ReadOutcome::Eof => return Ok(()),
+                            ReadOutcome::Line(ql) => {
+                                if process_pending_line(ql, in_pause, &shared, &mut writer, &console, &peer, &mut deferred).await? {
+                                    break;
                                 }
-                            } else {
-                                raw_buf.push(b);
                             }
-                        }
-                        if let Some(ql) = next_dispatchable_line(&mut raw_buf, &mut saw_rt) {
-                            if process_pending_line(ql, in_pause, &shared, &mut writer, &console, &peer, &mut deferred).await? {
-                                break;
-                            }
+                            ReadOutcome::NoLine => {}
                         }
                     }
                     Some(alarm_msg) = alarm_rx.recv() => {
