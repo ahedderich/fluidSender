@@ -882,23 +882,10 @@ class JobRunner {
         }
         break
       case 'stopped':
-        // stopSend() completed: machine is Idle. Return to loaded state. The tool that
-        // was active when Stop was pressed still had an open runtime session — finalize
-        // it now, otherwise its accrued time is silently lost.
-        this._finalizeRuntimeSession().catch((err) => console.error('[jobRunner] runtime finalize error:', err))
-        this._mainJobChunkId = null
-        this._execPtr = 0
-        this.sendPtr = 0
-        this._recordExecution('aborted')
-        this._setStatus('loaded', {
-          sendPtr: 0,
-          execPtr: 0,
-          sendExecGap: 0,
-          recovery: null,
-          toolChangeRequest: null,
-          programPause: null,
-        })
-        clearCheckpoint().catch(() => {})
+        // stopSend() completed: machine is Idle, but its soft reset zeroed G43.1 in
+        // firmware the same as pause's does — restore it before exposing 'loaded', same
+        // reasoning as _restoreToolLengthThenPause.
+        this._restoreToolLengthThenFinalizeStop()
         break
       case 'soft':
         break
@@ -982,37 +969,68 @@ class JobRunner {
     }
   }
 
-  /** After a pause's soft reset completes, query firmware's persisted TLO (survives a
-   *  plain soft reset — see toolLengthState.ts) and re-apply it live via G43.1 before
-   *  exposing status 'paused'. Status stays 'pausing' for this short window — Resume is
-   *  gated on 'paused' — so the UI never shows a resumable pause before firmware's real
-   *  G43.1 offset has actually been restored. */
-  private async _restoreToolLengthThenPause(chunkId: string): Promise<void> {
-    try {
-      await this._waitForIdle()
-      // Superseded by a stop/hard-stop/disconnect while waiting/querying.
-      if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
-
-      const offset = await this._queryToolLengthWithRetry()
-      if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
-
-      if (offset === null) {
-        this._setStatus('paused', { sendPtr: this._execPtr })
-        return
-      }
-
+  /** Wait for a confirmed Idle, query firmware's persisted TLO (survives a plain soft
+   *  reset — see toolLengthState.ts), and re-apply it live via G43.1. Shared by pause and
+   *  stop, since either one's soft reset zeroes the live G43.1 offset in firmware — stop
+   *  abandons the job's position, but the machine still shouldn't be left believing its
+   *  tool length offset is zero. Resolves once the G43.1 send completes (or immediately
+   *  if no offset could be confirmed within the retry budget). */
+  private async _restoreToolLengthOnFirmware(): Promise<void> {
+    await this._waitForIdle()
+    const offset = await this._queryToolLengthWithRetry()
+    if (offset === null) return
+    await new Promise<void>((resolve) => {
       this._sendHandle = sendGCode([`G43.1 Z${offset.toFixed(4)}`], (event) => {
         if (event.status !== 'completed') return
         this._sendHandle = null
-        if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
-        this._setStatus('paused', { sendPtr: this._execPtr })
+        resolve()
       })
+    })
+  }
+
+  /** After a pause's soft reset completes, restore TLO before exposing status 'paused'.
+   *  Status stays 'pausing' for this short window — Resume is gated on 'paused' — so the
+   *  UI never shows a resumable pause before firmware's real G43.1 offset has actually
+   *  been restored. */
+  private async _restoreToolLengthThenPause(chunkId: string): Promise<void> {
+    try {
+      await this._restoreToolLengthOnFirmware()
     } catch (err) {
       console.error('[jobRunner] TLO restore-on-pause error:', err)
-      if (this._status === 'pausing' && this._mainJobChunkId === chunkId) {
-        this._setStatus('paused', { sendPtr: this._execPtr })
-      }
     }
+    // Superseded by a stop/hard-stop/disconnect while waiting/querying/restoring.
+    if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
+    this._setStatus('paused', { sendPtr: this._execPtr })
+  }
+
+  /** After a stop's soft reset completes, restore TLO before finalizing back to 'loaded'
+   *  — same reasoning as _restoreToolLengthThenPause, just with no chunk left to resume. */
+  private async _restoreToolLengthThenFinalizeStop(): Promise<void> {
+    try {
+      await this._restoreToolLengthOnFirmware()
+    } catch (err) {
+      console.error('[jobRunner] TLO restore-on-stop error:', err)
+    }
+    // Superseded (e.g. disconnect) while waiting/querying/restoring.
+    if (this._status !== 'stopping') return
+
+    // stopSend() completed: machine is Idle. Return to loaded state. The tool that was
+    // active when Stop was pressed still had an open runtime session — finalize it now,
+    // otherwise its accrued time is silently lost.
+    this._finalizeRuntimeSession().catch((err) => console.error('[jobRunner] runtime finalize error:', err))
+    this._mainJobChunkId = null
+    this._execPtr = 0
+    this.sendPtr = 0
+    this._recordExecution('aborted')
+    this._setStatus('loaded', {
+      sendPtr: 0,
+      execPtr: 0,
+      sendExecGap: 0,
+      recovery: null,
+      toolChangeRequest: null,
+      programPause: null,
+    })
+    clearCheckpoint().catch(() => {})
   }
 
   private _enterProgramPause(comment: string | null): void {
