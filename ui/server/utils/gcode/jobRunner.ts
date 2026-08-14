@@ -954,23 +954,28 @@ class JobRunner {
   }
 
   /** requestToolLengthRefresh() can still legitimately come back null even after a
-   *  confirmed Idle — on real hardware, "reports Idle" and "actually ready to answer $#"
-   *  turned out not to be the same instant (a single query right after _waitForIdle()
-   *  still failed on real hardware; a manual retry a couple seconds later succeeded).
-   *  Keep retrying — $# is a read-only, side-effect-free query, safe to resend — until
-   *  one lands or the budget runs out, rather than accepting the first null as final. */
-  private async _queryToolLengthWithRetry(budgetMs = 5000, retryDelayMs = 400): Promise<number | null> {
+   *  confirmed Idle — on real hardware, each attempt was seen consuming its full 3s
+   *  internal timeout with no response at all (not a fast error:8 reject), for at least
+   *  6.4s straight, yet a query ~19s after the reset succeeded — so whatever FluidNC is
+   *  doing post-reset that $# depends on (its response reads NVS-backed coords[], unlike
+   *  a bare `?` status report) can genuinely take several seconds longer than the machine
+   *  reporting Idle. Keep retrying — $# is a read-only, side-effect-free query, safe to
+   *  resend — with a generous budget, logging every attempt so a future run that's still
+   *  too slow leaves a precise timeline instead of another guess. */
+  private async _queryToolLengthWithRetry(budgetMs = 30000, retryDelayMs = 400): Promise<number | null> {
     const start = Date.now()
     let attempt = 0
     for (;;) {
       attempt++
       const offset = await requestToolLengthRefresh()
+      const elapsed = Date.now() - start
       if (offset !== null) {
-        if (attempt > 1) jLog(`TLO query succeeded on attempt ${attempt} (${Date.now() - start}ms)`)
+        jLog(`TLO query succeeded on attempt ${attempt} (${elapsed}ms)`)
         return offset
       }
-      if (Date.now() - start >= budgetMs) {
-        jLog(`TLO query gave up after ${attempt} attempt(s), ${Date.now() - start}ms`)
+      jLog(`TLO query attempt ${attempt} came back null (${elapsed}ms elapsed)`)
+      if (elapsed >= budgetMs) {
+        jLog(`TLO query gave up after ${attempt} attempt(s), ${elapsed}ms`)
         return null
       }
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
