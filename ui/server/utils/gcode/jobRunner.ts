@@ -953,6 +953,30 @@ class JobRunner {
     }
   }
 
+  /** requestToolLengthRefresh() can still legitimately come back null even after a
+   *  confirmed Idle — on real hardware, "reports Idle" and "actually ready to answer $#"
+   *  turned out not to be the same instant (a single query right after _waitForIdle()
+   *  still failed on real hardware; a manual retry a couple seconds later succeeded).
+   *  Keep retrying — $# is a read-only, side-effect-free query, safe to resend — until
+   *  one lands or the budget runs out, rather than accepting the first null as final. */
+  private async _queryToolLengthWithRetry(budgetMs = 5000, retryDelayMs = 400): Promise<number | null> {
+    const start = Date.now()
+    let attempt = 0
+    for (;;) {
+      attempt++
+      const offset = await requestToolLengthRefresh()
+      if (offset !== null) {
+        if (attempt > 1) jLog(`TLO query succeeded on attempt ${attempt} (${Date.now() - start}ms)`)
+        return offset
+      }
+      if (Date.now() - start >= budgetMs) {
+        jLog(`TLO query gave up after ${attempt} attempt(s), ${Date.now() - start}ms`)
+        return null
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+    }
+  }
+
   /** After a pause's soft reset completes, query firmware's persisted TLO (survives a
    *  plain soft reset — see toolLengthState.ts) and re-apply it live via G43.1 before
    *  exposing status 'paused'. Status stays 'pausing' for this short window — Resume is
@@ -964,7 +988,7 @@ class JobRunner {
       // Superseded by a stop/hard-stop/disconnect while waiting/querying.
       if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
 
-      const offset = await requestToolLengthRefresh()
+      const offset = await this._queryToolLengthWithRetry()
       if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
 
       if (offset === null) {
