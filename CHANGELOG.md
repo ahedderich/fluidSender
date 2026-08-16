@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.4.0](https://github.com/ahedderich/fluidSender/compare/v0.3.0...v0.4.0) (2026-08-16)
+
+
+### Features
+
+* **mobile:** add mobile-responsive UI with Monitor/Control tabs ([6231862](https://github.com/ahedderich/fluidSender/commit/6231862b5a99c9d896221a28669777ff6bccc485))
+* **mobile:** add mobile-responsive UI with Monitor/Control tabs ([e9060bc](https://github.com/ahedderich/fluidSender/commit/e9060bcb4e70f3df155686947fb542e2028f41e8)), closes [#53](https://github.com/ahedderich/fluidSender/issues/53)
+* **sim:** dynamic Bf: rxFree and opt-in TCP jitter ([1aa89af](https://github.com/ahedderich/fluidSender/commit/1aa89af1c683d5e8969d80fac59300838e0db933))
+* **sim:** dynamic Bf: rxFree and opt-in TCP jitter ([7165fba](https://github.com/ahedderich/fluidSender/commit/7165fbafe999f545c0264bc18c6ab5d8f7a20d53))
+* **viewport:** add zoom controls, flip mouse buttons, auto-fit camer… ([e415b71](https://github.com/ahedderich/fluidSender/commit/e415b713a275027d786e5cc24de19815117a3a58))
+* **viewport:** add zoom controls, flip mouse buttons, auto-fit camera to toolpath ([b2da750](https://github.com/ahedderich/fluidSender/commit/b2da750b86fb8b79de8a61c9483d20806e732ff8)), closes [#110](https://github.com/ahedderich/fluidSender/issues/110)
+
+
+### Bug Fixes
+
+* Bugfixes around job reloads and TLO, changes to the viewport and gcode send rate approach. ([ae5ac13](https://github.com/ahedderich/fluidSender/commit/ae5ac13492af178f3e73c07940bedaaccbff5503))
+* **deps:** bump brace-expansion to patch CVE-2026-69152 ([c16f376](https://github.com/ahedderich/fluidSender/commit/c16f376072a2e95c536269f4de386bb28aec233c))
+* **deps:** patch Trivy-flagged CVEs in ui and fluid-sim/sim-ui ([8f95e08](https://github.com/ahedderich/fluidSender/commit/8f95e08ad54d5237163eb1f7a1c932c19636b0e0))
+* **deps:** patch Trivy-flagged CVEs in ui and fluid-sim/sim-ui ([280aecd](https://github.com/ahedderich/fluidSender/commit/280aecd7920ac7a4586fe494fead87c0de2fa315))
+* **deps:** pin vue to resolve one shared install for Nitro's prod build ([1097f8d](https://github.com/ahedderich/fluidSender/commit/1097f8d2c02aa5639b868d6660801c4b8215378f))
+* **deps:** pin vue to resolve one shared install for Nitro's prod build ([a6ba0e4](https://github.com/ahedderich/fluidSender/commit/a6ba0e400015bdf4c53d8d0a030086e78f6bbcbb))
+* **gcode:** correct rotation-compensation transform and its wiring ([c656ca5](https://github.com/ahedderich/fluidSender/commit/c656ca5c7fd0d9fd58730aaa54500f7df60145d6)), closes [#106](https://github.com/ahedderich/fluidSender/issues/106)
+* **gcode:** reanalyze on same-name file reload ([6c93d0c](https://github.com/ahedderich/fluidSender/commit/6c93d0c40a63af20234e746cc4f9f817b3f96620))
+* **gcode:** reanalyze on same-name file reload ([4db88ee](https://github.com/ahedderich/fluidSender/commit/4db88ee129783467ed2073bdae974347038b745c)), closes [#97](https://github.com/ahedderich/fluidSender/issues/97)
+* **gcode:** stop browser-caching stale toolpath vectors on reload ([6ed34ae](https://github.com/ahedderich/fluidSender/commit/6ed34ae294dcf5b99154978f2c15db8593d98f47))
+* **gcode:** stop browser-caching stale toolpath vectors on reload ([ec116f0](https://github.com/ahedderich/fluidSender/commit/ec116f037d41022de47ef1826467346553140d01)), closes [#97](https://github.com/ahedderich/fluidSender/issues/97)
+* **machine:** keep tool length offset in sync with firmware across re… ([8095bd2](https://github.com/ahedderich/fluidSender/commit/8095bd29cad331eec57ab013833722f6f487cff8))
+* **machine:** keep tool length offset in sync with firmware across resets ([d860571](https://github.com/ahedderich/fluidSender/commit/d8605714dd4ecab036543017cfcb4c38a41fe021)), closes [#95](https://github.com/ahedderich/fluidSender/issues/95)
+* **machine:** parse TLO from $# as multi-axis, not a bare scalar ([c304477](https://github.com/ahedderich/fluidSender/commit/c30447768eaffc301aa2b8584d95ec71afaa5882))
+* **machine:** parse TLO from $# as multi-axis, not a bare scalar ([caee2f8](https://github.com/ahedderich/fluidSender/commit/caee2f891741798a4272afd8994caaadc7934df3))
+* **machine:** restore TLO from firmware on pause, not a cached value ([2c523bb](https://github.com/ahedderich/fluidSender/commit/2c523bb61c7b5143bbfa87d1848414c63536faee))
+* **machine:** restore TLO from firmware on pause, not a cached value ([804751d](https://github.com/ahedderich/fluidSender/commit/804751d3aa19ada68171f8a2c0eda90589f947a3))
+* **machine:** retry TLO query on pause instead of trusting one attempt ([20046fe](https://github.com/ahedderich/fluidSender/commit/20046fe6f4b4a1b81fd0783099dc1495f0371b10))
+* **machine:** retry TLO query on pause instead of trusting one attempt ([0537244](https://github.com/ahedderich/fluidSender/commit/05372444eb5af98c116068295f6f3a8ae62a62a7))
+* **machine:** wait for confirmed Idle before querying TLO on pause ([98f5f46](https://github.com/ahedderich/fluidSender/commit/98f5f46ec0f702f7145d7632bb9a09edcb99c21a))
+* **machine:** wait for confirmed Idle before querying TLO on pause ([820b3d2](https://github.com/ahedderich/fluidSender/commit/820b3d2ee18a887bf48e4663fe4a90e1f4a13877))
+* **machine:** widen TLO query retry budget, log every attempt ([c56dad2](https://github.com/ahedderich/fluidSender/commit/c56dad267f71b44c11899b5f44bc52fa3c400f6b))
+* **machine:** widen TLO query retry budget, log every attempt ([1e75653](https://github.com/ahedderich/fluidSender/commit/1e75653aee3ccf9da15289dff2194d1fb1b4e415))
+* **navigation:** move X/Y before Z in Goto Pos ([76a5ec1](https://github.com/ahedderich/fluidSender/commit/76a5ec199146620dd62138b055acca76c931193b))
+* **navigation:** move X/Y before Z in Goto Pos ([2ae9552](https://github.com/ahedderich/fluidSender/commit/2ae9552e04aa4b0682a21d5f7ee398a5b1b8a226)), closes [#115](https://github.com/ahedderich/fluidSender/issues/115)
+* **probing:** apply measured rotation to stock in 3D viewport ([8cc4620](https://github.com/ahedderich/fluidSender/commit/8cc46209d97182549945090b43d476feb255cf51))
+* **sender:** character-count dispatch instead of Bf: rate limiting ([316da0d](https://github.com/ahedderich/fluidSender/commit/316da0db328bfd55c1cff511c2ebdb546ec93013))
+* **sender:** character-count dispatch instead of Bf: rate limiting ([4c62bd0](https://github.com/ahedderich/fluidSender/commit/4c62bd0f7b9bbba6bae1a39fd3ca6e415eb46172))
+* **sender:** re-cap motion-in-flight and fix modal-continuation misclassification that broke execPtr tracking ([ee31580](https://github.com/ahedderich/fluidSender/commit/ee31580568de0eaec3f55606be6465d5323ee6d4))
+* **sender:** track execPtr via absolute Bf: recompute instead of a dispatch gate ([87b354f](https://github.com/ahedderich/fluidSender/commit/87b354f007420b9430549e6ccdece93a3fa21af9))
+* **sim:** gate planner-slot admission with a real semaphore ([8d3e061](https://github.com/ahedderich/fluidSender/commit/8d3e0612912a6f082b1adc8553cfd77789d34ac8))
+* **sim:** keep TCP connection responsive while motion queue is full ([1280f12](https://github.com/ahedderich/fluidSender/commit/1280f122048a8ce34d4522a60ea8ff8a267eb3b9))
+* **sim:** resolve M0 program-pause deadlock on cycle-start ([4926156](https://github.com/ahedderich/fluidSender/commit/492615602bc9de37b8ca045ce774052108f61762)), closes [#105](https://github.com/ahedderich/fluidSender/issues/105)
+* **tests:** pass rxFree to onBufUpdate in sim probe integration test ([aecbbf9](https://github.com/ahedderich/fluidSender/commit/aecbbf98e6b85eb9aa7918ca8a15fc9ef08b8509))
+* **tests:** pass rxFree to onBufUpdate in sim probe integration test ([18182be](https://github.com/ahedderich/fluidSender/commit/18182beee5e3f4623f8ab9c04ed83d5d9d2e83b3))
+* **ui:** let Vite bundle three.js instead of leaving it unresolved ([51442c9](https://github.com/ahedderich/fluidSender/commit/51442c9f74cf2d2bb5645680a1f8dde75b00d676))
+* **ui:** let Vite bundle three.js instead of leaving it unresolved ([07adfc2](https://github.com/ahedderich/fluidSender/commit/07adfc281226ca43d1eb0b1dc5be427a91cffd8a))
+* **viewport:** disable depth test on executed-segment mesh ([fdd5602](https://github.com/ahedderich/fluidSender/commit/fdd56024cd527ef34e55fcbe56db553cd43b4cf0)), closes [#105](https://github.com/ahedderich/fluidSender/issues/105)
+* **viewport:** lower executed-segment opacity to 0.15 ([c8826f4](https://github.com/ahedderich/fluidSender/commit/c8826f4269de008a5186a8f60171d705d07a018a)), closes [#105](https://github.com/ahedderich/fluidSender/issues/105)
+* **viewport:** raise executed-segment opacity so it's actually visible ([e226ac8](https://github.com/ahedderich/fluidSender/commit/e226ac866a3a4dd505153c818ee259f8b870c123)), closes [#105](https://github.com/ahedderich/fluidSender/issues/105)
+* **viewport:** rebuild toolpath preview on reload during an active job ([0fc4f36](https://github.com/ahedderich/fluidSender/commit/0fc4f36d82c4f0b6b3b399c047c4d0a6ba2c7d28)), closes [#105](https://github.com/ahedderich/fluidSender/issues/105)
+* **viewport:** render executed toolpath as transparent mesh, not dimmed color ([6527dcf](https://github.com/ahedderich/fluidSender/commit/6527dcf611facfe191147dfa3ee5b08bfd490b98)), closes [#105](https://github.com/ahedderich/fluidSender/issues/105)
+
 ## [0.3.0](https://github.com/ahedderich/fluidSender/compare/v0.3.0...v0.3.0) (2026-07-27)
 
 
