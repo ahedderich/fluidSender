@@ -69,15 +69,29 @@ export type LineVector =
  *  version 6: estimatedTotalMs is now accel/junction-deviation aware (see
  *  kinematics.ts) and depends on the machine kinematics used to compute it —
  *  kinematicsFingerprint lets loadCachedAnalysis() invalidate the cache when the
- *  active machine (or its config) changes between loads of the same file. */
+ *  active machine (or its config) changes between loads of the same file.
+ *  version 7: sourceFingerprint (source file size + mtime) lets loadCachedAnalysis()
+ *  invalidate the cache when a file on disk is replaced (e.g. re-uploaded) without
+ *  its path/fileId changing — previously a same-path overwrite would silently keep
+ *  serving the previous version's cached analysis/lines.
+ *  version 8: applyRotation() (transform.ts) fixed — it was dropping the rotated value
+ *  of whichever axis word wasn't already on the source line, and rotating the wrong
+ *  direction. Neither bug changes fileId/kinematics/sourceFingerprint, so without this
+ *  bump a cache written by the old code would keep being served as a "hit" forever.
+ *  version 9: modal-continuation motion lines (axis words with no repeated G0/G1/G2/G3 —
+ *  the common case in CAM-generated files) are now classified Category A instead of
+ *  falling back to C. sender.ts's planner-slot dispatch throttle only caps Category A,
+ *  so a run of these lines previously bypassed it entirely and let sentPtr race
+ *  thousands of lines ahead of real execution. */
 export interface JobAnalysis {
-  version: 6
+  version: 9
   fileId: string
   filename: string
   analyzedAt: number
   totalLines: number
   estimatedTotalMs: number
   kinematicsFingerprint: string
+  sourceFingerprint: string
   axisRanges: AxisRanges
   tools: ToolSection[]
   noToolDefinitions: boolean
@@ -142,11 +156,18 @@ export interface JobState {
   sendPtr: number
   /** Line index confirmed executed based on planner drain tracking. Lags behind sendPtr. */
   execPtr: number
-  /** Motion commands currently queued in the FluidNC planner (derived from Buf: field). */
-  inPlanner: number
+  /** sendPtr - execPtr: lines acked by firmware but not yet confirmed executed. Distinct
+   *  from sender.ts's internal planner-occupied count (which comes directly from Bf:) —
+   *  this is the derived send/exec gap, not a firmware value itself. */
+  sendExecGap: number
   /** Max planner slots, captured from machine idle state on connect. */
   maxPlannerSlots: number
   estimatedTotalMs: number
+  /** analyzedAt of the current analysis (see JobAnalysis) — changes whenever the file is
+   *  re-analyzed, even if fileId is unchanged (e.g. same-name re-upload). Clients that cache
+   *  fetched artefacts (vectors/lines) by fileId must key on this too, or a same-name reload
+   *  with fresh content will silently keep showing the stale cached artefacts. */
+  analyzedAt: number | null
   /** Wall-clock epoch ms when the current running segment started; null whenever status !== 'running'. */
   startWallClock: number | null
   /** Active runtime accumulated across the job so far, excluding paused/tool-change/program-pause

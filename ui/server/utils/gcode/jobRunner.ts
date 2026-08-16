@@ -5,6 +5,7 @@ import { analyzeGCode } from './analysis'
 import { getModalStateAtLine, invalidateModalStatesCache } from './simulator'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, clearAllJobData } from './checkpoint'
 import { analyzeGCodeFile, loadCachedAnalysis, loadCachedLines, loadRawAnalysis, clearAllTransformArtefacts } from './analyzer'
+import { computeUploadFingerprint } from '../uploadPaths'
 import { DEFAULT_MACHINE_KINEMATICS, resolveMachineKinematics, fingerprintKinematics } from './kinematics'
 import type { MachineKinematics } from './kinematics'
 import {
@@ -26,6 +27,7 @@ import {
 import { getLastMachineStatus } from '../machine/poller'
 import { startSend, sendGCode, suspendSend, resumeChunk, stopSend, senderHardStop } from '../machine/sender'
 import { setMode } from '../machine/machineMode'
+import { getToolLengthOffset, requestToolLengthRefresh } from '../machine/toolLengthState'
 import { toolStore } from '../tool/toolStore'
 import { appendRuntimeSession } from '../tool/runtimeLog'
 import { applyTransforms } from './transform'
@@ -100,6 +102,8 @@ class JobRunner {
   })
 
   get status() { return this._status }
+  get activeFileId() { return this.fileId }
+  get transformMode() { return this._transformMode }
 
   async loadJob(fileId: string): Promise<void> {
     if (this._status === 'running' || this._status === 'pausing' || this._status === 'stopping') {
@@ -122,14 +126,17 @@ class JobRunner {
 
       const kinematics = await this._resolveActiveKinematics()
       const kinematicsFingerprint = fingerprintKinematics(kinematics)
+      const sourceFingerprint = await computeUploadFingerprint(fileId)
 
       // A cache hit needs both analysis.json (metadata) and lines.json (the in-memory
       // sender's line array) — if either is missing/corrupt, fall through to a full
       // re-analysis rather than re-deriving lines from content via analyzeGCode(),
       // which duplicates the full O(N) parse this cache exists to avoid. A kinematics
       // fingerprint mismatch (different machine selected since the cache was written)
-      // is also treated as a miss — see loadCachedAnalysis().
-      let analysis = await loadCachedAnalysis(fileId, this._transformMode, kinematicsFingerprint)
+      // is also treated as a miss, as is a source fingerprint mismatch (the file on
+      // disk was replaced since the cache was written, e.g. a same-name re-upload) —
+      // see loadCachedAnalysis().
+      let analysis = await loadCachedAnalysis(fileId, this._transformMode, kinematicsFingerprint, sourceFingerprint)
       let lines: GCodeLine[] | null = null
       if (analysis) {
         lines = await loadCachedLines(this._transformMode)
@@ -168,6 +175,7 @@ class JobRunner {
           ctrl.signal,
           this._transformMode,
           kinematics,
+          sourceFingerprint,
         )
         analysis = result.analysis
         lines = result.lines
@@ -214,10 +222,11 @@ class JobRunner {
         totalLines: analysis.totalLines,
         sendPtr: 0,
         execPtr: 0,
-        inPlanner: 0,
+        sendExecGap: 0,
         estimatedTotalMs: analysis.estimatedTotalMs,
         axisRanges: analysis.axisRanges,
         analyzeProgress: 100,
+        analyzedAt: analysis.analyzedAt,
         toolSections: analysis.tools,
         generator: analysis.generator,
         generatorInfo: analysis.generatorInfo,
@@ -250,6 +259,7 @@ class JobRunner {
           fileId: null,
           filename: null,
           analyzeProgress: 0,
+          analyzedAt: null,
           toolSections: null,
           generator: null,
           generatorInfo: null,
@@ -326,7 +336,7 @@ class JobRunner {
       this._setStatus('recovering', {
         sendPtr: resumePtr,
         execPtr: resumePtr,
-        inPlanner: 0,
+        sendExecGap: 0,
         recovery: null,
       })
 
@@ -404,7 +414,7 @@ class JobRunner {
       this._setStatus('loaded', {
         sendPtr: 0,
         execPtr: 0,
-        inPlanner: 0,
+        sendExecGap: 0,
         recovery: null,
         toolChangeRequest: null,
         programPause: null,
@@ -417,7 +427,7 @@ class JobRunner {
       this._finalizeRuntimeSession().catch((err) => console.error('[jobRunner] runtime finalize error:', err))
       this._mainJobChunkId = null
       this._recordExecution('aborted')
-      this._setStatus('loaded', { toolChangeRequest: null, sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null })
+      this._setStatus('loaded', { toolChangeRequest: null, sendPtr: 0, execPtr: 0, sendExecGap: 0, recovery: null })
       return
     }
     if (this._status === 'program_pause') {
@@ -430,7 +440,7 @@ class JobRunner {
       this._setStatus('loaded', {
         sendPtr: 0,
         execPtr: 0,
-        inPlanner: 0,
+        sendExecGap: 0,
         recovery: null,
         toolChangeRequest: null,
         programPause: null,
@@ -459,7 +469,7 @@ class JobRunner {
     this._setStatus('loaded', {
       sendPtr: 0,
       execPtr: 0,
-      inPlanner: 0,
+      sendExecGap: 0,
       recovery: null,
       toolChangeRequest: null,
       programPause: null,
@@ -492,10 +502,11 @@ class JobRunner {
       totalLines: 0,
       sendPtr: 0,
       execPtr: 0,
-      inPlanner: 0,
+      sendExecGap: 0,
       estimatedTotalMs: 0,
       axisRanges: null,
       analyzeProgress: 0,
+      analyzedAt: null,
       toolSections: null,
       generator: null,
       generatorInfo: null,
@@ -520,6 +531,13 @@ class JobRunner {
     const analysis = await loadRawAnalysis(mode)
     if (!analysis) return 'empty'
 
+    // The source file may have been replaced (e.g. re-uploaded under the same name)
+    // between this analysis being cached and this restart — a missing/mismatched
+    // fingerprint means the cache no longer describes the file on disk, so don't
+    // restore it as if it did; the user reloads it fresh instead.
+    const currentFingerprint = await computeUploadFingerprint(analysis.fileId).catch(() => null)
+    if (currentFingerprint === null || currentFingerprint !== analysis.sourceFingerprint) return 'empty'
+
     try {
       const cachedLines = await loadCachedLines(mode)
       if (cachedLines) {
@@ -542,10 +560,11 @@ class JobRunner {
         totalLines: analysis.totalLines,
         sendPtr: 0,
         execPtr: 0,
-        inPlanner: 0,
+        sendExecGap: 0,
         estimatedTotalMs: analysis.estimatedTotalMs,
         axisRanges: analysis.axisRanges,
         analyzeProgress: 100,
+        analyzedAt: analysis.analyzedAt,
         toolSections: analysis.tools,
         generator: analysis.generator,
         generatorInfo: analysis.generatorInfo,
@@ -626,7 +645,7 @@ class JobRunner {
         totalLines: this.lines.length,
         sendPtr: resumePtr,
         execPtr: resumePtr,
-        inPlanner: 0,
+        sendExecGap: 0,
         estimatedTotalMs: savedAnalysis?.estimatedTotalMs ?? 0,
         axisRanges: savedAnalysis?.axisRanges ?? null,
         recovery: null,
@@ -661,7 +680,7 @@ class JobRunner {
       // stopSend was in progress; treat as loaded since we didn't complete cleanly.
       this._execPtr = 0
       this.sendPtr = 0
-      this._setStatus('loaded', { sendPtr: 0, execPtr: 0, inPlanner: 0, recovery: null, toolChangeRequest: null, programPause: null })
+      this._setStatus('loaded', { sendPtr: 0, execPtr: 0, sendExecGap: 0, recovery: null, toolChangeRequest: null, programPause: null })
       clearCheckpoint().catch(() => {})
     } else if (this._status === 'running' || this._status === 'pausing' || this._status === 'recovering') {
       this._setStatus('paused', { errorMessage: 'Machine disconnected during job' })
@@ -772,9 +791,9 @@ class JobRunner {
 
     const ops: PatchOp[] = []
 
-    const inPlanner = Math.max(0, event.sent - event.executed)
+    const sendExecGap = Math.max(0, event.sent - event.executed)
     if (event.sent !== this.sendPtr || event.executed !== this._execPtr) {
-      jLog(`progress: sent=${event.sent} exec=${event.executed} inPlanner=${inPlanner} status=${event.status} holdPhase=${event.holdPhase}`)
+      jLog(`progress: sent=${event.sent} exec=${event.executed} sendExecGap=${sendExecGap} status=${event.status} holdPhase=${event.holdPhase}`)
       this.sendPtr = event.sent
       this._execPtr = event.executed
 
@@ -797,7 +816,7 @@ class JobRunner {
       ops.push(setJobState({
         sendPtr: this.sendPtr,
         execPtr: this._execPtr,
-        inPlanner,
+        sendExecGap,
       }))
       if (ops.length > 0) broadcastPatch(ops)
       this._checkpointIfDue()
@@ -814,13 +833,16 @@ class JobRunner {
     // Skip other holdPhase progress events (Hold:1 deceleration during machine-initiated holds)
     if (event.holdPhase !== null) return
 
-    // Chunk was suspended by suspendSend() — store chunkId for resume
+    // Chunk was suspended by suspendSend() — store chunkId for resume. Status stays
+    // 'pausing' (not yet 'paused') until _restoreToolLengthThenPause confirms TLO from
+    // firmware and re-applies it live, so Resume — gated on status === 'paused' — can't
+    // fire against a machine whose G43.1 offset hasn't actually been restored yet.
     if (event.status === 'suspended') {
-      jLog(`sender SUSPENDED event: chunkId=${event.chunkId.slice(0, 8)} sent=${event.sent} exec=${event.executed} → storing as mainJobChunkId, status→paused`)
+      jLog(`sender SUSPENDED event: chunkId=${event.chunkId.slice(0, 8)} sent=${event.sent} exec=${event.executed} → storing as mainJobChunkId, restoring TLO before status→paused`)
       this._mainJobChunkId = event.chunkId
       this._sendHandle = null
       this.sendPtr = this._execPtr
-      this._setStatus('paused', { sendPtr: this._execPtr })
+      this._restoreToolLengthThenPause(event.chunkId)
       return
     }
 
@@ -871,7 +893,7 @@ class JobRunner {
         this._setStatus('loaded', {
           sendPtr: 0,
           execPtr: 0,
-          inPlanner: 0,
+          sendExecGap: 0,
           recovery: null,
           toolChangeRequest: null,
           programPause: null,
@@ -899,7 +921,8 @@ class JobRunner {
     switch (event.completedMode) {
       case 'success':
         if (suspendedChunkId) {
-          // Resume the suspended main job chunk now that repositioning is done.
+          // TLO itself was already handled by the recovery sequence just sent
+          // (_buildRecoverySequence's G43.1 resend) — nothing further to do here.
           this._mainJobChunkId = null
           this._sendHandle = resumeChunk(suspendedChunkId)
           this._setStatus('running')
@@ -914,6 +937,81 @@ class JobRunner {
         break
       case 'hard':
         break
+    }
+  }
+
+  /** Poll the already-running status poller's last-known state for a confirmed Idle,
+   *  rather than firing $# immediately after 0x18. FluidNC rejects $# with error:8
+   *  ("Command requires idle state") while still in Hold/Cycle — on real hardware the
+   *  soft reset does not always settle to a reported Idle as fast as sending $# right
+   *  behind 0x18 assumes, so querying too early silently comes back null instead of the
+   *  real value. Bounded so a stuck/never-arriving Idle can't hang the pause forever. */
+  private async _waitForIdle(timeoutMs = 2000): Promise<void> {
+    const start = Date.now()
+    while (getLastMachineStatus()?.state !== 'Idle' && Date.now() - start < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
+  /** requestToolLengthRefresh() can still legitimately come back null even after a
+   *  confirmed Idle — on real hardware, each attempt was seen consuming its full 3s
+   *  internal timeout with no response at all (not a fast error:8 reject), for at least
+   *  6.4s straight, yet a query ~19s after the reset succeeded — so whatever FluidNC is
+   *  doing post-reset that $# depends on (its response reads NVS-backed coords[], unlike
+   *  a bare `?` status report) can genuinely take several seconds longer than the machine
+   *  reporting Idle. Keep retrying — $# is a read-only, side-effect-free query, safe to
+   *  resend — with a generous budget, logging every attempt so a future run that's still
+   *  too slow leaves a precise timeline instead of another guess. */
+  private async _queryToolLengthWithRetry(budgetMs = 30000, retryDelayMs = 400): Promise<number | null> {
+    const start = Date.now()
+    let attempt = 0
+    for (;;) {
+      attempt++
+      const offset = await requestToolLengthRefresh()
+      const elapsed = Date.now() - start
+      if (offset !== null) {
+        jLog(`TLO query succeeded on attempt ${attempt} (${elapsed}ms)`)
+        return offset
+      }
+      jLog(`TLO query attempt ${attempt} came back null (${elapsed}ms elapsed)`)
+      if (elapsed >= budgetMs) {
+        jLog(`TLO query gave up after ${attempt} attempt(s), ${elapsed}ms`)
+        return null
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+    }
+  }
+
+  /** After a pause's soft reset completes, query firmware's persisted TLO (survives a
+   *  plain soft reset — see toolLengthState.ts) and re-apply it live via G43.1 before
+   *  exposing status 'paused'. Status stays 'pausing' for this short window — Resume is
+   *  gated on 'paused' — so the UI never shows a resumable pause before firmware's real
+   *  G43.1 offset has actually been restored. */
+  private async _restoreToolLengthThenPause(chunkId: string): Promise<void> {
+    try {
+      await this._waitForIdle()
+      // Superseded by a stop/hard-stop/disconnect while waiting/querying.
+      if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
+
+      const offset = await this._queryToolLengthWithRetry()
+      if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
+
+      if (offset === null) {
+        this._setStatus('paused', { sendPtr: this._execPtr })
+        return
+      }
+
+      this._sendHandle = sendGCode([`G43.1 Z${offset.toFixed(4)}`], (event) => {
+        if (event.status !== 'completed') return
+        this._sendHandle = null
+        if (this._status !== 'pausing' || this._mainJobChunkId !== chunkId) return
+        this._setStatus('paused', { sendPtr: this._execPtr })
+      })
+    } catch (err) {
+      console.error('[jobRunner] TLO restore-on-pause error:', err)
+      if (this._status === 'pausing' && this._mainJobChunkId === chunkId) {
+        this._setStatus('paused', { sendPtr: this._execPtr })
+      }
     }
   }
 
@@ -1030,7 +1128,7 @@ class JobRunner {
     this._setStatus('complete', {
       sendPtr: this.lines.length,
       execPtr: this.lines.length,
-      inPlanner: 0,
+      sendExecGap: 0,
       toolChangeRequest: null,
       programPause: null,
     })
@@ -1071,7 +1169,15 @@ class JobRunner {
 
   private _buildRecoverySequence(modal: GCodeModalState, safeZ: number): string[] {
     const cmds: string[] = []
-    if (modal.toolNumber > 0) cmds.push(`G43 H${modal.toolNumber}`)
+    // TLO is normally already restored by the time this runs (_restoreToolLengthThenPause
+    // re-applies it right after the pause completes) — but that's a best-effort query
+    // against firmware, not a guarantee (e.g. it can silently come back null if the
+    // machine hadn't settled to Idle yet). Resend it here from whatever's currently
+    // cached as a second line of defense, so a failed pause-time restore doesn't leave
+    // firmware silently running with the wrong Z offset. Null means genuinely never
+    // confirmed (e.g. after a crash-recovery restart) — skip rather than guess.
+    const knownOffset = getToolLengthOffset()
+    if (knownOffset !== null) cmds.push(`G43.1 Z${knownOffset.toFixed(4)}`)
     cmds.push(modal.workCoordinate)
     cmds.push(modal.units)
     cmds.push('G90')

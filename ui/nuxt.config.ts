@@ -4,6 +4,14 @@ import { version } from './package.json'
 export default defineNuxtConfig({
   modules: ['@pinia/nuxt', '@nuxt/eslint'],
 
+  app: {
+    head: {
+      meta: [
+        { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
+      ],
+    },
+  },
+
   css: ['~/assets/css/tailwind.css'],
 
   vite: {

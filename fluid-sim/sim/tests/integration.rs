@@ -40,7 +40,7 @@ async fn start_sim_with_speed(speed: u8) -> (u16, u16) {
 
     let (shared, broadcast) = fluidsim::machine::state::new_shared(state);
     let console = fluidsim::machine::state::new_console();
-    let move_tx = fluidsim::machine::motion::spawn_motion_task(
+    let (move_tx, move_permits) = fluidsim::machine::motion::spawn_motion_task(
         Arc::clone(&shared),
         broadcast.clone(),
         cfg.sim.tick_hz,
@@ -58,6 +58,7 @@ async fn start_sim_with_speed(speed: u8) -> (u16, u16) {
         broadcast.clone(),
         console.clone(),
         move_tx,
+        move_permits,
     ));
     tokio::spawn(fluidsim::server::control::run(control_port, app_state));
 
@@ -253,6 +254,140 @@ async fn gcode_g0_move_updates_position() {
         "final status: {}",
         status
     );
+}
+
+#[tokio::test]
+async fn program_pause_m0_resumes_on_cycle_start() {
+    let port = start_sim().await;
+    let (mut reader, mut writer) = connect(port).await;
+    read_until(&mut reader, "ok").await; // consume greeting
+
+    // M0 is B2 — ok is withheld until cycle-start (~) resumes the machine, so
+    // this must not resolve the moment it's sent.
+    writer.write_all(b"M0\n").await.unwrap();
+
+    // Poll status until Hold is reported, confirming the pause was entered
+    // and no ok has arrived for the M0 line yet.
+    let mut saw_hold = false;
+    for _ in 0..50 {
+        writer.write_all(b"?\n").await.unwrap();
+        let status = read_line(&mut reader).await;
+        if status.contains("Hold") {
+            saw_hold = true;
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    assert!(saw_hold, "machine never entered Hold after M0");
+
+    // Resume — a lone `~` byte with no line framing, exactly how a real sender
+    // transmits cycle-start. Regression test for a deadlock where the
+    // pending-wait loop only checked whether Hold had been exited when the
+    // *next* line arrived — but the client never sends a next line until this
+    // M0's own ok arrives, which is exactly what that check was gating.
+    writer.write_all(b"~").await.unwrap();
+
+    // Poll until Idle is reported, tolerating (not asserting on) the exact
+    // interleaving of "ok" vs status lines — a real sender ignores unsolicited
+    // "ok"s the same way, so this only cares that the pause actually clears.
+    // Each read_line has its own 5s timeout, so a true regression (deadlock)
+    // fails the test instead of hanging the suite.
+    let mut saw_idle = false;
+    for _ in 0..50 {
+        writer.write_all(b"?\n").await.unwrap();
+        let status = read_line(&mut reader).await;
+        if status.contains("Idle") {
+            saw_idle = true;
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    assert!(saw_idle, "M0 never resumed back to Idle after cycle-start");
+}
+
+/// Regression for the connection task blocking while acquiring a planner-slot permit
+/// (`MovePermits`, exactly `MAX_PLANNER_SLOTS` — see motion.rs's `spawn_motion_task`).
+/// Admission races far ahead of real execution — `ok` is returned when a line is
+/// queued, not when it finishes — so a normal host sender saturates the permits almost
+/// immediately on any run of several moves. Once saturated, the *next* line's `ok` is
+/// withheld until a queued move actually completes and releases its permit; without
+/// dispatch racing that block against continued socket reads, the connection couldn't
+/// even read a `?` byte off the wire during that window, let alone answer it, making
+/// the UI's toolhead position appear frozen for as long as the backlog took to drain.
+#[tokio::test]
+async fn status_query_stays_responsive_while_motion_queue_is_full() {
+    // speed=1 (real-time): each 0.5mm move at F120 (2mm/s) takes ~250ms to actually
+    // execute — generous relative to our own read-loop overhead below, so the test
+    // isn't sensitive to scheduler jitter — and enough queued moves keep the queue
+    // saturated for a couple of seconds, plenty of window to query mid-backlog.
+    const PLANNER_SLOTS: usize = 15; // must match state::MAX_PLANNER_SLOTS
+    const TOTAL_LINES: usize = PLANNER_SLOTS + 9;
+
+    let (fluidnc_port, _control_port) = start_sim_with_speed(1).await;
+    let (mut reader, mut writer) = connect(fluidnc_port).await;
+    read_until(&mut reader, "ok").await; // greeting
+
+    writer.write_all(b"G91\n").await.unwrap();
+    read_until(&mut reader, "ok").await;
+
+    let mut script = String::new();
+    for i in 0..TOTAL_LINES {
+        let dx = if i % 2 == 0 { 0.5 } else { -0.5 };
+        script.push_str(&format!("G1 X{dx} F120\n"));
+    }
+    writer.write_all(script.as_bytes()).await.unwrap();
+
+    // The internal motion queue holds exactly PLANNER_SLOTS slots — read exactly that
+    // many oks. That's deterministic (no timing guesswork: the "ok" trickle for
+    // backlogged lines runs at the same ~250ms move-completion cadence whether or not
+    // this bug is fixed, so there's no reliable pause to detect — only a fixed count
+    // works), and tells us for certain the (PLANNER_SLOTS+1)th+ line's ok is now gated
+    // on a queued move actually completing, i.e. we're genuinely mid-backlog.
+    let mut oks = 0;
+    while oks < PLANNER_SLOTS {
+        assert_eq!(read_line(&mut reader).await, "ok");
+        oks += 1;
+    }
+
+    // Now genuinely mid-backlog: send `?` and see whether it jumps the queue or has
+    // to wait for more backlogged lines to drain ahead of it first — wall-clock
+    // timing alone is too easy to satisfy by luck (the remaining backlog drains in
+    // well under a second either way), so the real signal is *order*.
+    writer.write_all(b"?\n").await.unwrap();
+    let mut oks_before_query_answered = 0;
+    let status = timeout(Duration::from_secs(2), async {
+        loop {
+            let line = read_line(&mut reader).await;
+            if line == "ok" {
+                oks_before_query_answered += 1;
+                continue;
+            }
+            if line.starts_with('<') {
+                return line;
+            }
+        }
+    })
+    .await
+    .expect("status query was never answered");
+    assert!(
+        status.contains("Run"),
+        "expected machine still running: {}",
+        status
+    );
+    assert!(
+        oks_before_query_answered <= 2,
+        "status query was only answered after {} more backlogged lines drained ahead of it — \
+         the connection was stuck admitting queued moves instead of servicing the query promptly",
+        oks_before_query_answered
+    );
+
+    // Drain remaining oks so the connection doesn't leave the machine mid-job.
+    oks += oks_before_query_answered;
+    while oks < TOTAL_LINES {
+        if read_line(&mut reader).await == "ok" {
+            oks += 1;
+        }
+    }
 }
 
 // 100×80 rect stock centred at (-150, -100) (the sim's initial XY position),

@@ -151,6 +151,10 @@ export default defineNuxtPlugin((nuxtApp) => {
         applyMachineStatusCoalesced(msg.payload as MachineStatus)
         break
       }
+      case 'machine:tlo:refresh:result': {
+        machineStore.resolveTloRefresh((msg.payload as { value: number | null }).value)
+        break
+      }
     }
   }
 

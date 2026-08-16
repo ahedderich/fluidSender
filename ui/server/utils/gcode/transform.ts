@@ -35,10 +35,22 @@ function removeWord(line: string, letter: string): string {
   return line.replace(new RegExp(`[ \\t]*${letter}[+-]?\\d*\\.?\\d+`, 'ig'), '').trim()
 }
 
+/** Replace `letter`'s value if the source line already had that word, otherwise append
+ *  it. Used for rotation: X and Y are coupled by the rotation matrix, so a line that
+ *  moves in only one of them still needs both words written once rotated — silently
+ *  dropping the other left the un-rotated axis frozen instead of tilting. */
+function setWord(line: string, letter: string, value: number, wasPresent: boolean): string {
+  return wasPresent ? replaceWord(line, letter, value) : `${line.trimEnd()} ${letter}${fmt(value)}`
+}
+
 // ── Rotation transform ────────────────────────────────────────────────────────
 
 function applyRotation(rawLines: string[], angleDeg: number): string[] {
-  const alpha = -angleDeg * (Math.PI / 180)
+  // rotationDeg is CCW-positive — how far the physical stock is rotated from nominal
+  // (see computeRotationResult() in probingWizards.ts). The physical part is the nominal
+  // design rotated by +angleDeg about the datum, so the toolpath must be rotated the same
+  // way (not negated) to follow the actual part instead of its mirror-opposite tilt.
+  const alpha = angleDeg * (Math.PI / 180)
   const cosA = Math.cos(alpha)
   const sinA = Math.sin(alpha)
 
@@ -99,16 +111,16 @@ function applyRotation(rawLines: string[], angleDeg: number): string[] {
         const tx = xw !== undefined ? xw : pos.x
         const ty = yw !== undefined ? yw : pos.y
         const { rx, ry } = rotXY(tx, ty)
-        if (xw !== undefined) line = replaceWord(line, 'X', rx)
-        if (yw !== undefined) line = replaceWord(line, 'Y', ry)
+        line = setWord(line, 'X', rx, xw !== undefined)
+        line = setWord(line, 'Y', ry, yw !== undefined)
         pos.x = tx
         pos.y = ty
       } else {
         const dx = xw ?? 0
         const dy = yw ?? 0
         const { rx, ry } = rotXY(dx, dy)
-        if (xw !== undefined) line = replaceWord(line, 'X', rx)
-        if (yw !== undefined) line = replaceWord(line, 'Y', ry)
+        line = setWord(line, 'X', rx, xw !== undefined)
+        line = setWord(line, 'Y', ry, yw !== undefined)
         pos.x += dx
         pos.y += dy
       }
@@ -163,13 +175,17 @@ function applyRotation(rawLines: string[], angleDeg: number): string[] {
         const { rx: rtx, ry: rty } = rotXY(tx, ty)
         const { rx: ri, ry: rj } = rotXY(arcI, arcJ)
 
-        if (positionMode === 'G90') {
-          if (xw !== undefined) line = replaceWord(line, 'X', rtx)
-          if (yw !== undefined) line = replaceWord(line, 'Y', rty)
-        } else {
-          const { rx: rdx, ry: rdy } = rotXY(xw ?? 0, yw ?? 0)
-          if (xw !== undefined) line = replaceWord(line, 'X', rdx)
-          if (yw !== undefined) line = replaceWord(line, 'Y', rdy)
+        // X and Y are coupled by rotation — if the endpoint moves in either, both
+        // words must be (re)written, same reasoning as setWord() for straight moves.
+        if (xw !== undefined || yw !== undefined) {
+          if (positionMode === 'G90') {
+            line = setWord(line, 'X', rtx, xw !== undefined)
+            line = setWord(line, 'Y', rty, yw !== undefined)
+          } else {
+            const { rx: rdx, ry: rdy } = rotXY(xw ?? 0, yw ?? 0)
+            line = setWord(line, 'X', rdx, xw !== undefined)
+            line = setWord(line, 'Y', rdy, yw !== undefined)
+          }
         }
 
         if (rw !== undefined) {
@@ -183,14 +199,16 @@ function applyRotation(rawLines: string[], angleDeg: number): string[] {
         }
       } else {
         // G18/G19: rotate X/Y endpoint only; pass center offsets through unchanged
-        if (positionMode === 'G90') {
-          const { rx: rtx, ry: rty } = rotXY(tx, ty)
-          if (xw !== undefined) line = replaceWord(line, 'X', rtx)
-          if (yw !== undefined) line = replaceWord(line, 'Y', rty)
-        } else {
-          const { rx: rdx, ry: rdy } = rotXY(xw ?? 0, yw ?? 0)
-          if (xw !== undefined) line = replaceWord(line, 'X', rdx)
-          if (yw !== undefined) line = replaceWord(line, 'Y', rdy)
+        if (xw !== undefined || yw !== undefined) {
+          if (positionMode === 'G90') {
+            const { rx: rtx, ry: rty } = rotXY(tx, ty)
+            line = setWord(line, 'X', rtx, xw !== undefined)
+            line = setWord(line, 'Y', rty, yw !== undefined)
+          } else {
+            const { rx: rdx, ry: rdy } = rotXY(xw ?? 0, yw ?? 0)
+            line = setWord(line, 'X', rdx, xw !== undefined)
+            line = setWord(line, 'Y', rdy, yw !== undefined)
+          }
         }
         if (rw !== undefined) {
           line = removeWord(line, 'R')

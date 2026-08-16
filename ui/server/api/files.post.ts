@@ -1,9 +1,8 @@
 import { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { randomUUID } from 'node:crypto'
 import { initMeta } from '../utils/fileMetadata'
-import { UPLOADS_DIR } from '../utils/uploadPaths'
+import { UPLOADS_DIR, sanitizeFilename } from '../utils/uploadPaths'
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024
 
@@ -35,16 +34,11 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 413, message: `${part.filename} exceeds 100 MB limit` })
     }
 
-    const safeName = part.filename!
-      .replace(/.*[/\\]/, '')
-      .replace(/[^a-zA-Z0-9._-]/g, '_')
-      .slice(0, 128)
-
+    const safeName = sanitizeFilename(part.filename ?? '')
     if (!safeName) continue
 
-    const fileId = `${randomUUID()}-${safeName}`
-    const destPath = join(targetDir, fileId)
-    const relPath = rawDir ? `${rawDir.replace(/\/$/, '')}/${fileId}` : fileId
+    const destPath = join(targetDir, safeName)
+    const relPath = rawDir ? `${rawDir.replace(/\/$/, '')}/${safeName}` : safeName
     const uploadedAt = Date.now()
 
     await new Promise<void>((res, rej) => {
@@ -55,6 +49,8 @@ export default defineEventHandler(async (event) => {
       ws.end()
     })
 
+    // Overwriting a file resets its execution history — old stats describe the
+    // previous contents (mirrors the external API upload endpoint's behavior).
     await initMeta(relPath, uploadedAt)
     results.push({ fileId: relPath, filename: safeName })
   }

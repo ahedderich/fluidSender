@@ -369,15 +369,25 @@ function setGotoMode(mode: 'abs' | 'rel') {
   }
 }
 
+// X/Y moves first, Z second (issue #115) — a combined G0 X.. Y.. Z.. rapids
+// each axis independently at its own max rate, so Z (often the slowest axis)
+// doesn't necessarily arrive with X/Y; depending on relative distances the
+// tool can plunge or drag before it's positioned over open space.
 function executeGoto() {
   const x = gotoValues.X
   const y = gotoValues.Y
   const z = gotoValues.Z
   if (gotoMode.value === 'abs') {
     const coordSys = gotoCoord.value === 'work' ? 'G54' : 'G53'
-    machine.sendCommand(`G0 ${coordSys} X${x.toFixed(3)} Y${y.toFixed(3)} Z${z.toFixed(3)}`)
+    machine.sendCommand(`G0 ${coordSys} X${x.toFixed(3)} Y${y.toFixed(3)}`)
+    machine.sendCommand(`G0 ${coordSys} Z${z.toFixed(3)}`)
   } else {
-    machine.sendCommand(`G0 G91 X${x.toFixed(3)} Y${y.toFixed(3)} Z${z.toFixed(3)} G90`)
+    // G91/G90 on their own lines — combined with motion on one line is a
+    // FluidNC modal-group violation (see probingRunner.ts's _sendProbeCmd).
+    machine.sendCommand('G91')
+    machine.sendCommand(`G0 X${x.toFixed(3)} Y${y.toFixed(3)}`)
+    machine.sendCommand(`G0 Z${z.toFixed(3)}`)
+    machine.sendCommand('G90')
   }
   showGotoPos.value = false
 }

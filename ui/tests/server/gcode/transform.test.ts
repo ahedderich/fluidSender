@@ -29,8 +29,8 @@ const ROT_NEG45 = { rotationDeg: -45, bowMm: 0, edge: 'top' as const }
 // ── Rotation tests ────────────────────────────────────────────────────────────
 
 describe('rotation transform', () => {
-  it('rotates a G1 X/Y move by -angleDeg around origin', () => {
-    const alpha = -45 * (Math.PI / 180)
+  it('rotates a G1 X/Y move by +angleDeg (CCW) around origin', () => {
+    const alpha = 45 * (Math.PI / 180)
     const cos = Math.cos(alpha)
     const sin = Math.sin(alpha)
     const x = 10, y = 0
@@ -46,7 +46,7 @@ describe('rotation transform', () => {
 
   it('rotates a G0 move (X/Y only, Z unchanged)', () => {
     const out = applyTransforms('G0 X5 Y5 Z3', 'rotated', ROT_NEG45, null)
-    const alpha = 45 * (Math.PI / 180)
+    const alpha = -45 * (Math.PI / 180)
     const expectedX = 5 * Math.cos(alpha) - 5 * Math.sin(alpha)
     const expectedY = 5 * Math.sin(alpha) + 5 * Math.cos(alpha)
     const { x: rx, y: ry } = parseXY(out)
@@ -61,7 +61,7 @@ describe('rotation transform', () => {
     const lines = out.split('\n')
     const arcLine = lines[2]!
 
-    const alpha = -45 * (Math.PI / 180)
+    const alpha = 45 * (Math.PI / 180)
     const cos = Math.cos(alpha)
     const sin = Math.sin(alpha)
     // endpoint (0,10) rotated by α
@@ -92,7 +92,7 @@ describe('rotation transform', () => {
   })
 
   it('correctly rotates a G91 (relative) G1 delta', () => {
-    const alpha = -45 * (Math.PI / 180)
+    const alpha = 45 * (Math.PI / 180)
     const cos = Math.cos(alpha)
     const sin = Math.sin(alpha)
     const dx = 5, dy = 3
@@ -222,9 +222,9 @@ describe('combined rotation + heightmap', () => {
     const out = applyTransforms('G90\nG1 X10 Y0 Z0', 'rotated_height_adjusted', rot, hm)
     const lines = out.split('\n')
     const { x, y } = parseXY(lines[1]!)
-    // -90° rotation of (10, 0): x' = 10*cos(-90°) - 0*sin(-90°) = 0, y' = 10*sin(-90°) + 0 = -10
+    // +90° rotation of (10, 0): x' = 10*cos(90°) - 0*sin(90°) = 0, y' = 10*sin(90°) + 0 = 10
     assertNear(x, 0, 0.01, 'rotated X')
-    assertNear(y, -10, 0.01, 'rotated Y')
+    assertNear(y, 10, 0.01, 'rotated Y')
     // Z correction is +1 from flat heightmap
     assertNear(parseZ(lines[1]!), 1, 0.01, 'Z corrected')
   })

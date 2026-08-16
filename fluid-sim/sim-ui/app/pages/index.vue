@@ -26,5 +26,10 @@
       <FluidNCConfigPanel />
     </div>
 
+    <!-- Row 4: network jitter -->
+    <div class="grid gap-2 shrink-0" style="grid-template-columns: 1fr">
+      <NetworkJitterPanel />
+    </div>
+
   </main>
 </template>

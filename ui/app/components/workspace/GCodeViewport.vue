@@ -97,6 +97,20 @@
       </button>
     </div>
 
+    <!-- Zoom in/out (bottom-right, above progress bar) — hidden when there's no 3D-only view to zoom (cam/gcode) -->
+    <div v-if="!['cam', 'gcode'].includes(viewMode)" class="absolute bottom-14 right-2.5 flex flex-col gap-1 z-10">
+      <button
+        title="Zoom in"
+        class="w-7 h-7 flex items-center justify-center bg-slate-800/80 hover:bg-slate-700/90 text-slate-300 text-sm font-bold rounded-md backdrop-blur-sm border border-slate-600/50 transition-colors"
+        @click="zoomIn"
+      >+</button>
+      <button
+        title="Zoom out"
+        class="w-7 h-7 flex items-center justify-center bg-slate-800/80 hover:bg-slate-700/90 text-slate-300 text-sm font-bold rounded-md backdrop-blur-sm border border-slate-600/50 transition-colors"
+        @click="zoomOut"
+      >−</button>
+    </div>
+
     <!-- Loaded tool (bottom-left, above progress bar) -->
     <div v-if="machine.connected" class="group absolute bottom-14 left-2.5 z-10 flex items-center gap-2 px-2.5 py-1.5 bg-slate-800/80 backdrop-blur-sm border border-slate-600/50 rounded-md text-xs">
       <template v-if="loadedLibTool">
@@ -165,29 +179,7 @@
     </div>
 
     <!-- Progress bar (bottom) -->
-    <div class="absolute bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-sm border-t border-slate-700/50 px-4 py-2 z-10">
-      <div class="flex items-center justify-between text-xs text-slate-400 mb-1.5">
-        <span>{{ startLabel }}</span>
-        <span class="font-medium">
-          <span class="text-blue-400">{{ execPct }}%</span>
-          <span v-if="showRuntime" class="text-slate-300 ml-2 font-mono">{{ runtimeLabel }}</span>
-          <span v-if="job?.filename" class="text-slate-400 ml-1">({{ job!.filename }})</span>
-        </span>
-        <span>{{ etaLabel }}</span>
-      </div>
-      <div class="relative h-1.5 bg-slate-700 rounded-full overflow-hidden">
-        <!-- Sent: light blue/grey, wider -->
-        <div
-          class="absolute inset-y-0 left-0 bg-blue-900 transition-all duration-500"
-          :style="{ width: sendPct + '%' }"
-        />
-        <!-- Executed: blue, narrower, on top -->
-        <div
-          class="absolute inset-y-0 left-0 bg-blue-500 transition-all duration-500"
-          :style="{ width: execPct + '%' }"
-        />
-      </div>
-    </div>
+    <WorkspaceJobProgressBar />
   </div>
 </template>
 
@@ -268,57 +260,26 @@ const LAYER_BASE_COLOR = {
   zmove: 0xeab308,
 } as const
 
-// How far (0–1) an already-executed segment's color is blended toward the
-// scene background — the cheap stand-in for "more transparent" discussed for
-// issue #45: LineMaterial's fat-line pipeline supports per-vertex color but
-// not per-vertex alpha, so fading toward the background reads the same
-// visually without needing a custom shader.
-const DIM_BLEND_FACTOR = 0.65
+const TOOLPATH_KEYS = ['travel', 'cutting', 'zmove'] as const
 
-const sendPct = computed(() => job.value?.totalLines ? Math.round((job.value.sendPtr / job.value.totalLines) * 100) : 0)
-const execPct = computed(() => job.value?.totalLines ? Math.round((job.value.execPtr / job.value.totalLines) * 100) : 0)
-
-const startLabel = computed(() => {
-  if (!job.value?.startWallClock) return 'Start: --:--'
-  return `Start: ${new Date(job.value.startWallClock).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-})
-
-const etaLabel = computed(() => {
-  if (!job.value?.startWallClock || !job.value.estimatedTotalMs) return 'ETA: --:--'
-  const eta = job.value.startWallClock + job.value.estimatedTotalMs
-  return `ETA: ${new Date(eta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-})
-
-// Live runtime timer — ticks locally off the server-owned accumulatedRunMs/startWallClock
-// rather than being pushed every second, so it stays a cheap client-side derivation.
-const nowTick = ref(Date.now())
-let runtimeTickInterval: ReturnType<typeof setInterval> | null = null
-onMounted(() => {
-  runtimeTickInterval = setInterval(() => { nowTick.value = Date.now() }, 1000)
-})
-onUnmounted(() => {
-  if (runtimeTickInterval) clearInterval(runtimeTickInterval)
-})
-
-const runtimeMs = computed(() => {
-  const j = job.value
-  if (!j) return 0
-  const base = j.accumulatedRunMs ?? 0
-  return j.status === 'running' && j.startWallClock
-    ? base + Math.max(0, nowTick.value - j.startWallClock)
-    : base
-})
-
-const showRuntime = computed(() => runtimeMs.value > 0 || job.value?.status === 'running')
-
-const runtimeLabel = computed(() => {
-  const totalSec = Math.floor(runtimeMs.value / 1000)
-  const h = Math.floor(totalSec / 3600)
-  const m = Math.floor((totalSec % 3600) / 60)
-  const s = totalSec % 60
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`
-})
+// Executed segments render as their own alpha-blended mesh per layer instead
+// of a solid dimmed color (issue #105) — LineMaterial's fat-line pipeline has
+// no per-vertex alpha (instanceColorStart/End are vec3 RGB only; opacity is a
+// single per-material uniform), so real transparency needs two draw calls per
+// layer (opaque "pending" + transparent "executed") rather than one
+// vertex-colored mesh. This also fixes a real occlusion bug on dense/
+// crosshatched paths: an opaque dimmed segment drawn later in line order
+// could fully cover a still-pending (bright) segment sharing the same
+// pixels; with alpha blending the pending segment shows through instead.
+//
+// Kept fairly high (not the ~0.3 "barely there" a first-glance dimming value
+// suggests) because these are thin 1–1.5px fat-lines, not filled areas — a
+// single sparse line at low alpha with AA-softened edges reads as invisible
+// against the dark scene background, not just "faded". At 0.55 an isolated
+// executed line stays clearly legible on its own, while two overlapping
+// segments (the actual dense-path problem this issue is about) still
+// visibly blend rather than one flatly occluding the other.
+const EXECUTED_OPACITY = 0.25
 
 const toolchangeStrategy = computed(() => settings.activeMachine?.toolchange?.strategy ?? 'manual-basic')
 
@@ -395,7 +356,6 @@ let rebuildStock: (s: import('~/stores/machine').StockDef | null) => void = () =
 let loadToolpathSegments: (vectors: Array<LineVector | null>) => void = () => {}
 let clearToolpath: () => void = () => {}
 let frameLine: (lineIndex: number) => void = () => {}
-let applyExecutedDimming: (execPtr: number) => void = () => {}
 
 // Retained raw per-line data — kept around (rather than discarded after building
 // 3D geometry) so the GCode panel can look lines/vectors up by index. See
@@ -408,14 +368,11 @@ const gcodeLines = ref<string[]>([])
 const selectedLineIndex = ref<number | null>(null)
 
 // Per-line offset/count into the merged toolpath geometry buffers, built by
-// buildToolpathGeometry(). Consumed by applyExecutedDimming() to recolor the
-// segments for already-executed lines (issue #45).
+// buildToolpathGeometry(). Consumed by applyExecPtrSplit() to split already-
+// executed lines out into their own transparent mesh per layer (issue #105).
 const lineGeometryIndex = ref(new Map<number, { layer: 'travel' | 'cutting' | 'zmove'; vertexOffset: number; vertexCount: number }>())
 
-// Total point count per layer's merged position buffer — needed to allocate a
-// correctly-sized color array in applyExecutedDimming (points, not floats;
-// every 2 points is one rendered segment, matching lineGeometryIndex's units).
-let layerPointCounts: Record<'travel' | 'cutting' | 'zmove', number> = { travel: 0, cutting: 0, zmove: 0 }
+let applyExecPtrSplit: (execPtr: number) => void = () => {}
 
 function onLineSelect(index: number) {
   selectedLineIndex.value = index
@@ -427,11 +384,11 @@ async function initThree() {
   const container = containerRef.value
   if (!canvas || !container) return
 
-  const THREE = await import(/* @vite-ignore */ 'three')
-  const { OrbitControls } = await import(/* @vite-ignore */ 'three/examples/jsm/controls/OrbitControls.js')
-  const { LineSegments2 } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineSegments2.js')
-  const { LineSegmentsGeometry } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineSegmentsGeometry.js')
-  const { LineMaterial } = await import(/* @vite-ignore */ 'three/examples/jsm/lines/LineMaterial.js')
+  const THREE = await import('three')
+  const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
+  const { LineSegments2 } = await import('three/examples/jsm/lines/LineSegments2.js')
+  const { LineSegmentsGeometry } = await import('three/examples/jsm/lines/LineSegmentsGeometry.js')
+  const { LineMaterial } = await import('three/examples/jsm/lines/LineMaterial.js')
 
   // Read the canvas's own rect (not the container's) — in split-mode-by-default
   // machines the canvas is already CSS-sized to the left half by the time this
@@ -443,17 +400,19 @@ async function initThree() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lineMats: any[] = []
 
-  // vertexColors: true is used for the toolpath layers (travel/cutting/zmove)
-  // so applyExecutedDimming() can recolor individual segments; the material's
-  // own `color` is forced to white in that case so it doesn't tint the vertex
-  // colors (LineMaterial multiplies the two).
+  // opts is used by the toolpath "executed" meshes (issue #105) to get real
+  // alpha blending — transparent + depthWrite:false so the still-opaque
+  // "pending" mesh drawn in the same layer always wins the depth test.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function lineMat2(color: number, linewidth = 1.5, vertexColors = false): any {
+  function lineMat2(color: number, linewidth = 1.5, opts?: { transparent?: boolean; opacity?: number; depthWrite?: boolean; depthTest?: boolean }): any {
     const m = new LineMaterial({
-      color: vertexColors ? 0xffffff : color,
+      color,
       linewidth,
       resolution: new THREE.Vector2(width, height),
-      vertexColors,
+      transparent: opts?.transparent ?? false,
+      opacity: opts?.opacity ?? 1,
+      depthWrite: opts?.depthWrite ?? true,
+      depthTest: opts?.depthTest ?? true,
     })
     lineMats.push(m)
     return m
@@ -483,9 +442,12 @@ async function initThree() {
 
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.mouseButtons = {
-    LEFT: THREE.MOUSE.ROTATE,
+    LEFT: THREE.MOUSE.PAN,
     MIDDLE: THREE.MOUSE.DOLLY,
-    RIGHT: THREE.MOUSE.PAN,
+    // RIGHT stays mapped to ROTATE only so OrbitControls' own state machine
+    // ignores the button (enableRotate is false below) — actual rotation is
+    // driven by the custom screen-space handler underneath (issue #110).
+    RIGHT: THREE.MOUSE.ROTATE,
   }
   controls.enableDamping = true
   controls.dampingFactor = 0.08
@@ -504,7 +466,7 @@ async function initThree() {
     let lastY = 0
 
     const onPointerDown = (e: PointerEvent) => {
-      if (e.button !== 0) return
+      if (e.button !== 2) return  // right-drag rotates; left-drag pans via OrbitControls (issue #110)
       dragging = true
       lastX = e.clientX
       lastY = e.clientY
@@ -761,27 +723,37 @@ async function initThree() {
   buildStockMesh(machine.stock)
   rebuildStock = buildStockMesh
 
-  // Toolpath rendering — keyed in objectMap under 'travel', 'cutting', 'zmove' so
-  // the existing layer toggle logic works automatically.
-  const TOOLPATH_KEYS = ['travel', 'cutting', 'zmove'] as const
+  // Toolpath rendering — each layer is two meshes, keyed in objectMap under
+  // '<key>Pending' (opaque, not-yet-executed) and '<key>Executed' (alpha-
+  // blended) so the existing layer-toggle logic (toggleLayer(), driven by
+  // TOOLPATH_KEYS at module scope) can address both.
+  const TOOLPATH_VARIANTS = ['Pending', 'Executed'] as const
+
+  // Raw per-layer point buffers built once by buildToolpathGeometry() and
+  // retained so applyExecPtrSplit() can re-partition them into pending/
+  // executed on every execPtr change without re-tessellating arcs.
+  let layerPointsAll: Record<'travel' | 'cutting' | 'zmove', number[]> = { travel: [], cutting: [], zmove: [] }
 
   function disposeToolpathObjects() {
     for (const key of TOOLPATH_KEYS) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const old = objectMap[key] as any
-      if (!old) continue
-      scene.remove(old)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      old.traverse((child: any) => {
-        child.geometry?.dispose()
-        if (child.material) {
-          const idx = lineMats.indexOf(child.material)
-          if (idx !== -1) lineMats.splice(idx, 1)
-          child.material.dispose()
-        }
-      })
-      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete objectMap[key]
+      for (const variant of TOOLPATH_VARIANTS) {
+        const mapKey = `${key}${variant}`
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const old = objectMap[mapKey] as any
+        if (!old) continue
+        scene.remove(old)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        old.traverse((child: any) => {
+          child.geometry?.dispose()
+          if (child.material) {
+            const idx = lineMats.indexOf(child.material)
+            if (idx !== -1) lineMats.splice(idx, 1)
+            child.material.dispose()
+          }
+        })
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete objectMap[mapKey]
+      }
     }
   }
 
@@ -855,8 +827,9 @@ async function initThree() {
 
     // Per-line record of where its geometry landed in the flat position arrays
     // above (offsets/counts in points, i.e. groups of 3 floats — every 2 points
-    // is one rendered segment). Consumed by applyExecutedDimming() below to
-    // recolor individual lines within these merged buffers (issue #45).
+    // is one rendered segment). Consumed by applyExecPtrSplit() below to split
+    // individual lines out of these merged buffers into the executed mesh
+    // (issue #105).
     const newLineGeometryIndex = new Map<number, { layer: 'travel' | 'cutting' | 'zmove'; vertexOffset: number; vertexCount: number }>()
 
     vectors.forEach((vec, lineIndex) => {
@@ -883,43 +856,44 @@ async function initThree() {
     })
 
     lineGeometryIndex.value = newLineGeometryIndex
-    layerPointCounts = {
-      travel: rapidPts.length / 3,
-      cutting: feedPts.length / 3,
-      zmove: zmovePts.length / 3,
+    layerPointsAll = { travel: rapidPts, cutting: feedPts, zmove: zmovePts }
+
+    // Each layer gets two meshes — opaque "pending" and alpha-blended
+    // "executed" — both start with a degenerate placeholder; the
+    // applyExecPtrSplit() call below immediately fills in real positions and
+    // visibility for whichever of the two actually has points for this file.
+    function addToolpathLayer(key: (typeof TOOLPATH_KEYS)[number], linewidth: number) {
+      const pendingGeo = new LineSegmentsGeometry()
+      pendingGeo.setPositions([0, 0, 0, 0, 0, 0])
+      const pendingObj = new LineSegments2(pendingGeo, lineMat2(LAYER_BASE_COLOR[key], linewidth))
+      pendingObj.visible = false
+      scene.add(pendingObj)
+      objectMap[`${key}Pending`] = pendingObj
+
+      const executedGeo = new LineSegmentsGeometry()
+      executedGeo.setPositions([0, 0, 0, 0, 0, 0])
+      // depthTest: false — on dense/overlapping paths (e.g. adaptive clearing)
+      // an executed segment often sits behind or coincident with a still-
+      // pending segment from the camera's POV; with depth testing on, it
+      // silently fails the test against the opaque pending mesh's depth
+      // buffer and never draws a pixel, rather than just rendering faint.
+      const executedObj = new LineSegments2(
+        executedGeo,
+        lineMat2(LAYER_BASE_COLOR[key], linewidth, { transparent: true, opacity: EXECUTED_OPACITY, depthWrite: false, depthTest: false }),
+      )
+      executedObj.visible = false
+      scene.add(executedObj)
+      objectMap[`${key}Executed`] = executedObj
     }
 
-    if (rapidPts.length > 0) {
-      const geo = new LineSegmentsGeometry()
-      geo.setPositions(rapidPts)
-      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.travel, 1.0, true))
-      obj.visible = layers.find(l => l.key === 'travel')?.visible ?? true
-      scene.add(obj)
-      objectMap['travel'] = obj
-    }
+    if (rapidPts.length > 0) addToolpathLayer('travel', 1.0)
+    if (feedPts.length > 0) addToolpathLayer('cutting', 1.5)
+    if (zmovePts.length > 0) addToolpathLayer('zmove', 1.0)
 
-    if (feedPts.length > 0) {
-      const geo = new LineSegmentsGeometry()
-      geo.setPositions(feedPts)
-      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.cutting, 1.5, true))
-      obj.visible = layers.find(l => l.key === 'cutting')?.visible ?? true
-      scene.add(obj)
-      objectMap['cutting'] = obj
-    }
-
-    if (zmovePts.length > 0) {
-      const geo = new LineSegmentsGeometry()
-      geo.setPositions(zmovePts)
-      const obj = new LineSegments2(geo, lineMat2(LAYER_BASE_COLOR.zmove, 1.0, true))
-      obj.visible = layers.find(l => l.key === 'zmove')?.visible ?? true
-      scene.add(obj)
-      objectMap['zmove'] = obj
-    }
-
-    // Initialize per-vertex colors immediately so a job that's already
-    // partway through (e.g. reconnecting mid-run) shows correct dimming right
-    // away, rather than waiting for the next execPtr change.
-    applyExecutedDimming(job.value?.execPtr ?? 0)
+    // Initialize the pending/executed split immediately so a job that's
+    // already partway through (e.g. reconnecting mid-run) shows correctly
+    // right away, rather than waiting for the next execPtr change.
+    applyExecPtrSplit(job.value?.execPtr ?? 0)
 
     requestRender()
   }
@@ -928,7 +902,7 @@ async function initThree() {
   clearToolpath = () => {
     disposeToolpathObjects()
     lineGeometryIndex.value = new Map()
-    layerPointCounts = { travel: 0, cutting: 0, zmove: 0 }
+    layerPointsAll = { travel: [], cutting: [], zmove: [] }
     requestRender()
   }
 
@@ -998,43 +972,41 @@ async function initThree() {
     requestRender()
   }
 
-  // Recolors the travel/cutting/zmove meshes so lines before execPtr fade
-  // toward the scene background (issue #45). Rebuilds each layer's full color
-  // buffer from scratch on every call rather than patching deltas — simpler,
-  // and correct even when execPtr moves backward (pause/recovery), at the
-  // cost of being O(total vertices); the caller throttles calls to at most
-  // once per animation frame to keep that affordable.
-  applyExecutedDimming = (execPtr: number) => {
-    const bg = scene.background as THREE.Color
-    const palette = {
-      travel: { base: new THREE.Color(LAYER_BASE_COLOR.travel), dimmed: new THREE.Color(LAYER_BASE_COLOR.travel).lerp(bg, DIM_BLEND_FACTOR) },
-      cutting: { base: new THREE.Color(LAYER_BASE_COLOR.cutting), dimmed: new THREE.Color(LAYER_BASE_COLOR.cutting).lerp(bg, DIM_BLEND_FACTOR) },
-      zmove: { base: new THREE.Color(LAYER_BASE_COLOR.zmove), dimmed: new THREE.Color(LAYER_BASE_COLOR.zmove).lerp(bg, DIM_BLEND_FACTOR) },
-    } as const
-
-    const colorArrays: Record<'travel' | 'cutting' | 'zmove', number[]> = { travel: [], cutting: [], zmove: [] }
-    for (const layer of ['travel', 'cutting', 'zmove'] as const) {
-      const { r, g, b } = palette[layer].base
-      const arr = colorArrays[layer]
-      for (let i = 0; i < layerPointCounts[layer]; i++) arr.push(r, g, b)
-    }
+  // Splits each layer's points into a "pending" bucket (lines >= execPtr,
+  // opaque) and an "executed" bucket (lines < execPtr, alpha-blended) and
+  // pushes both into their respective mesh (issue #105). Rebuilds both
+  // buckets from scratch on every call rather than patching deltas —
+  // simpler, and correct even when execPtr moves backward (pause/recovery),
+  // at the cost of being O(total vertices); the caller throttles calls to at
+  // most once per animation frame to keep that affordable.
+  applyExecPtrSplit = (execPtr: number) => {
+    const pendingPts: Record<'travel' | 'cutting' | 'zmove', number[]> = { travel: [], cutting: [], zmove: [] }
+    const executedPts: Record<'travel' | 'cutting' | 'zmove', number[]> = { travel: [], cutting: [], zmove: [] }
 
     for (const [lineIndex, geomRef] of lineGeometryIndex.value) {
-      if (lineIndex >= execPtr) continue
-      const { r, g, b } = palette[geomRef.layer].dimmed
-      const arr = colorArrays[geomRef.layer]
+      const src = layerPointsAll[geomRef.layer]
       const start = geomRef.vertexOffset * 3
-      for (let i = 0; i < geomRef.vertexCount; i++) {
-        arr[start + i * 3] = r
-        arr[start + i * 3 + 1] = g
-        arr[start + i * 3 + 2] = b
-      }
+      const end = start + geomRef.vertexCount * 3
+      const bucket = lineIndex < execPtr ? executedPts[geomRef.layer] : pendingPts[geomRef.layer]
+      for (let i = start; i < end; i++) bucket.push(src[i]!)
     }
 
-    for (const layer of ['travel', 'cutting', 'zmove'] as const) {
+    for (const layer of TOOLPATH_KEYS) {
+      const layerVisible = layers.find(l => l.key === layer)?.visible ?? true
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const obj = objectMap[layer] as any
-      if (obj) obj.geometry.setColors(colorArrays[layer])
+      const pendingObj = objectMap[`${layer}Pending`] as any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const executedObj = objectMap[`${layer}Executed`] as any
+      if (pendingObj) {
+        const pts = pendingPts[layer]
+        pendingObj.visible = layerVisible && pts.length > 0
+        if (pts.length > 0) pendingObj.geometry.setPositions(pts)
+      }
+      if (executedObj) {
+        const pts = executedPts[layer]
+        executedObj.visible = layerVisible && pts.length > 0
+        if (pts.length > 0) executedObj.geometry.setPositions(pts)
+      }
     }
     requestRender()
   }
@@ -1120,32 +1092,164 @@ async function initThree() {
   ready.value = true
 }
 
+type Vec3Tuple = [number, number, number]
+const dot3 = (a: Vec3Tuple, b: Vec3Tuple) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+const cross3 = (a: Vec3Tuple, b: Vec3Tuple): Vec3Tuple => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
+]
+const normalize3 = (a: Vec3Tuple): Vec3Tuple => {
+  const m = Math.hypot(a[0], a[1], a[2])
+  return m > 0 ? [a[0] / m, a[1] / m, a[2] / m] : [0, 0, 1]
+}
+
+// Axis-aligned bounding box of the loaded toolpath's non-travel geometry, or
+// null when no vectors are loaded / the file has no geometry (comment-only).
+//
+// Rapid ('R') moves are excluded — they're often outliers relative to the
+// actual work (a safe-Z retract, a park position, a return-to-origin at the
+// end of the job) that sit far above/beside the cut geometry. Including them
+// both bloats the fit (more empty space) and drags the box's center away
+// from the visual center of the work.
+function toolpathAABB(): { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number } | null {
+  let minX = Infinity, minY = Infinity, minZ = Infinity
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+  const consider = (x: number, y: number, z: number) => {
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+    if (z < minZ) minZ = z
+    if (z > maxZ) maxZ = z
+  }
+  for (const v of lastVectors.value) {
+    if (!v || v.t === 'R') continue
+    consider(v.x0, v.y0, v.z0)
+    consider(v.x1, v.y1, v.z1)
+  }
+  if (!Number.isFinite(minX)) return null
+  return { minX, minY, minZ, maxX, maxY, maxZ }
+}
+
+// For a candidate aim point, the minimal camera distance along `viewDir` so
+// every AABB corner lands inside the frustum, plus a small margin.
+function fitDistanceFrom(
+  halfFovX: number,
+  halfFovY: number,
+  viewDir: Vec3Tuple,
+  right: Vec3Tuple,
+  trueUp: Vec3Tuple,
+  center: Vec3Tuple,
+  aabb: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number },
+): number {
+  let maxD = 0
+  for (const x of [aabb.minX, aabb.maxX]) {
+    for (const y of [aabb.minY, aabb.maxY]) {
+      for (const z of [aabb.minZ, aabb.maxZ]) {
+        const rel: Vec3Tuple = [x - center[0], y - center[1], z - center[2]]
+        const relView = dot3(rel, viewDir)
+        const dNeededX = relView + Math.abs(dot3(rel, right)) / Math.tan(halfFovX)
+        const dNeededY = relView + Math.abs(dot3(rel, trueUp)) / Math.tan(halfFovY)
+        maxD = Math.max(maxD, dNeededX, dNeededY)
+      }
+    }
+  }
+  return maxD * 1.06  // small margin so geometry isn't flush against the viewport edge
+}
+
+// Aim point + camera distance along `viewDir` (unit vector, pointing from the
+// aim point toward the camera) so every corner of the AABB lands inside the
+// camera's frustum with balanced margins on opposite sides.
+//
+// A circumscribed-sphere fit centered on the AABB midpoint (the previous
+// approach) is only tight when looking squarely down one axis — top/front/
+// right degenerate cleanly since the box's short axis barely affects the
+// projection. GCode toolpaths are typically wide/long but shallow in Z, and
+// viewed obliquely (ISO) that shallow axis still spans real distance along
+// the view direction, so under perspective, corners nearer the camera
+// subtend a larger screen angle per unit of lateral offset than corners
+// farther away — aiming at the raw 3D midpoint leaves the near side tight
+// and the far side with a lot of empty space (issue #110). Balancing must
+// happen in *angular* space, not linear 3D space, and the right/up axes are
+// coupled (re-aiming shifts every corner's depth, which changes the other
+// axis's angles too) — so this iterates a few rounds: compute a distance for
+// the current aim point, use it to convert each corner's screen-relative
+// offset into an angle, re-aim at the midpoint of the min/max angle on each
+// axis, repeat. Each round moves the aim point a bit closer to fully
+// balanced; a handful of rounds is enough to converge to a pixel or two.
+// Exact for any preset or freely-rotated view (fitToVectors() below).
+function frameAABB(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  camera: any,
+  viewDir: Vec3Tuple,
+  up: Vec3Tuple,
+  aabb: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number },
+): { center: Vec3Tuple; distance: number } {
+  const forward = normalize3([-viewDir[0], -viewDir[1], -viewDir[2]])
+  const right = normalize3(cross3(forward, up))
+  const trueUp = cross3(right, forward)  // already unit length — forward/right are orthonormal
+
+  const halfFovY = (camera.fov * Math.PI) / 180 / 2
+  const halfFovX = Math.atan(Math.tan(halfFovY) * camera.aspect)
+
+  let center: Vec3Tuple = [(aabb.minX + aabb.maxX) / 2, (aabb.minY + aabb.maxY) / 2, (aabb.minZ + aabb.maxZ) / 2]
+  let distance = fitDistanceFrom(halfFovX, halfFovY, viewDir, right, trueUp, center, aabb)
+
+  for (let round = 0; round < 4; round++) {
+    const angles: { right: number; up: number }[] = []
+    for (const x of [aabb.minX, aabb.maxX]) {
+      for (const y of [aabb.minY, aabb.maxY]) {
+        for (const z of [aabb.minZ, aabb.maxZ]) {
+          const rel: Vec3Tuple = [x - center[0], y - center[1], z - center[2]]
+          const depth = distance - dot3(rel, viewDir)  // distance from camera to this corner along the view axis
+          angles.push({ right: Math.atan(dot3(rel, right) / depth), up: Math.atan(dot3(rel, trueUp) / depth) })
+        }
+      }
+    }
+    const rightAngles = angles.map((a) => a.right)
+    const upAngles = angles.map((a) => a.up)
+    const midAngleRight = (Math.min(...rightAngles) + Math.max(...rightAngles)) / 2
+    const midAngleUp = (Math.min(...upAngles) + Math.max(...upAngles)) / 2
+    // Small-angle world-space shift at the current depth that re-centers the
+    // angular midpoint on this round's aim point.
+    const shiftRight = Math.tan(midAngleRight) * distance
+    const shiftUp = Math.tan(midAngleUp) * distance
+    center = [
+      center[0] + right[0] * shiftRight + trueUp[0] * shiftUp,
+      center[1] + right[1] * shiftRight + trueUp[1] * shiftUp,
+      center[2] + right[2] * shiftRight + trueUp[2] * shiftUp,
+    ]
+    distance = fitDistanceFrom(halfFovX, halfFovY, viewDir, right, trueUp, center, aabb)
+  }
+
+  return { center, distance }
+}
+
+const ISO_DIR = normalize3([-0.25, -0.75, 0.32])  // z weighted low for a shallow elevation — more vectors stay in view than a steeper look-down angle
+const VIEW_DIRS: Record<ViewKey, { dir: Vec3Tuple; up: Vec3Tuple }> = {
+  top: { dir: [0, 0, 1], up: [0, 1, 0] },
+  front: { dir: [0, 1, 0], up: [0, 0, 1] },
+  right: { dir: [1, 0, 0], up: [0, 0, 1] },
+  iso: { dir: ISO_DIR, up: [0, 0, 1] },
+}
+
+// Presets frame on the loaded toolpath's bounding box when one is loaded
+// (issue #110) so the work is shown close-up rather than the machine's full
+// travel volume; falls back to the machine-bounds-centered view otherwise.
 function setView(view: ViewKey) {
   if (!threeCtx) return
   const { camera, controls } = threeCtx
+  const aabb = toolpathAABB()
   const b = machineBounds.value
-  const d = Math.max(b.x, b.y, 50) * 1.8  // orbit target is origin — scale so work volume stays visible; min 50 prevents camera collapse to origin
+  const { dir, up } = VIEW_DIRS[view]
+  const { center, distance: d } = aabb
+    ? frameAABB(camera, dir, up, aabb)
+    : { center: [0, 0, 0] as Vec3Tuple, distance: Math.max(b.x, b.y, 50) * 1.8 }  // min 50 prevents camera collapse to origin
 
-  // All presets orbit around the machine home (work origin = 0,0,0)
-  controls.target.set(0, 0, 0)
-  switch (view) {
-    case 'top':
-      camera.position.set(0, 0, d)
-      camera.up.set(0, 1, 0)
-      break
-    case 'front':
-      camera.position.set(0, d, 0)
-      camera.up.set(0, 0, 1)
-      break
-    case 'right':
-      camera.position.set(d, 0, 0)
-      camera.up.set(0, 0, 1)
-      break
-    case 'iso':
-      camera.position.set(-d * 0.25, -d * 0.75, d * 0.45)
-      camera.up.set(0, 0, 1)
-      break
-  }
+  controls.target.set(center[0], center[1], center[2])
+  camera.position.set(center[0] + dir[0] * d, center[1] + dir[1] * d, center[2] + dir[2] * d)
+  camera.up.set(up[0], up[1], up[2])
 
   // No split-mode pan needed here — the canvas is actually resized to the left
   // half in split/gcode mode (see the resize handling in initThree()), so the
@@ -1156,10 +1260,55 @@ function setView(view: ViewKey) {
   requestRender()
 }
 
+// Dolly the camera toward/away from the current orbit target, preserving
+// view direction. Scale < 1 zooms in, > 1 zooms out.
+function zoomBy(scale: number) {
+  if (!threeCtx) return
+  const { camera, controls } = threeCtx
+  const offset = camera.position.clone().sub(controls.target).multiplyScalar(scale)
+  if (offset.length() < 1) return  // floor prevents the camera collapsing onto the target
+  camera.position.copy(controls.target).add(offset)
+  controls.update()
+  requestRender()
+}
+function zoomIn() { zoomBy(0.8) }
+function zoomOut() { zoomBy(1.25) }
+
+// Re-centers and re-distances the camera on the loaded toolpath's bounding
+// box (issue #110) — called after a job's vectors load so the work is framed
+// close-up instead of the always-visible-but-often-tiny machine-bounds view
+// from setView(). Preserves the current view direction/angle rather than
+// forcing a preset, so it composes with whatever view the user was already in.
+function fitToVectors() {
+  if (!threeCtx) return
+  const { camera, controls } = threeCtx
+  const aabb = toolpathAABB()
+  if (!aabb) return
+
+  const curOffset = camera.position.clone().sub(controls.target)
+  const dir: Vec3Tuple = curOffset.lengthSq() > 0
+    ? normalize3([curOffset.x, curOffset.y, curOffset.z])
+    : ISO_DIR
+  const up: Vec3Tuple = [camera.up.x, camera.up.y, camera.up.z]
+  const { center, distance: d } = frameAABB(camera, dir, up, aabb)
+
+  controls.target.set(center[0], center[1], center[2])
+  camera.position.set(center[0] + dir[0] * d, center[1] + dir[1] * d, center[2] + dir[2] * d)
+  controls.update()
+  requestRender()
+}
+
 function toggleLayer(layer: (typeof layers)[number]) {
   layer.visible = !layer.visible
-  const obj = objectMap[layer.key]
-  if (obj) (obj as { visible: boolean }).visible = layer.visible
+  if ((TOOLPATH_KEYS as readonly string[]).includes(layer.key)) {
+    // Toolpath layers are split into pending/executed meshes whose individual
+    // visibility also depends on whether each currently has any points — so
+    // visibility can't just be toggled directly; re-run the split.
+    applyExecPtrSplit(job.value?.execPtr ?? 0)
+  } else {
+    const obj = objectMap[layer.key]
+    if (obj) (obj as { visible: boolean }).visible = layer.visible
+  }
   requestRender()
 }
 
@@ -1211,11 +1360,12 @@ watch(machineHomeWpos, (h) => {
   }
 }, { deep: true })
 
-// Recolor already-executed toolpath segments (issue #45) as execPtr advances.
-// The server broadcasts an execPtr update on every sender event with no
-// throttling of its own (verified in jobRunner._handleSenderEvent) — on a
-// dense job that can fire many times a second, so this coalesces to at most
-// one recolor per animation frame rather than one per WS patch.
+// Re-split already-executed toolpath segments into their transparent mesh
+// (issue #105) as execPtr advances. The server broadcasts an execPtr update
+// on every sender event with no throttling of its own (verified in
+// jobRunner._handleSenderEvent) — on a dense job that can fire many times a
+// second, so this coalesces to at most one split per animation frame rather
+// than one per WS patch.
 let dimUpdatePending = false
 let latestExecPtr = 0
 watch(() => job.value?.execPtr, (ptr) => {
@@ -1225,13 +1375,27 @@ watch(() => job.value?.execPtr, (ptr) => {
   dimUpdatePending = true
   requestAnimationFrame(() => {
     dimUpdatePending = false
-    applyExecutedDimming(latestExecPtr)
+    applyExecPtrSplit(latestExecPtr)
   })
 })
 
 // Fetch and render 3D path vectors (+ raw GCode lines for the GCode panel) when
 // a job finishes loading. Clear both when the job is cleared.
-let lastLoadedFileId: string | null = null
+// Keyed on fileId+analyzedAt, not fileId alone — a same-name re-upload/reload
+// keeps fileId unchanged but produces a fresh analyzedAt, and must still trigger
+// a refetch or the viewport would keep showing the previous file's content.
+//
+// Any status other than idle/analyzing means a file is loaded with valid
+// analysis data (that pair is exactly when clearToolpath() below runs) —
+// not just 'loaded' specifically. A page reload's initial WS snapshot can
+// hand this component a job that's already 'running'/'paused'/'complete'/etc.
+// (the transition into 'loaded' happened in a now-gone previous session), so
+// gating on 'loaded' alone silently left the reconnecting client with no
+// toolpath geometry at all until the job finished and got reloaded fresh.
+let lastLoadedKey: string | null = null
+function loadedKey(fileId: string | null | undefined, analyzedAt: number | null | undefined): string | null {
+  return fileId ? `${fileId}:${analyzedAt ?? ''}` : null
+}
 
 async function fetchAndLoadVectors(fileId: string) {
   try {
@@ -1240,6 +1404,7 @@ async function fetchAndLoadVectors(fileId: string) {
     const tFetch1 = performance.now()
     lastVectors.value = vectors
     loadToolpathSegments(vectors)
+    fitToVectors()
     const tBuild1 = performance.now()
     console.debug(
       `[perf] fetchAndLoadVectors(${fileId}): fetch+parse=${(tFetch1 - tFetch0).toFixed(0)}ms ` +
@@ -1265,19 +1430,24 @@ async function fetchLines(fileId: string) {
 }
 
 watch(
-  () => job.value?.status,
-  async (status) => {
-    if (status === 'loaded') {
+  // Keyed on the same identity as loadedKey() below (fileId+analyzedAt), not status
+  // alone — a transform-mode toggle (rotation/heightmap) re-loads the job with a new
+  // analyzedAt but can leave status at 'loaded' the whole time (cache hit skips the
+  // 'analyzing' transition), so watching status alone would silently miss it.
+  () => [job.value?.status, job.value?.fileId, job.value?.analyzedAt] as const,
+  async ([status]) => {
+    if (status && status !== 'idle' && status !== 'analyzing') {
       const fileId = job.value?.fileId
-      if (!fileId || fileId === lastLoadedFileId) return
+      const key = loadedKey(fileId, job.value?.analyzedAt)
+      if (!fileId || !key || key === lastLoadedKey) return
       // Skip if Three.js isn't initialised yet — onMounted will retry after initThree() resolves.
       if (!ready.value) return
-      lastLoadedFileId = fileId
+      lastLoadedKey = key
       const tLoad0 = performance.now()
       await Promise.all([fetchAndLoadVectors(fileId), fetchLines(fileId)])
       console.debug(`[perf] job load → viewport ready(${fileId}): total=${(performance.now() - tLoad0).toFixed(0)}ms`)
     } else if (status === 'idle') {
-      lastLoadedFileId = null
+      lastLoadedKey = null
       clearToolpath()
       lastVectors.value = []
       gcodeLines.value = []
@@ -1289,10 +1459,12 @@ watch(
 
 onMounted(async () => {
   await initThree()
-  // If a job was already in 'loaded' state while Three.js was initialising, load its vectors now.
+  // If a job was already loaded (any status other than idle/analyzing — see the
+  // watch() above) while Three.js was initialising, load its vectors now.
   const j = job.value
-  if (j?.status === 'loaded' && j.fileId && j.fileId !== lastLoadedFileId) {
-    lastLoadedFileId = j.fileId
+  const key = loadedKey(j?.fileId, j?.analyzedAt)
+  if (j?.status && j.status !== 'idle' && j.status !== 'analyzing' && j.fileId && key && key !== lastLoadedKey) {
+    lastLoadedKey = key
     await Promise.all([fetchAndLoadVectors(j.fileId), fetchLines(j.fileId)])
   }
 })
